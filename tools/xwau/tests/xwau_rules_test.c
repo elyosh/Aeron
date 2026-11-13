@@ -1278,9 +1278,10 @@ static void test_objects(const char* scratch) {
 		snprintf(path, sizeof path, "%s/FlightModels", roots[i]);
 		MakeDirs(path);
 		snprintf(path, sizeof path, "%s/FlightModels/Equipment0.LST", roots[i]);
-		write_file(path, i == 0 ? "FlightModels\\Laser.opt\r\nFlightModels\\LaserRebelTurbo.opt\r\n"
-								: "FlightModels\\Laser.opt\r\nFlightModels\\LaserRebelTurbo.opt\r\n"
-								  "FlightModels\\RebelTurboShort.opt\r\n");
+		write_file(path, i == 0
+							 ? "FlightModels\\Laser.opt\r\nFlightModels\\LaserRebelTurbo.opt\r\n"
+							 : "FlightModels\\Laser.opt\r\nFlightModels\\LaserRebelTurbo.opt\r\n"
+							   "FlightModels\\RebelTurboShort.opt\r\nFlightModels\\AuxTurboLaser307.opt\r\n");
 	}
 	snprintf(path, sizeof path, "%s/FlightModels/Spacecraft0.LST", stock);
 	write_file(
@@ -1311,6 +1312,11 @@ static void test_objects(const char* scratch) {
 	fake_at(m, 0x5FB240 + 24 * 2 + 1)[0]  = 0x20; /* type 2 only loads in Death Star missions */
 	fake_equipment(m, 288, 2); /* both move to a new row */
 	fake_equipment(m, 297, 2);
+	/* A new projectile in free slot 307, with the flags of the stock lasers:
+	   an OPT model that every mission loads. */
+	fake_equipment(m, 307, 3);
+	fake_at(m, 0x5FB240 + 24 * 307)[0]     = 0x03;
+	fake_at(m, 0x5FB240 + 24 * 307 + 1)[0] = 0x09;
 	fake_type(m, 33, 2, 32); /* a new craft in a free slot, on the renamed row */
 	fake_type(m, 34, 4, 33); /* a free slot on a row that the list doesn't have */
 	put16(fake_at(m, 0x5B0F70 + 2 * 200), 33);
@@ -1458,10 +1464,16 @@ static void test_objects(const char* scratch) {
 		"objects: an equipment type that the mod moves to another model gets `model` and `list: equipment`, "
 		"and two types with one model get a file each");
 	free(text);
+	snprintf(path, sizeof path, "%s/object_types/auxturbolaser307.yaml", out);
+	text = ReadWholeFile(path, &size);
+	check(text && strstr(text, "\nmodel: auxturbolaser307\nlist: equipment\n") &&
+			  strstr(text, "\nalways_loaded: true\n"),
+		  "objects: a free slot that the mod turns into a projectile gets its model and always_loaded: true");
+	free(text);
 	snprintf(path, sizeof path, "%s/object_types", out);
 	size_t count = 0;
 	char** names = ListDir(path, true, &count);
-	check(count == 7, "objects: a free slot that the mod gives an empty row gets no file, and neither does "
+	check(count == 8, "objects: a free slot that the mod gives an empty row gets no file, and neither does "
 					  "an equipment type that the mod doesn't change");
 	FreeList(names, count);
 	snprintf(path, sizeof path, "%s/craft_types", out);

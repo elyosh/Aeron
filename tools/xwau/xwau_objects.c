@@ -492,7 +492,12 @@ static const struct {
 
 /* ---- Object files ------------------------------------------------------- */
 
-/* Returns whether the mod renames object type `t`. */
+/* Asset flag of the object types whose list row is an OPT model. OpenXWA
+   sets it on every object type that an object type file gives a model. */
+#define ASSET_OPT_MODEL 0x01
+/* Asset flag that the `always_loaded` key sets: every mission loads the
+   model, as for the stock lasers and warheads. */
+#define ASSET_ALWAYS_LOADED 0x08
 /* The asset flags that the `missions` key sets: the model loads only in
    Death Star missions, or not in them. */
 #define ASSET_DEATH_STAR_ONLY 0x20
@@ -505,7 +510,7 @@ typedef struct Change {
 	const char* model; /* the mod's model, for the file name */
 	int         list;  /* the list of the mod's row: 0 Spacecraft0.LST, 1 Equipment0.LST */
 	bool        writeModel;
-	bool        genus, family, flags, missions;
+	bool        genus, family, flags, missions, alwaysLoaded;
 	int         recordIndex; /* the craft record that the type uses in the mod */
 	int         stockRecord; /* the craft record that the type uses in the stock game */
 	bool        recordChanged;
@@ -881,7 +886,10 @@ static bool write_object_file(const char* path, const XwauNames* names, const Ch
 				(m.assetFlags & ASSET_DEATH_STAR_ONLY)  ? "death_star"
 				: (m.assetFlags & ASSET_NOT_DEATH_STAR) ? "not_death_star"
 														: "all");
-	counts->typeFields += change->genus || change->family || change->flags || change->missions;
+	if (change->alwaysLoaded)
+		fprintf(f, "always_loaded: %s\n", (m.assetFlags & ASSET_ALWAYS_LOADED) ? "true" : "false");
+	counts->typeFields +=
+		change->genus || change->family || change->flags || change->missions || change->alwaysLoaded;
 	/* Compare with the object type's own stock record. If other object types
 	   share this record, the game gives the object type its own copy. */
 	if (change->recordChanged) {
@@ -1067,10 +1075,16 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 			continue;
 		}
 		/* No key sets recordFlags. Bit 0x02 comes from the model, and nothing
-		   reads bit 0x01. Only `missions` sets assetFlags, and it can't set
-		   both of its flags, which would keep the model from ever loading. */
-		if (((s.recordFlags ^ m.recordFlags) & ~0x03) ||
-			((s.assetFlags ^ m.assetFlags) & ~ASSET_MISSION_FLAGS) ||
+		   reads bit 0x01. For the asset flags, `always_loaded` sets
+		   ASSET_ALWAYS_LOADED and `missions` sets ASSET_MISSION_FLAGS.
+		   OpenXWA adds ASSET_OPT_MODEL to a free slot that gets a model, and
+		   never removes it. `missions` can't set both of its flags: the model
+		   would never load. */
+		const uint8_t asset_changes = s.assetFlags ^ m.assetFlags;
+		const uint8_t allowed_asset_changes =
+			ASSET_ALWAYS_LOADED | ASSET_MISSION_FLAGS | (XwauGameType_HasRow(&s) ? 0 : ASSET_OPT_MODEL);
+		if (((s.recordFlags ^ m.recordFlags) & ~0x03) || (asset_changes & ~allowed_asset_changes) ||
+			((asset_changes & ASSET_OPT_MODEL) && !(m.assetFlags & ASSET_OPT_MODEL)) ||
 			(m.assetFlags & ASSET_MISSION_FLAGS) == ASSET_MISSION_FLAGS)
 			ReportFatal(
 				mod_root,
@@ -1095,7 +1109,8 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 		change.genus              = s.genus != m.genus;
 		change.family             = s.family != m.family;
 		change.flags              = s.flags != m.flags;
-		change.missions           = ((s.assetFlags ^ m.assetFlags) & ASSET_MISSION_FLAGS) != 0;
+		change.missions           = (asset_changes & ASSET_MISSION_FLAGS) != 0;
+		change.alwaysLoaded       = (asset_changes & ASSET_ALWAYS_LOADED) != 0;
 		change.recordChanged = valid_record(m.record) &&
 							   record_differs(stock->records[change.stockRecord], mod->records[m.record]);
 		change.soundsLike = sounds_comparable ? sounds_like(stock, mod, t) : 0;
@@ -1106,7 +1121,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 		for (size_t i = 0; beam && i < sizeof g_beamTestTypes / sizeof g_beamTestTypes[0]; ++i)
 			change.beamAllowed |= g_beamTestTypes[i] == t;
 		if (!(change.writeModel || change.genus || change.family || change.flags || change.missions ||
-			  change.recordChanged || change.soundsLike || change.beamAllowed ||
+			  change.alwaysLoaded || change.recordChanged || change.soundsLike || change.beamAllowed ||
 			  XwauNames_IsRenamed(names, t)))
 			continue;
 		equipment += change.list == 1;
@@ -1145,7 +1160,8 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 	if (ok) {
 		ReportDetail(
 			NULL,
-			"object types: %d files: %d with a model, %d with a new genus, family, flags or missions, %d "
+			"object types: %d files: %d with a model, %d with a new genus, family, flags, missions or "
+			"always_loaded, %d "
 			"with craft record changes, %d with sounds_like, %d with beam_allowed, %d with names",
 			counts.files, counts.models, counts.typeFields, counts.records, counts.sounds, counts.beams,
 			counts.names);
