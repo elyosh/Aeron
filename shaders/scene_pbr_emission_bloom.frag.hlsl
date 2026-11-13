@@ -1,7 +1,8 @@
 /*
  * Fragment shader for the bloom draw of emission_only instances
- * (AeronScene_DrawEmissionBloom). It outputs their emission and alpha as
- * scene_pbr_emission.frag does, for an additive blend into the bloom.
+ * (AeronScene_DrawEmissionBloom). It outputs their emission as
+ * scene_pbr_emission.frag does, for an additive blend into the bloom. The
+ * emission already holds the alpha, so the alpha isn't used.
  *
  * The bloom target has no depth buffer, so the shader compares its depth
  * with the scene's depth: a pixel behind the scene (a bolt behind a ship)
@@ -19,12 +20,11 @@
  *
  * The weight assumes an even texture across the width. A bolt's texture
  * is brighter at its centre, so the weight gives thin bolts more bloom than
- * bloom_scale says: about 1.8 times in a measurement against the bloom
- * the scene gives on its own.
+ * bloom_scale says.
  *
- * Bindings: the base colour atlas at sampler slot 0, the emissive atlas at
- * slot 1, the scene's depth at slot 2, and the material and variant
- * storage at slots 0 and 1.
+ * Bindings: the emissive atlas at sampler slot 1, the scene's depth at
+ * slot 2, and the material and variant storage at slots 0 and 1. Slot 0,
+ * the base colour atlas, is bound but not read.
  */
 
 #include "scene_pbr_atlas_sample.hlsli"
@@ -56,7 +56,6 @@ FSOut main(PbrEmissionBloomVSOut i)
                                        i.material_lookup.z, i.material_lookup.w);
     /* Sample and take derivatives before any branch: they are not
      * reliable inside a branch. */
-    const float base_alpha = pbr_sample_base_color(g_materials[mat], i.uv).a;
     const float across_dx  = ddx(i.across);
     const float across_dy  = ddy(i.across);
     float3 emissive = g_materials[mat].emissive_packed.rgb;
@@ -66,19 +65,13 @@ FSOut main(PbrEmissionBloomVSOut i)
     }
     const float scene_depth =
         g_depth.SampleLevel(g_depth_sampler, i.position.xy * i.depth_map.xy + i.depth_map.zw, 0.0f).r;
-    float alpha = 1.0f;
-    if ((g_materials[mat].flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u) {
-        alpha = saturate(base_alpha * g_materials[mat].base_color_factor.a);
-    }
-    if (i.position.z < scene_depth * (1.0f - EMISSION_BLOOM_DEPTH_TOLERANCE)) {
-        alpha = 0.0f;
-    }
+    const float visible = i.position.z < scene_depth * (1.0f - EMISSION_BLOOM_DEPTH_TOLERANCE) ? 0.0f : 1.0f;
     /* The weight across the width (see above). `across` goes from -1 to 1
      * across the instance, so its rate of change per pixel gives the width
      * in bloom pixels. */
     const float width  = 2.0f / max(length(float2(across_dx, across_dy)), 1e-6f);
     const float edge   = cos(saturate(abs(i.across)) * 1.5707963f);
     const float weight = lerp(1.0f, 2.0f * edge * edge, saturate((24.0f - width) / 12.0f));
-    o.color = float4(emissive * (g_materials[mat].emissive_packed.a * i.emissive_mul * weight), alpha);
+    o.color = float4(emissive * (g_materials[mat].emissive_packed.a * i.emissive_mul * weight * visible), 0.0f);
     return o;
 }

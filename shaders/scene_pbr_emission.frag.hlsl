@@ -1,8 +1,10 @@
 /*
  * Fragment shader for batches of emission_only instances
  * (AeronSceneMeshInstance.emission_only), such as laser bolts. It outputs
- * the material's emission and alpha, computed as in
- * scene_pbr_mesh_impl.hlsli for a blended material, and skips all lighting.
+ * the material's emission and alpha, and skips all lighting. The emission
+ * textures of these instances hold the light each texel gives, already
+ * multiplied by its alpha, so the pipeline blends premultiplied: it adds
+ * the emission and darkens what is behind by the alpha.
  *
  * Bindings: the base colour atlas at sampler slot 0, the emissive atlas at
  * slot 1 (the scene binds it there for these batches), and the material and

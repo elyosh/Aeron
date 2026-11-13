@@ -164,6 +164,11 @@ typedef struct PbrTargetDesc {
 	uint8_t            write_mask; /* 0 = declared-but-masked */
 } PbrTargetDesc;
 
+/* The `blend` argument of pbr_pipeline: 0 is off, 1 is the usual alpha
+ * blending, and PBR_BLEND_PREMULTIPLIED adds a colour that already holds the
+ * alpha. */
+#define PBR_BLEND_PREMULTIPLIED 2
+
 static AeronGraphicsPipeline* pbr_pipeline_rasterized(AeronShader* vs, AeronShader* ps,
 													  const PbrTargetDesc* targets, uint32_t num_targets,
 													  int depth_test, int depth_write, AeronCompareOp compare,
@@ -184,9 +189,11 @@ static AeronGraphicsPipeline* pbr_pipeline_rasterized(AeronShader* vs, AeronShad
 	if (blend) {
 		/* Alpha-BLEND range (canopy glass): classic transparent OPT
 		 * faces alpha-blend over the already-drawn hull. Color target 0
-		 * blends; dst alpha keeps coverage (ONE / INV_SRC_ALPHA). */
+		 * blends; dst alpha keeps coverage (ONE / INV_SRC_ALPHA). With
+		 * PBR_BLEND_PREMULTIPLIED, the colour already holds the light the
+		 * face adds, which isn't multiplied by alpha again. */
 		cts[0].blend.enabled   = 1;
-		cts[0].blend.src_color = AERON_BLEND_SRC_ALPHA;
+		cts[0].blend.src_color = blend == PBR_BLEND_PREMULTIPLIED ? AERON_BLEND_ONE : AERON_BLEND_SRC_ALPHA;
 		cts[0].blend.dst_color = AERON_BLEND_ONE_MINUS_SRC_ALPHA;
 		cts[0].blend.color_op  = AERON_BLEND_OP_ADD;
 		cts[0].blend.src_alpha = AERON_BLEND_ONE;
@@ -712,8 +719,15 @@ static AeronGraphicsPipeline* pbr_instanced_pipeline(struct AeronScene3D* s, int
  * on first use. Returns NULL when its shaders don't load. */
 static AeronGraphicsPipeline* pbr_emission_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull) {
 	AeronGraphicsPipeline** pipe = &s->pbr_emission_pipes[kind][cull];
-	if (!*pipe && s->pbr_emission_vs && s->pbr_emission_fs)
-		*pipe = pbr_pipeline_create(s, kind, cull, s->pbr_emission_vs, s->pbr_emission_fs);
+	if (*pipe || !s->pbr_emission_vs || !s->pbr_emission_fs ||
+		(kind != AERON_PBR_PIPE_MESH_BLEND && kind != AERON_PBR_PIPE_FORWARD_BLEND))
+		return *pipe;
+	/* The states of the blend kinds in pbr_pipeline_create, with
+	 * premultiplied blending: an emission texture holds the light each
+	 * texel gives, already multiplied by its alpha. */
+	const PbrTargetDesc color_rw = { s->color_format, 0xF };
+	*pipe = pbr_pipeline(s->pbr_emission_vs, s->pbr_emission_fs, &color_rw, 1, 1, 0, AERON_COMPARE_GREATER_EQUAL,
+						 cull, PBR_BLEND_PREMULTIPLIED, s->sample_count);
 	return *pipe;
 }
 
@@ -740,8 +754,9 @@ static AeronGraphicsPipeline* pbr_emission_stamp_pipeline(struct AeronScene3D* s
 }
 
 /* Returns the pipeline of the bloom draw of emission batches, and creates
- * it on first use. It adds the emission, weighted by alpha, to a bloom
- * level, which has no depth. Returns NULL when its shaders don't load. */
+ * it on first use. It adds the emission, which already holds the alpha, to
+ * a bloom level, which has no depth. Returns NULL when its shaders don't
+ * load. */
 static AeronGraphicsPipeline* pbr_emission_bloom_pipeline(struct AeronScene3D* s, AeronCullMode cull) {
 	AeronGraphicsPipeline** pipe = &s->pbr_emission_bloom_pipes[cull];
 	if (*pipe || !s->pbr_emission_bloom_vs || !s->pbr_emission_bloom_fs)
@@ -762,7 +777,7 @@ static AeronGraphicsPipeline* pbr_emission_bloom_pipeline(struct AeronScene3D* s
 		.blend =
 			{
 				.enabled   = 1,
-				.src_color = AERON_BLEND_SRC_ALPHA,
+				.src_color = AERON_BLEND_ONE,
 				.dst_color = AERON_BLEND_ONE,
 				.color_op  = AERON_BLEND_OP_ADD,
 				.src_alpha = AERON_BLEND_ZERO,

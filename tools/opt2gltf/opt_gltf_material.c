@@ -750,10 +750,12 @@ static uint8_t linear_to_srgb8(float c) {
 	return (uint8_t)(c * 255.0f + 0.5f);
 }
 
-/* The emission of a fullbright texture with alpha: its colour multiplied by
- * its alpha, in linear values, so that the blend applies the alpha twice. A
- * projectile's emission is strong, and its faint edges would stay bright
- * otherwise. Returns false when out of memory. */
+/* The emission of a fullbright texture with alpha: the light each texel
+ * gives, in linear values, which is its colour multiplied by its alpha
+ * twice. With the alpha applied once, the faint edges of a projectile's
+ * strong emission stay too bright. The renderer adds this light without
+ * multiplying it by alpha again, so mip levels average the light itself.
+ * Returns false when out of memory. */
 static bool fullbright_emissive(Build* b, int32_t i, cgltf_material* mat, const uint8_t* rgba) {
 	const opt_texture_t* t  = &b->opt->textures[i];
 	const size_t         n  = (size_t)t->width * (size_t)t->height;
@@ -763,7 +765,7 @@ static bool fullbright_emissive(Build* b, int32_t i, cgltf_material* mat, const 
 	for (size_t k = 0; k < n; ++k) {
 		const float alpha = rgba[k * 4 + 3] / 255.0f;
 		for (int c = 0; c < 3; ++c)
-			em[k * 4 + c] = linear_to_srgb8(srgb_to_linear(rgba[k * 4 + c] / 255.0f) * alpha);
+			em[k * 4 + c] = linear_to_srgb8(srgb_to_linear(rgba[k * 4 + c] / 255.0f) * alpha * alpha);
 		em[k * 4 + 3] = 255;
 	}
 	mat->emissive_texture.texture = opt_gltf_set_image(

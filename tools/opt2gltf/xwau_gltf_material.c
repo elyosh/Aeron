@@ -283,13 +283,17 @@ bool XwauGltf_BakeRgba(const opt_texture_t* t, const XwauGltfMaterial* xm, uint8
 		const float rough    = lerpf(lerpf(roughness, 1.0f, blackish), glass_rough, gl);
 		const float metal    = metallic * (1.0f - fmaxf(gl, w));
 
-		/* A projectile is fully unlit. Its emission is stored in linear values
-		   (xwau_projectile_range) and, for a transparent texture, weighted by
-		   the alpha, so that the blend applies the alpha twice. */
+		/* A projectile is fully unlit. Its emission is the light each texel
+		   gives, in linear values (xwau_projectile_range): for a transparent
+		   texture, the colour multiplied by the alpha twice, because with the
+		   alpha applied once, the faint edges of a strong emission stay too
+		   bright. The renderer adds this light without multiplying it by
+		   alpha again. Mip levels then average the light itself, so a far
+		   bolt keeps the colour of its core. */
 		uint8_t* e = &out->emissive[i * 4];
 		for (int k = 0; k < 3; ++k) {
 			const float glow = c[k] * (1.0f + (XWAU_GLTF_ILLUM_GAIN - 1.0f) * w) * s;
-			e[k]  = xm->projectile ? unorm8(linear_to_srgb(xwau_linear(glow) * (transparent ? a : 1.0f) /
+			e[k]  = xm->projectile ? unorm8(linear_to_srgb(xwau_linear(glow) * (transparent ? a * a : 1.0f) /
 														   xwau_projectile_range(xm->projectile)))
 								   : unorm8(glow / XWAU_GLTF_ILLUM_GAIN);
 			px[k] = unorm8(c[k] * (1.0f - s));
