@@ -911,6 +911,14 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 	 * previous cascade), so it draws no casters. */
 	const int no_receivers =
 		desc->fit_mode == AERON_SCENE_SHADOW_FIT_SCENE_DEPENDENT && !shadow_bounds_valid(&receiver_bounds);
+	/* AeronScene_SetShadowCasterMinSize: casters smaller than this, seen
+	 * from the light, cover fewer than shadow_caster_min_px render pixels at
+	 * fit_near. fit_near is the depth of this cascade's nearest receivers, so
+	 * their shadows look even smaller everywhere else in the cascade. */
+	const float min_caster_size =
+		scene->render_h > 0
+			? scene->shadow_caster_min_px * 2.0f * fit_near * tanf(scene->camera.v_half_rad) / (float)scene->render_h
+			: 0.0f;
 	float caster_z_max = receiver_z_max;
 	for (int candidate = 0; candidate < combined_count && !no_receivers; candidate++) {
 		if (!caster_valid[candidate]) {
@@ -922,7 +930,8 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 		const float        bz    = shadow_dot3(bound->center, light_dir);
 		if (fabsf(bx - center[0]) > extent[0] + bound->half[0] ||
 			fabsf(by - center[1]) > extent[1] + bound->half[1] || bz + bound->half[2] < receiver_z_min ||
-			bz - bound->half[2] > receiver_z_max + desc->max_distance) {
+			bz - bound->half[2] > receiver_z_max + desc->max_distance ||
+			2.0f * fmaxf(bound->half[0], bound->half[1]) < min_caster_size) {
 			continue;
 		}
 		uint16_t* count = &scene->shadow_caster_count[cascade];

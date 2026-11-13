@@ -940,6 +940,11 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 		add_game_bolts(scene, f);
 		AeronScene_SetEmissionMinWidth(scene, f->config.game.bolts.min_width_px);
 		AeronScene_SetEmissionFade(scene, f->config.game.bolts.fade_width_px, f->config.game.bolts.fade_power);
+		/* Scaled to the render height, as flight.c does. */
+		const float px_per_1080 = (float)f->config.height / 1080.0f;
+		AeronScene_SetSmallInstanceCull(scene, f->config.game.small_prepass_min_size * px_per_1080,
+										f->config.game.small_draw_min_size * px_per_1080);
+		AeronScene_SetShadowCasterMinSize(scene, f->config.game.small_shadow_min_size * px_per_1080);
 		return AeronScene_Render(scene, cmd) ? AeronScene_SceneRt(scene) : NULL;
 	}
 	AeronScene_SetPost(

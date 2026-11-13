@@ -1474,6 +1474,12 @@ void AeronScene_SetSmallInstanceCull(AeronScene3D* s, float prepass_min_px, floa
 	}
 }
 
+void AeronScene_SetShadowCasterMinSize(AeronScene3D* s, float min_px) {
+	if (s) {
+		s->shadow_caster_min_px = min_px > 0.0f ? min_px : 0.0f;
+	}
+}
+
 void AeronScene_SetEmissionMinWidth(AeronScene3D* s, float min_width_px) {
 	if (s) {
 		s->emission.min_width_px = min_width_px > 0.0f ? min_width_px : 0.0f;

@@ -133,6 +133,9 @@ typedef struct CaptureGameScene {
 	CaptureInstance   instances[CAPTURE_MAX_INSTANCES];
 	int               instance_count;
 	CaptureBolts      bolts;
+	/* The game's small_objects settings, in pixels of a 1080-line view; 0 is
+	 * off (AeronScene_SetSmallInstanceCull, AeronScene_SetShadowCasterMinSize). */
+	float             small_prepass_min_size, small_draw_min_size, small_shadow_min_size;
 	CaptureLight      lights[CAPTURE_MAX_LIGHTS];
 	int               light_count;
 } CaptureGameScene;

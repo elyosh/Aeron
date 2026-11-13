@@ -447,6 +447,8 @@ struct AeronScene3D {
 	float small_cull_prepass_px;
 	float small_cull_draw_px;
 	int   small_cull_active;
+	/* AeronScene_SetShadowCasterMinSize, in render pixels; 0 is off. */
+	float shadow_caster_min_px;
 	/* The current settings of emission_only instances. */
 	AeronSceneEmissionParams emission;
 	/* A copy of `emission` taken by AeronScene_Render. The bloom draw

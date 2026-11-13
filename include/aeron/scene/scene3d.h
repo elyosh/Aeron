@@ -504,6 +504,13 @@ void AeronScene_SetBackfaceFill(AeronScene3D* scene, int enabled);
  * the prepass's depth of every instance. */
 void AeronScene_SetSmallInstanceCull(AeronScene3D* scene, float prepass_min_px, float draw_min_px);
 
+/* Leaves a caster out of a directional shadow cascade when it would look
+ * smaller than `min_px` render pixels at the depth of the cascade's nearest
+ * receivers. The size is the larger side of the caster's bounds seen from
+ * the light, which is about the size of its shadow. 0 turns it off. Unlike
+ * AeronScene_SetSmallInstanceCull, it works with any MSAA and FSR mode. */
+void AeronScene_SetShadowCasterMinSize(AeronScene3D* scene, float min_px);
+
 /* The minimum width on screen, in render pixels, of emission_only
  * instances, such as laser bolts; 0 turns it off. The width is measured
  * across the bounds' two shorter axes, keeping the one that looks wider. A

@@ -586,6 +586,22 @@ static int load_game_bolts(const AeronConfigNode* node, CaptureConfig* config) {
 	return 1;
 }
 
+static int load_game_small_objects(const AeronConfigNode* node, CaptureGameScene* game) {
+	static const char* const keys[]   = { "prepass_min_size", "draw_min_size", "shadow_min_size" };
+	float* const             values[] = { &game->small_prepass_min_size, &game->small_draw_min_size,
+										  &game->small_shadow_min_size };
+	if (!only_keys(node, "game_scene.small_objects", keys, sizeof keys / sizeof keys[0]))
+		return 0;
+	for (int k = 0; k < 3; ++k) {
+		const AeronConfigNode* value = AeronConfigNode_MapGet(node, keys[k]);
+		if (value && (!scalar(value, values[k]) || !(*values[k] >= 0.0f))) {
+			fprintf(stderr, "game_scene.small_objects.%s must be a number of 0 or more\n", keys[k]);
+			return 0;
+		}
+	}
+	return 1;
+}
+
 static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureConfig* config) {
 	const AeronConfigNode* node = AeronConfigFile_GetNode(yaml, "game_scene");
 	if (!node)
@@ -607,7 +623,8 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 										"temporal_upscaling",
 										"cluster_debug",
 										"environment",
-										"bolts" };
+										"bolts",
+										"small_objects" };
 	CaptureGameScene*        game   = &config->game;
 	if (!only_keys(node, "game_scene", keys, sizeof keys / sizeof keys[0]))
 		return 0;
@@ -734,9 +751,10 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 	}
 	const AeronConfigNode* lights = AeronConfigNode_MapGet(node, "point_lights");
 	const AeronConfigNode* bolts  = AeronConfigNode_MapGet(node, "bolts");
+	const AeronConfigNode* small  = AeronConfigNode_MapGet(node, "small_objects");
 	if ((lights && !load_game_lights(lights, game)) ||
 		!load_game_instances(AeronConfigNode_MapGet(node, "instances"), config) ||
-		(bolts && !load_game_bolts(bolts, config)))
+		(bolts && !load_game_bolts(bolts, config)) || (small && !load_game_small_objects(small, game)))
 		return 0;
 	game->enabled = 1;
 	return 1;
