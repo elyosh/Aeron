@@ -1269,17 +1269,17 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         return _out;
     }
 #if !AERON_PBR_ANIM
-    if (fs_debug_lod.x != 0u) {
-        /* Full detail keeps its colours; levels 1, 2 and 3 turn green,
-         * yellow and red. */
-        const float3 lod_tints[4] = {
-            float3(1.0f, 1.0f, 1.0f),
-            float3(0.35f, 1.0f, 0.35f),
-            float3(1.0f, 0.85f, 0.25f),
-            float3(1.0f, 0.3f, 0.3f)
+    if (fs_debug_lod.x != 0u && fs_debug_lod.y != 0u) {
+        /* Levels 1, 2 and 3 turn green, yellow and red. They keep only the
+         * brightness of the lit colour, plus a floor so that unlit sides
+         * show their level too. Full detail keeps its colours. */
+        const float3 lod_tints[3] = {
+            float3(0.1f, 1.0f, 0.1f),
+            float3(1.0f, 0.8f, 0.0f),
+            float3(1.0f, 0.1f, 0.1f)
         };
-        const float3 tint = lod_tints[min(fs_debug_lod.y, 3u)];
-        lit = lit * tint + tint * (fs_debug_lod.y != 0u ? 0.02f : 0.0f);
+        const float brightness = dot(lit, float3(0.2126f, 0.7152f, 0.0722f));
+        lit = lod_tints[min(fs_debug_lod.y, 3u) - 1u] * (0.15f + brightness);
     }
 #endif
 #endif
