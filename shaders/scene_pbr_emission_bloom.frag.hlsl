@@ -7,16 +7,20 @@
  * with the scene's depth: a pixel behind the scene (a bolt behind a ship)
  * adds nothing. The scene's depth is reversed: nearer is larger.
  *
- * The target has one sample per pixel, so a strip, such as a laser bolt,
- * lights only the pixels whose centres it covers. A strip that crosses a
- * column of pixels over a height of h pixels covers floor(h) or ceil(h)
- * pixel centres in that column, depending on its position against the
- * pixel grid. As the strip moves by a fraction of a pixel, that count
- * changes and its light jumps, which shows as flicker. Each pixel works
- * out the count from its position across the strip and scales its light
- * by h / count, so the column always gets the light of h pixels. For a
- * strip steeper than 45 degrees, rows are used instead of columns. Other
- * instances, such as warheads, keep an even weight.
+ * The target has one sample per pixel, so a thin instance, such as a laser
+ * bolt, lights only the pixels whose centres it covers. As it moves by a
+ * fraction of a pixel, it covers one more or one less row of them, and its
+ * light jumps, which shows as flicker. Its light is weighted instead by
+ * cos^2 across its width: zero at its edges and twice the average at its
+ * centre. At 3 bloom pixels wide or more (AeronScene_DrawEmissionBloom),
+ * the pixel centres it covers add up to nearly the same light wherever it
+ * lies. Instances wider than 12 bloom pixels change little as they move,
+ * so the weight fades out from 12 to 24.
+ *
+ * The weight assumes an even texture across the width. A bolt's texture
+ * is brighter at its centre, so the weight gives thin bolts more bloom than
+ * bloom_scale says: about 1.8 times in a measurement against the bloom
+ * the scene gives on its own.
  *
  * Bindings: the base colour atlas at sampler slot 0, the emissive atlas at
  * slot 1, the scene's depth at slot 2, and the material and variant
@@ -69,20 +73,12 @@ FSOut main(PbrEmissionBloomVSOut i)
     if (i.position.z < scene_depth * (1.0f - EMISSION_BLOOM_DEPTH_TOLERANCE)) {
         alpha = 0.0f;
     }
-    /* The light of a strip per pixel column (see above). `across` changes
-     * by `rate` per pixel along the column, so the strip covers 2 / |rate|
-     * pixels of it, centred where `across` is 0. */
-    float column = 1.0f;
-    const bool  along_column = abs(across_dy) >= abs(across_dx);
-    const float rate         = along_column ? across_dy : across_dx;
-    if (i.strip != 0.0f && abs(rate) > 1e-6f) {
-        const float pixel  = along_column ? i.position.y : i.position.x;
-        const float height = 2.0f / abs(rate);
-        const float centre = pixel - i.across / rate;
-        /* Pixel centres lie at whole numbers + 0.5. */
-        const float count  = ceil(centre + 0.5f * height - 0.5f) - floor(centre - 0.5f * height - 0.5f) - 1.0f;
-        column             = height / max(count, 1.0f);
-    }
-    o.color = float4(emissive * (g_materials[mat].emissive_packed.a * i.emissive_mul * column), alpha);
+    /* The weight across the width (see above). `across` goes from -1 to 1
+     * across the instance, so its rate of change per pixel gives the width
+     * in bloom pixels. */
+    const float width  = 2.0f / max(length(float2(across_dx, across_dy)), 1e-6f);
+    const float edge   = cos(saturate(abs(i.across)) * 1.5707963f);
+    const float weight = lerp(1.0f, 2.0f * edge * edge, saturate((24.0f - width) / 12.0f));
+    o.color = float4(emissive * (g_materials[mat].emissive_packed.a * i.emissive_mul * weight), alpha);
     return o;
 }

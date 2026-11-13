@@ -1526,11 +1526,12 @@ int AeronScene_DrawEmissionBloom(AeronScene3D* s, AeronRenderPass* pass, int tar
 	draw.depth_map[1] = ry / (float)s->render_h;
 	draw.depth_map[2] = ((float)rvp->x - (float)vp->x * rx) / (float)s->render_w;
 	draw.depth_map[3] = ((float)rvp->y - (float)vp->y * ry) / (float)s->render_h;
-	/* Instances are drawn at least one target pixel wide, keeping their
-	 * light: a strip at least that wide covers a pixel centre in every
-	 * column it crosses (scene_pbr_emission_bloom.frag). */
-	const float target_px = rx > ry ? rx : ry;
-	draw.min_width_px     = p->min_width_px > target_px ? p->min_width_px : target_px;
+	/* Instances are drawn at least three target pixels wide, keeping their
+	 * light, so that the cos^2 weight across them covers enough pixel
+	 * centres to give the same light wherever they lie
+	 * (scene_pbr_emission_bloom.frag). */
+	const float min_px = 3.0f * (rx > ry ? rx : ry);
+	draw.min_width_px  = p->min_width_px > min_px ? p->min_width_px : min_px;
 	draw.scale        = extra;
 	return AeronScenePbr_DrawEmissionBloom(s, pass, p, &draw);
 }
