@@ -31,11 +31,12 @@ typedef struct AeronLodGenerateOptions {
 	/* Let the simplifier remove small disconnected parts. */
 	bool prune;
 	/* The first step of the error ladder (0 for the first) that crosses
-	 * material borders and doesn't lock component borders; level_count or
-	 * more for none. Such a level is meant for models a few pixels across: a
-	 * triangle over several materials takes the material of most of its
-	 * corners, and its other corners become new vertices with that
-	 * material and the UV of the nearest vertex that has it. */
+	 * material borders and UV seams and doesn't lock component borders;
+	 * level_count or more for none. Such a level is meant for models a few
+	 * pixels across. Each of its triangles gets three vertices of its own,
+	 * with the material of most of its corners, its own normal, and the UVs
+	 * of the nearest original triangle of that material, extended to its
+	 * corners. */
 	int coarse_from_level;
 	/* On coarse levels, how much a change of a primitive's average colour
 	 * or emitted light counts as error: a change of 1 (in linear colour,
@@ -58,16 +59,16 @@ typedef struct AeronLodLevel {
 	 * across two materials anyway, which the level leaves out. This should
 	 * stay 0. */
 	uint32_t dropped_triangles;
-	/* The vertices a coarse level adds, numbered after level 0's vertices
-	 * and those of the previous levels, and the level 0 vertex each one
-	 * copies. */
+	/* The vertices a coarse level adds, three for each of its triangles,
+	 * numbered after level 0's vertices and those of the previous levels,
+	 * and the level 0 vertex whose position each one has. */
 	AeronGltfVertex* vertices;
 	uint32_t*        vertex_sources;
 	uint32_t         vertex_count;
 } AeronLodLevel;
 
 /* The default options: the plan's error ladder (0.5%, 2% and 8% of the
- * radius), a 25% minimum gain, 300 triangles, permissive collapses, locked
+ * radius), a 20% minimum gain, 300 triangles, permissive collapses, locked
  * component borders, pruning, only the third level coarse, and an
  * attribute weight of 1. */
 AeronLodGenerateOptions aeron_lod_default_options(void);

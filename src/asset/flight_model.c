@@ -1377,6 +1377,10 @@ static float lod_read_float(const uint8_t* p) {
 	return value;
 }
 
+/* An added vertex in lodData: source, primitive, uv[2], normal[3],
+ * tangent[4]. */
+#define LOD_ADDED_VERTEX_SIZE 44
+
 /* Checks the cooked lodData against level 0 and fills render.lods, with
  * the indices and added vertices. Returns false with `detail` when it
  * doesn't fit. */
@@ -1440,7 +1444,7 @@ static bool load_lod_data(AeronFlightModel* model, char* detail, size_t detail_s
 		}
 		total_indices += lods[l].index_count;
 		total_added += added[l];
-		needed += 4 * (size_t)lods[l].index_count + 16 * (size_t)added[l];
+		needed += 4 * (size_t)lods[l].index_count + LOD_ADDED_VERTEX_SIZE * (size_t)added[l];
 	}
 	if (needed != size || total_indices > UINT32_MAX || render->vertex_count + total_added > UINT32_MAX) {
 		snprintf(detail, detail_size, "size %zu, expected %zu", size, needed);
@@ -1471,7 +1475,7 @@ static bool load_lod_data(AeronFlightModel* model, char* detail, size_t detail_s
 				return false;
 			}
 		}
-		for (uint32_t a = 0; a < added[l]; a++, q += 16) {
+		for (uint32_t a = 0; a < added[l]; a++, q += LOD_ADDED_VERTEX_SIZE) {
 			const uint32_t source = lod_read_u32(q);
 			const uint32_t prim   = lod_read_u32(q + 4);
 			if (source >= render->vertex_count || prim >= render->total_prim_count) {
@@ -1479,11 +1483,16 @@ static bool load_lod_data(AeronFlightModel* model, char* detail, size_t detail_s
 				snprintf(detail, detail_size, "level %u adds an invalid vertex", l + 1);
 				return false;
 			}
+			/* The source gives the position and the component. */
 			AeronGltfVertex* v = &vertices[next++];
 			*v                 = vertices[source];
 			v->prim_id         = prim;
 			v->uv[0]           = lod_read_float(q + 8);
 			v->uv[1]           = lod_read_float(q + 12);
+			for (int k = 0; k < 3; k++)
+				v->normal[k] = lod_read_float(q + 16 + 4 * (size_t)k);
+			for (int k = 0; k < 4; k++)
+				v->tangent[k] = lod_read_float(q + 28 + 4 * (size_t)k);
 		}
 	}
 	render->lod_count        = levels;

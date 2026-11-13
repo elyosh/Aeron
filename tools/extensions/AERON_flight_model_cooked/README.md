@@ -115,7 +115,7 @@ The buffer view contains exactly the following, little-endian:
 char magic[4] = "ALOD", u32 version = 1, u32 level_count, u32 vertex_count
 level[level_count]: f32 error, u32 index_count, u32 class_count[6], u32 added_vertex_count
 then for each level: u32 index[index_count], added_vertex[added_vertex_count]
-added_vertex: u32 source, u32 primitive, f32 uv[2]
+added_vertex: u32 source, u32 primitive, f32 uv[2], f32 normal[3], f32 tangent[4]
 ```
 
 - Levels go from the most detailed to the coarsest, at most 3.
@@ -126,11 +126,13 @@ added_vertex: u32 source, u32 primitive, f32 uv[2]
   triangles: opaque, the opaque triangles with a screen material, mask, the
   mask ones with a screen material, blend, and the blend ones with a screen
   material. Each class's screen triangles end it.
-- An added vertex is a copy of merged vertex `source`, with another
-  primitive (its material) and UV. The added vertices of all levels follow
-  the merged vertices, level after level, and the indices number them in
-  that order. A level uses only the merged vertices and the added vertices
-  of levels up to its own.
+- An added vertex has the position and component of merged vertex
+  `source`, and its own primitive (its material), UV, normal and tangent.
+  As in the merged vertices, the tangent's w is the sign of the bitangent.
+  The coarsest level gives each of its triangles three added vertices.
+- The added vertices of all levels follow the merged vertices, level after
+  level, and the indices number them in that order. A level uses only the
+  merged vertices and the added vertices of levels up to its own.
 
 ## probeData
 

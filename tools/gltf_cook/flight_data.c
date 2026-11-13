@@ -371,6 +371,10 @@ static bool lods_wanted(cJSON* json, int root) {
 	return !cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(lods, "generate"));
 }
 
+/* An added vertex in lodData: source, primitive, uv[2], normal[3],
+ * tangent[4]. */
+#define LOD_ADDED_VERTEX_SIZE 44
+
 static void put_u32(uint8_t* p, uint32_t value) {
 	p[0] = (uint8_t)value;
 	p[1] = (uint8_t)(value >> 8);
@@ -386,13 +390,13 @@ static void put_float(uint8_t* p, float value) {
 
 /* Writes the generated levels in the lodData layout
  * (tools/extensions/AERON_flight_model_cooked/README.md). An added vertex
- * is stored as the level 0 vertex it copies, with its primitive and UV,
- * the only fields the generator changes. */
+ * is stored as the level 0 vertex whose position it has, with the fields
+ * the generator sets: its primitive, UV, normal and tangent. */
 static bool cook_lods(const AeronGltfModel* render, const AeronLodLevel* levels, int count, uint8_t** bytes,
 					  size_t* size) {
 	size_t total = 16 + (size_t)count * 36;
 	for (int l = 0; l < count; l++)
-		total += 4 * (size_t)levels[l].index_count + 16 * (size_t)levels[l].vertex_count;
+		total += 4 * (size_t)levels[l].index_count + LOD_ADDED_VERTEX_SIZE * (size_t)levels[l].vertex_count;
 	uint8_t* p = malloc(total);
 	if (!p)
 		return false;
@@ -412,13 +416,16 @@ static bool cook_lods(const AeronGltfModel* render, const AeronLodLevel* levels,
 	for (int l = 0; l < count; l++) {
 		for (uint32_t i = 0; i < levels[l].index_count; i++, q += 4)
 			put_u32(q, levels[l].indices[i]);
-		for (uint32_t a = 0; a < levels[l].vertex_count; a++, q += 16) {
-			const AeronGltfVertex* v      = &levels[l].vertices[a];
-			const uint32_t         source = levels[l].vertex_sources[a];
-			put_u32(q, source);
+		for (uint32_t a = 0; a < levels[l].vertex_count; a++, q += LOD_ADDED_VERTEX_SIZE) {
+			const AeronGltfVertex* v = &levels[l].vertices[a];
+			put_u32(q, levels[l].vertex_sources[a]);
 			put_u32(q + 4, v->prim_id);
 			put_float(q + 8, v->uv[0]);
 			put_float(q + 12, v->uv[1]);
+			for (int k = 0; k < 3; k++)
+				put_float(q + 16 + 4 * (size_t)k, v->normal[k]);
+			for (int k = 0; k < 4; k++)
+				put_float(q + 28 + 4 * (size_t)k, v->tangent[k]);
 		}
 	}
 	*bytes = p;

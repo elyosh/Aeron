@@ -87,8 +87,7 @@ if(AERON_BUILD_TOOLS)
         C_STANDARD 11
         C_STANDARD_REQUIRED ON)
     add_executable(aeron_lod_report lod_report.c)
-    # The model loader logs through SDL, which the engine library links.
-    target_link_libraries(aeron_lod_report PRIVATE aeron_lod_generate aeron_flight_model aeron)
+    target_link_libraries(aeron_lod_report PRIVATE aeron_lod_generate)
     set_target_properties(aeron_lod_report PROPERTIES
         C_STANDARD 11
         C_STANDARD_REQUIRED ON)

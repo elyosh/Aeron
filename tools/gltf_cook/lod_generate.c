@@ -16,7 +16,7 @@ AeronLodGenerateOptions aeron_lod_default_options(void) {
 	return (AeronLodGenerateOptions) {
 		.relative_errors        = { 0.005f, 0.02f, 0.08f },
 		.level_count            = AERON_LOD_MAX_GENERATED,
-		.min_gain               = 0.25f,
+		.min_gain               = 0.2f,
 		.min_triangles          = 300,
 		.permissive             = true,
 		.lock_component_borders = true,
@@ -241,6 +241,10 @@ typedef struct LodScratch {
 	uint8_t*       seam;           /* per first vertex: a material border or UV seam is at this position */
 	unsigned char* lock;
 	float*         attributes; /* compact vertex appearance, LOD_ATTRIBUTES each */
+	/* On coarse levels, the centre and unit normal of each of a component's
+	 * triangles, in sorted order; a zero normal for a triangle of no area. */
+	float* triangle_centres;
+	float* triangle_normals;
 } LodScratch;
 
 static void scratch_free(LodScratch* s) {
@@ -254,91 +258,50 @@ static void scratch_free(LodScratch* s) {
 	free(s->seam);
 	free(s->lock);
 	free(s->attributes);
+	free(s->triangle_centres);
+	free(s->triangle_normals);
 }
 
 static bool scratch_alloc(LodScratch* s, uint32_t max_class_indices, uint32_t vertex_count) {
 	const size_t n = max_class_indices ? max_class_indices : 1;
 	memset(s, 0, sizeof *s);
-	s->order          = malloc(sizeof *s->order * (n / 3 + 1));
-	s->local          = malloc(sizeof *s->local * n);
-	s->simplified     = malloc(sizeof *s->simplified * n);
-	s->positions      = malloc(sizeof *s->positions * 3 * n);
-	s->source         = malloc(sizeof *s->source * n);
-	s->compact        = malloc(sizeof *s->compact * (vertex_count ? vertex_count : 1));
-	s->position_remap = malloc(sizeof *s->position_remap * n);
-	s->seam           = malloc(n);
-	s->lock           = malloc(n);
-	s->attributes     = malloc(sizeof *s->attributes * LOD_ATTRIBUTES * n);
+	s->order            = malloc(sizeof *s->order * (n / 3 + 1));
+	s->local            = malloc(sizeof *s->local * n);
+	s->simplified       = malloc(sizeof *s->simplified * n);
+	s->positions        = malloc(sizeof *s->positions * 3 * n);
+	s->source           = malloc(sizeof *s->source * n);
+	s->compact          = malloc(sizeof *s->compact * (vertex_count ? vertex_count : 1));
+	s->position_remap   = malloc(sizeof *s->position_remap * n);
+	s->seam             = malloc(n);
+	s->lock             = malloc(n);
+	s->attributes       = malloc(sizeof *s->attributes * LOD_ATTRIBUTES * n);
+	s->triangle_centres = malloc(sizeof *s->triangle_centres * 3 * (n / 3 + 1));
+	s->triangle_normals = malloc(sizeof *s->triangle_normals * 3 * (n / 3 + 1));
 	if (!s->order || !s->local || !s->simplified || !s->positions || !s->source || !s->compact ||
-		!s->position_remap || !s->seam || !s->lock || !s->attributes) {
+		!s->position_remap || !s->seam || !s->lock || !s->attributes || !s->triangle_centres ||
+		!s->triangle_normals) {
 		scratch_free(s);
 		return false;
 	}
 	return true;
 }
 
-/* The vertices a coarse level adds: copies of model vertices with another
- * primitive. A copy is reused when the same vertex needs the same primitive
- * again. */
+/* The vertices a coarse level adds, numbered from `first`. */
 typedef struct NewVertices {
-	const AeronGltfModel* model;
-	uint32_t              first; /* number of the first new vertex */
-	AeronGltfVertex*      items;
-	uint32_t*             sources; /* the model vertex each item copies */
-	uint32_t              count, capacity;
-	uint64_t*             keys; /* (vertex << 32 | primitive) + 1, 0 for empty */
-	uint32_t*             values;
-	uint32_t              slots; /* power of two */
+	uint32_t         first;
+	AeronGltfVertex* items;
+	uint32_t*        sources; /* the model vertex whose position each item has */
+	uint32_t         count, capacity;
 } NewVertices;
 
 static void new_vertices_free(NewVertices* n) {
 	free(n->items);
 	free(n->sources);
-	free(n->keys);
-	free(n->values);
 }
 
-static bool new_vertices_grow(NewVertices* n) {
-	const uint32_t slots  = n->slots ? n->slots * 2 : 1024;
-	uint64_t*      keys   = calloc(slots, sizeof *keys);
-	uint32_t*      values = malloc(sizeof *values * slots);
-	if (!keys || !values) {
-		free(keys);
-		free(values);
-		return false;
-	}
-	for (uint32_t i = 0; i < n->slots; i++) {
-		if (!n->keys[i])
-			continue;
-		uint32_t h = (uint32_t)(n->keys[i] * 0x9E3779B97F4A7C15ull >> 32) & (slots - 1);
-		while (keys[h])
-			h = (h + 1) & (slots - 1);
-		keys[h]   = n->keys[i];
-		values[h] = n->values[i];
-	}
-	free(n->keys);
-	free(n->values);
-	n->keys   = keys;
-	n->values = values;
-	n->slots  = slots;
-	return true;
-}
-
-/* Returns the number of a vertex like model vertex `v`, but with primitive
- * `prim` and the UV of the nearest vertex of that primitive among
- * `candidates`, and adds it if it doesn't exist yet. UINT32_MAX when out of
- * memory. */
-static uint32_t new_vertex(NewVertices* n, uint32_t v, uint32_t prim, const uint32_t* candidates,
-						   uint32_t candidate_count) {
-	if ((n->count + 1) * 2 > n->slots && !new_vertices_grow(n))
-		return UINT32_MAX;
-	const uint64_t key = ((uint64_t)v << 32 | prim) + 1;
-	uint32_t       h   = (uint32_t)(key * 0x9E3779B97F4A7C15ull >> 32) & (n->slots - 1);
-	while (n->keys[h]) {
-		if (n->keys[h] == key)
-			return n->values[h];
-		h = (h + 1) & (n->slots - 1);
-	}
+/* Adds `v`, which has the position of model vertex `source`, and returns its
+ * number. UINT32_MAX when out of memory. */
+static uint32_t new_vertex(NewVertices* n, uint32_t source, const AeronGltfVertex* v) {
 	if (n->count == n->capacity) {
 		const uint32_t   capacity = n->capacity ? n->capacity * 2 : 256;
 		AeronGltfVertex* items    = realloc(n->items, sizeof *items * capacity);
@@ -351,30 +314,134 @@ static uint32_t new_vertex(NewVertices* n, uint32_t v, uint32_t prim, const uint
 			return UINT32_MAX;
 		n->capacity = capacity;
 	}
-	const AeronGltfVertex* from    = &n->model->vertices[v];
-	float                  best    = INFINITY;
-	uint32_t               nearest = v;
-	for (uint32_t i = 0; i < candidate_count; i++) {
-		const AeronGltfVertex* c = &n->model->vertices[candidates[i]];
-		if (c->prim_id != prim)
+	n->items[n->count]   = *v;
+	n->sources[n->count] = source;
+	return n->first + n->count++;
+}
+
+static float dot3(const float* a, const float* b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+/* The unit normal of triangle a, b, c, turned to the side of `side`. False
+ * when the triangle has no area. */
+static bool triangle_normal(const float* a, const float* b, const float* c, const float* side, float* out) {
+	const float e1[3]  = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+	const float e2[3]  = { c[0] - a[0], c[1] - a[1], c[2] - a[2] };
+	out[0]             = e1[1] * e2[2] - e1[2] * e2[1];
+	out[1]             = e1[2] * e2[0] - e1[0] * e2[2];
+	out[2]             = e1[0] * e2[1] - e1[1] * e2[0];
+	const float length = sqrtf(dot3(out, out));
+	if (!(length > 0.0f))
+		return false;
+	const float scale = dot3(out, side) < 0.0f ? -1.0f / length : 1.0f / length;
+	out[0] *= scale;
+	out[1] *= scale;
+	out[2] *= scale;
+	return true;
+}
+
+/* The UV at `pos` of the affine mapping of triangle r: pos is projected on
+ * r's plane and its barycentric coordinates, which may lie outside r, weigh
+ * r's UVs. */
+static void extend_uv(const AeronGltfVertex* const r[3], const float* pos, float* uv) {
+	const float e1[3] = { r[1]->pos[0] - r[0]->pos[0], r[1]->pos[1] - r[0]->pos[1],
+						  r[1]->pos[2] - r[0]->pos[2] };
+	const float e2[3] = { r[2]->pos[0] - r[0]->pos[0], r[2]->pos[1] - r[0]->pos[1],
+						  r[2]->pos[2] - r[0]->pos[2] };
+	const float d[3]  = { pos[0] - r[0]->pos[0], pos[1] - r[0]->pos[1], pos[2] - r[0]->pos[2] };
+	const float d11 = dot3(e1, e1), d12 = dot3(e1, e2), d22 = dot3(e2, e2);
+	const float dd1 = dot3(d, e1), dd2 = dot3(d, e2);
+	const float den = d11 * d22 - d12 * d12;
+	if (!(den != 0.0f))
+		return;
+	const float b1 = (d22 * dd1 - d12 * dd2) / den, b2 = (d11 * dd2 - d12 * dd1) / den;
+	const float b0 = 1.0f - b1 - b2;
+	uv[0]          = b0 * r[0]->uv[0] + b1 * r[1]->uv[0] + b2 * r[2]->uv[0];
+	uv[1]          = b0 * r[0]->uv[1] + b1 * r[1]->uv[1] + b2 * r[2]->uv[1];
+}
+
+/* Writes a coarse level triangle over model vertices `corners` as three
+ * vertices of its own. A coarse triangle replaces faces with other
+ * materials, UV mappings and normals, so the corners' own attributes don't
+ * fit it. The triangle takes the material of most corners, else the first
+ * corner's, and its own normal. Its UVs and tangent come from the nearest
+ * original triangle of that material that faces about the same way,
+ * extended to its corners, so the texture keeps its scale and orientation.
+ * The original triangles are those of the component, `order[first..end)`.
+ * Returns 0 for a triangle of no area, which is left out, and -1 when out
+ * of memory. */
+static int coarse_triangle(const AeronGltfModel* model, const uint32_t* indices, const LodScratch* s,
+						   uint32_t first, uint32_t end, const uint32_t corners[3], NewVertices* added,
+						   uint32_t out[3]) {
+	const AeronGltfVertex* c[3] = { &model->vertices[corners[0]], &model->vertices[corners[1]],
+									&model->vertices[corners[2]] };
+	const uint32_t         p0 = c[0]->prim_id, p1 = c[1]->prim_id, p2 = c[2]->prim_id;
+	const uint32_t         prim = p0 == p1 || p0 == p2 ? p0 : p1 == p2 ? p1 : p0;
+	float                  side[3], normal[3], centre[3];
+	for (int k = 0; k < 3; k++) {
+		side[k]   = c[0]->normal[k] + c[1]->normal[k] + c[2]->normal[k];
+		centre[k] = (c[0]->pos[k] + c[1]->pos[k] + c[2]->pos[k]) / 3.0f;
+	}
+	if (!triangle_normal(c[0]->pos, c[1]->pos, c[2]->pos, side, normal))
+		return 0;
+	/* The nearest triangle that faces within 60 degrees, else the one that
+	 * faces most the same way. */
+	uint32_t reference = UINT32_MAX, closest_facing = UINT32_MAX;
+	float    best_distance = INFINITY, best_facing = -INFINITY;
+	for (uint32_t k = first; k < end; k++) {
+		const uint32_t t = (uint32_t)s->order[k];
+		const float*   n = &s->triangle_normals[3 * (size_t)(k - first)];
+		if (model->vertices[indices[3 * t]].prim_id != prim || (n[0] == 0.0f && n[1] == 0.0f && n[2] == 0.0f))
 			continue;
-		const float dx = c->pos[0] - from->pos[0], dy = c->pos[1] - from->pos[1],
-					dz = c->pos[2] - from->pos[2];
-		const float d  = dx * dx + dy * dy + dz * dz;
-		if (d < best) {
-			best    = d;
-			nearest = candidates[i];
+		const float* o        = &s->triangle_centres[3 * (size_t)(k - first)];
+		const float  d[3]     = { o[0] - centre[0], o[1] - centre[1], o[2] - centre[2] };
+		const float  distance = dot3(d, d);
+		const float  facing   = dot3(n, normal);
+		if (facing >= 0.5f && distance < best_distance) {
+			best_distance = distance;
+			reference     = t;
+		}
+		if (facing > best_facing) {
+			best_facing    = facing;
+			closest_facing = t;
 		}
 	}
-	AeronGltfVertex* out = &n->items[n->count];
-	n->sources[n->count] = v;
-	*out                 = *from;
-	out->prim_id         = prim;
-	out->uv[0]           = n->model->vertices[nearest].uv[0];
-	out->uv[1]           = n->model->vertices[nearest].uv[1];
-	n->keys[h]           = key;
-	n->values[h]         = n->first + n->count;
-	return n->first + n->count++;
+	if (reference == UINT32_MAX)
+		reference = closest_facing;
+	for (int i = 0; i < 3; i++) {
+		AeronGltfVertex v = *c[i];
+		v.prim_id         = prim;
+		memcpy(v.normal, normal, sizeof normal);
+		if (reference != UINT32_MAX) {
+			const AeronGltfVertex* const r[3] = { &model->vertices[indices[3 * reference]],
+												  &model->vertices[indices[3 * reference + 1]],
+												  &model->vertices[indices[3 * reference + 2]] };
+			extend_uv(r, c[i]->pos, v.uv);
+			memcpy(v.tangent, r[0]->tangent, sizeof v.tangent);
+		}
+		/* The tangent at right angles to the new normal. */
+		const float along = dot3(v.tangent, normal);
+		for (int k = 0; k < 3; k++)
+			v.tangent[k] -= along * normal[k];
+		const float length = sqrtf(dot3(v.tangent, v.tangent));
+		if (length > 0.0f) {
+			for (int k = 0; k < 3; k++)
+				v.tangent[k] /= length;
+		} else {
+			/* Any direction in the triangle's plane. */
+			const float axis[3] = { fabsf(normal[0]) < 0.9f ? 1.0f : 0.0f,
+									fabsf(normal[0]) < 0.9f ? 0.0f : 1.0f, 0.0f };
+			const float a       = dot3(axis, normal);
+			for (int k = 0; k < 3; k++)
+				v.tangent[k] = axis[k] - a * normal[k];
+			const float l = sqrtf(dot3(v.tangent, v.tangent));
+			for (int k = 0; k < 3; k++)
+				v.tangent[k] /= l;
+		}
+		out[i] = new_vertex(added, corners[i], &v);
+		if (out[i] == UINT32_MAX)
+			return -1;
+	}
+	return 1;
 }
 
 static int compare_u64(const void* a, const void* b) {
@@ -416,6 +483,19 @@ static float simplify_class(const AeronGltfModel* model, const uint32_t* indices
 				}
 				s->local[index_count++] = s->compact[v];
 			}
+		}
+		/* On a coarse level, the centre and normal of each original
+		 * triangle, to find the triangles that new ones replace. */
+		for (uint32_t k = first; added && k < end; k++) {
+			const uint32_t*        tri  = &indices[3 * (uint32_t)s->order[k]];
+			const AeronGltfVertex* r[3] = { &model->vertices[tri[0]], &model->vertices[tri[1]],
+											&model->vertices[tri[2]] };
+			float*                 o    = &s->triangle_centres[3 * (size_t)(k - first)];
+			float*                 n    = &s->triangle_normals[3 * (size_t)(k - first)];
+			for (int d = 0; d < 3; d++)
+				o[d] = (r[0]->pos[d] + r[1]->pos[d] + r[2]->pos[d]) / 3.0f;
+			if (!triangle_normal(r[0]->pos, r[1]->pos, r[2]->pos, r[0]->normal, n))
+				n[0] = n[1] = n[2] = 0.0f;
 		}
 		/* Unless this is a coarse level, protect the vertices on material
 		 * borders and UV seams. Across a UV seam, a collapse gives a triangle
@@ -460,20 +540,16 @@ static float simplify_class(const AeronGltfModel* model, const uint32_t* indices
 			uint32_t       corner[3] = { a, b, c };
 			const uint32_t pa = model->vertices[a].prim_id, pb = model->vertices[b].prim_id,
 						   pc = model->vertices[c].prim_id;
-			if (pa != pb || pa != pc) {
-				if (!added) {
-					level->dropped_triangles++;
+			if (added) {
+				const int written = coarse_triangle(model, indices, s, first, end,
+													(const uint32_t[3]) { a, b, c }, added, corner);
+				if (written < 0)
+					return -1.0f;
+				if (written == 0)
 					continue;
-				}
-				/* The material of most corners, else the first corner's. */
-				const uint32_t prim = pa == pb || pa == pc ? pa : pb == pc ? pb : pa;
-				for (int k3 = 0; k3 < 3; k3++) {
-					if (model->vertices[corner[k3]].prim_id != prim) {
-						corner[k3] = new_vertex(added, corner[k3], prim, s->source, vertex_count);
-						if (corner[k3] == UINT32_MAX)
-							return -1.0f;
-					}
-				}
+			} else if (pa != pb || pa != pc) {
+				level->dropped_triangles++;
+				continue;
 			}
 			out[(*out_count)++] = corner[0];
 			out[(*out_count)++] = corner[1];
@@ -541,7 +617,7 @@ int aeron_lod_generate(const AeronGltfModel* model, const AeronLodGenerateOption
 		}
 		const float    target      = options->relative_errors[level] * radius;
 		const bool     coarse      = level >= options->coarse_from_level;
-		NewVertices    added       = { .model = model, .first = next_new };
+		NewVertices    added       = { .first = next_new };
 		const unsigned level_flags = coarse ? flags & ~(unsigned)meshopt_SimplifyLockBorder : flags;
 		bool           failed      = false;
 		for (int c = 0; c < 3; c++) {
