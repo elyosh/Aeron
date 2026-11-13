@@ -305,12 +305,14 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 			hdr_peak_scale = 1.0f;
 		}
 	}
-	/* Match the reference bloom's final filter in image-height units. */
-	float bloom_scale = rt_h > 0 ? (float)rt_h / AERON_SCENE_BLOOM_REFERENCE_HEIGHT : 0.0f;
-	float u[32]       = {
+	/* The four bloom taps sit one pixel away on each axis, which is half a
+	 * texel of the half-resolution bloom. With bilinear sampling, that
+	 * rebuilds the bloom with a smooth tent. Taps further apart read two
+	 * separate copies of a thin line, with a flat band between them. */
+	float u[32] = {
 		bloom_tex ? bloom_intensity : 0.0f,
-		rt_w > 0 ? 2.0f * bloom_scale / (float)rt_w : 0.0f,
-		rt_h > 0 ? 2.0f / AERON_SCENE_BLOOM_REFERENCE_HEIGHT : 0.0f,
+		rt_w > 0 ? 1.0f / (float)rt_w : 0.0f,
+		rt_h > 0 ? 1.0f / (float)rt_h : 0.0f,
 		bar_y_uv,
 		exposure,
 		(float)AeronScenePresent_TonemapOp(),

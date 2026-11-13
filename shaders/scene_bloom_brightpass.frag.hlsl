@@ -1,8 +1,13 @@
 /*
  * Bloom bright-pass — first stage of the dual-filter chain.
  *
- * Averages the four HDR flight-RT texels covered by each half-resolution
- * output texel into bloom mip0. There is no brightness threshold: all light
+ * Filters the HDR flight RT into the half-resolution bloom mip0. Each
+ * bilinear tap sits 0.75 source texel from the output texel's centre on
+ * each axis, so it mixes two texels per axis with weights 1/4 and 3/4. The
+ * four taps together give a 1-3-3-1 tent over 4x4 source texels. A plain
+ * average of the 2x2 texels under the output texel has hard edges: around
+ * a thin, very bright line, such as a laser bolt, the bloom then showed as
+ * a hard-edged band. There is no brightness threshold: all light
  * scatters in proportion, as in a lens, and what visibly glows is what is
  * far brighter than its surroundings (emitters, AeronScene_SetEmissiveScale).
  * Pairs with composite_two_rt.vert.
@@ -38,7 +43,7 @@ float3 bloom_source(float3 c)
 
 float4 main(VSOut input) : SV_Target
 {
-    float2 offset = params.xy * 0.5f;
+    float2 offset = params.xy * 0.75f;
     float3 bloom =
         bloom_source(g_src.Sample(s_src, input.uv + offset * float2(-1.0f, -1.0f)).rgb) +
         bloom_source(g_src.Sample(s_src, input.uv + offset * float2( 1.0f, -1.0f)).rgb) +

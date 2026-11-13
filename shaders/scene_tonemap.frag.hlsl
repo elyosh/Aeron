@@ -156,7 +156,7 @@ float4 main(VSOut input) : SV_Target
 
     /* Bloom kernel — selectable at runtime via present_misc.x:
      *   < 0.5 → 1-tap   (single bilinear sample at uv; cheapest)
-     *   else  → 4-tap   (diagonal box with a fixed image-height footprint)
+     *   else  → 4-tap   (diagonal taps one pixel away, a smooth tent)
      * The branch is uniform across the fullscreen quad — no divergence.
      * bloom_mip0 is at half scene-RT resolution (final upsample/filter
      * output of the bloom chain), so 1-tap is already softer than a

@@ -149,8 +149,8 @@ void AeronScenePresentChain_SetDebug(AeronScenePresentChain* chain, const AeronS
  * AeronScenePresent_ExposureFromEv100. `exposure_tex`, when not NULL, is
  * a 1x1 texture whose R also multiplies them: the exposure a scene meters
  * on the GPU (AeronScene_ExposureTexture).
- * The four-tap bloom filter uses the 2160p reference footprint, scaled by
- * image height; (rt_w, rt_h) are the source dimensions.
+ * The four-tap bloom filter samples one pixel away on each axis;
+ * (rt_w, rt_h) are the source dimensions.
  * `src_coverage` != 0 weights the PMA coverage by the scene texel's
  * own alpha — for PiP targets with a transparent background; pass 0
  * for a full-frame present. */
