@@ -190,6 +190,79 @@ static uint8_t image_linear_to_srgb(float c) {
 	return (uint8_t)(s * 255.0f + 0.5f);
 }
 
+/* 2x box filter of an image whose RGB is sRGB, in linear light. With
+ * `straight`, RGB is weighted by alpha, as in
+ * Aeron_ImageDownsampleStraightAlphaRgba8. */
+static uint8_t* image_downsample_srgb(const uint8_t* source, int width, int height, int* out_width,
+									  int* out_height, bool straight) {
+	if (!source || width <= 0 || height <= 0 || !out_width || !out_height)
+		return NULL;
+	const int next_width  = width > 1 ? width / 2 : 1;
+	const int next_height = height > 1 ? height / 2 : 1;
+	uint8_t*  result      = (uint8_t*)malloc((size_t)next_width * next_height * 4u);
+	if (!result)
+		return NULL;
+	/* The linear value of each code, and the linear value halfway between
+	   each code and the next, to find the nearest code. */
+	float linear[256], halfway[255];
+	for (int i = 0; i < 256; i++)
+		linear[i] = image_srgb_to_linear((float)i / 255.0f);
+	for (int i = 0; i < 255; i++)
+		halfway[i] = 0.5f * (linear[i] + linear[i + 1]);
+	for (int y = 0; y < next_height; y++) {
+		for (int x = 0; x < next_width; x++) {
+			float    rgb[3]    = { 0.0f, 0.0f, 0.0f };
+			float    weight    = 0.0f;
+			unsigned alpha_sum = 0;
+			unsigned samples   = 0;
+			for (int dy = 0; dy < 2; dy++) {
+				const int source_y = y * 2 + dy;
+				if (source_y >= height)
+					continue;
+				for (int dx = 0; dx < 2; dx++) {
+					const int source_x = x * 2 + dx;
+					if (source_x >= width)
+						continue;
+					const uint8_t* pixel = source + ((size_t)source_y * width + source_x) * 4u;
+					const float    w     = straight ? (float)pixel[3] / 255.0f : 1.0f;
+					for (int channel = 0; channel < 3; channel++)
+						rgb[channel] += linear[pixel[channel]] * w;
+					weight += w;
+					alpha_sum += pixel[3];
+					samples++;
+				}
+			}
+			uint8_t* output = result + ((size_t)y * next_width + x) * 4u;
+			for (int channel = 0; channel < 3; channel++) {
+				const float value = weight > 0.0f ? rgb[channel] / weight : 0.0f;
+				int         lo = 0, hi = 255;
+				while (lo < hi) {
+					const int mid = (lo + hi) / 2;
+					if (value < halfway[mid])
+						hi = mid;
+					else
+						lo = mid + 1;
+				}
+				output[channel] = (uint8_t)lo;
+			}
+			output[3] = (uint8_t)((alpha_sum + samples / 2u) / samples);
+		}
+	}
+	*out_width  = next_width;
+	*out_height = next_height;
+	return result;
+}
+
+uint8_t* Aeron_ImageDownsampleSrgbRgba8(const uint8_t* source, int width, int height, int* out_width,
+										int* out_height) {
+	return image_downsample_srgb(source, width, height, out_width, out_height, false);
+}
+
+uint8_t* Aeron_ImageDownsampleStraightAlphaSrgbRgba8(const uint8_t* source, int width, int height,
+													 int* out_width, int* out_height) {
+	return image_downsample_srgb(source, width, height, out_width, out_height, true);
+}
+
 uint8_t* Aeron_ImageResizeSrgbRgba8(const uint8_t* source, int width, int height, int out_width,
 									int out_height) {
 	if (!source || width <= 0 || height <= 0 || out_width <= 0 || out_height <= 0)

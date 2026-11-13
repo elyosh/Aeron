@@ -44,6 +44,15 @@ uint8_t* Aeron_ImageDownsampleRgba8(const uint8_t* source, int width, int height
  * filtered in associated-alpha space and stored unassociated. */
 uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int width, int height, int* out_width,
 												 int* out_height);
+/* Like Aeron_ImageDownsampleRgba8 and Aeron_ImageDownsampleStraightAlphaRgba8,
+ * for images whose RGB is sRGB: RGB is averaged in linear light, and alpha
+ * is averaged as it is. A GPU filters an sRGB texture in linear light, so
+ * mip levels made this way keep the average light of the image. Averaging
+ * the stored bytes instead darkens areas where light and dark mix. */
+uint8_t* Aeron_ImageDownsampleSrgbRgba8(const uint8_t* source, int width, int height, int* out_width,
+										int* out_height);
+uint8_t* Aeron_ImageDownsampleStraightAlphaSrgbRgba8(const uint8_t* source, int width, int height,
+													 int* out_width, int* out_height);
 /* Returns a malloc-owned straight-alpha image resized to `out_width` x
  * `out_height` with a Mitchell-Netravali filter, which widens with the ratio
  * when the image shrinks. RGB is sRGB, and is filtered in linear light and

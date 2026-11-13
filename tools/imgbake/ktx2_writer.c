@@ -241,13 +241,16 @@ static uint8_t* make_alpha_encoded_copy(const uint8_t* rgba, int w, int h, Ktx2A
 	return copy;
 }
 
+/* With `srgb`, RGB is averaged in linear light (Aeron_ImageDownsampleSrgbRgba8). */
 static uint8_t* downsample_alpha_encoded_rgba8(const uint8_t* source, int width, int height, int* out_width,
-											   int* out_height, Ktx2AlphaEncoding encoding) {
+											   int* out_height, Ktx2AlphaEncoding encoding, bool srgb) {
 	if (encoding == KTX2_ALPHA_STRAIGHT)
-		return Aeron_ImageDownsampleStraightAlphaRgba8(source, width, height, out_width, out_height);
-	return encoding == KTX2_ALPHA_PREMULTIPLIED || encoding == KTX2_ALPHA_INDEPENDENT
-			   ? Aeron_ImageDownsampleRgba8(source, width, height, out_width, out_height)
-			   : NULL;
+		return srgb ? Aeron_ImageDownsampleStraightAlphaSrgbRgba8(source, width, height, out_width, out_height)
+					: Aeron_ImageDownsampleStraightAlphaRgba8(source, width, height, out_width, out_height);
+	if (encoding != KTX2_ALPHA_PREMULTIPLIED && encoding != KTX2_ALPHA_INDEPENDENT)
+		return NULL;
+	return srgb ? Aeron_ImageDownsampleSrgbRgba8(source, width, height, out_width, out_height)
+				: Aeron_ImageDownsampleRgba8(source, width, height, out_width, out_height);
 }
 
 /* Build the complete KTX2 file image into a fresh malloc'd buffer.
@@ -521,7 +524,7 @@ static bool bc7_with_generated_mips_core(int base_w, int base_h, const uint8_t* 
 	const uint8_t* src = alpha_base;
 	while (ktx2_block_chain_continues(w, h) && n < KTX2_MAX_LEVELS && (max_levels == 0 || n < max_levels)) {
 		int      dw = 0, dh = 0;
-		uint8_t* down = downsample_alpha_encoded_rgba8(src, w, h, &dw, &dh, alpha_encoding);
+		uint8_t* down = downsample_alpha_encoded_rgba8(src, w, h, &dw, &dh, alpha_encoding, tf == KTX2_TF_SRGB);
 		if (!down)
 			break;
 		rgba_owned[n] = down;
@@ -633,8 +636,9 @@ static bool buffer_with_generated_mips(Ktx2Payload payload, uint32_t vk, int bas
 		for (int i = 0; i < n && rgba && ok; ++i) {
 			if (i > 0) {
 				int      dw = 0, dh = 0;
-				uint8_t* down = downsample_alpha_encoded_rgba8(rgba, widths[i - 1], heights[i - 1], &dw, &dh,
-															   alpha_encoding);
+				uint8_t* down =
+					downsample_alpha_encoded_rgba8(rgba, widths[i - 1], heights[i - 1], &dw, &dh, alpha_encoding,
+												   vk == VK_FORMAT_R8G8B8A8_SRGB || vk == VK_FORMAT_BC7_SRGB_BLOCK);
 				free(rgba);
 				rgba = down;
 				if (!rgba || dw != widths[i] || dh != heights[i]) {
@@ -766,7 +770,8 @@ bool write_ktx2_bc7_cubemap_with_generated_mips(const char* path, int face_size,
 		int  dw = 0, dh = 0;
 		bool ok = true;
 		for (int f = 0; f < 6; ++f) {
-			uint8_t* down = Aeron_ImageDownsampleRgba8(rgba_view[n - 1][f], w, h, &dw, &dh);
+			uint8_t* down = tf == KTX2_TF_SRGB ? Aeron_ImageDownsampleSrgbRgba8(rgba_view[n - 1][f], w, h, &dw, &dh)
+											   : Aeron_ImageDownsampleRgba8(rgba_view[n - 1][f], w, h, &dw, &dh);
 			if (!down) {
 				ok = false;
 				break;
@@ -850,7 +855,7 @@ static bool rgba_with_generated_mips_core(const char* path, int base_w, int base
 	const uint8_t* src = alpha_base;
 	while (w > 1 && h > 1 && n < KTX2_MAX_LEVELS && (max_levels == 0 || n < max_levels)) {
 		int      dw = 0, dh = 0;
-		uint8_t* down = downsample_alpha_encoded_rgba8(src, w, h, &dw, &dh, alpha_encoding);
+		uint8_t* down = downsample_alpha_encoded_rgba8(src, w, h, &dw, &dh, alpha_encoding, tf == KTX2_TF_SRGB);
 		if (!down)
 			break;
 		owned[n]         = down; /* freed at end */

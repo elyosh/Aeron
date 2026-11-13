@@ -61,8 +61,14 @@ AeronTexture* aeron_scene_upload_rgba8(AeronCommandBuffer* cmd, const uint8_t* p
 			.color_space  = color_space,
 		};
 		if (mip + 1 < mip_count) {
-			levels[mip + 1] = Aeron_ImageDownsampleRgba8(uploads[mip].pixels, level_width, level_height,
-														 &level_width, &level_height);
+			/* The GPU filters an _SRGB format in linear light, so its mips are
+			   averaged in linear light too. */
+			levels[mip + 1] =
+				format == AERON_TEXTURE_FORMAT_RGBA8_SRGB || format == AERON_TEXTURE_FORMAT_BGRA8_SRGB
+					? Aeron_ImageDownsampleSrgbRgba8(uploads[mip].pixels, level_width, level_height, &level_width,
+													 &level_height)
+					: Aeron_ImageDownsampleRgba8(uploads[mip].pixels, level_width, level_height, &level_width,
+												 &level_height);
 			if (!levels[mip + 1])
 				goto failed;
 		}
