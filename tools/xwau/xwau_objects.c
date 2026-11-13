@@ -1074,23 +1074,38 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 			empty += type_changed;
 			continue;
 		}
-		/* No key sets recordFlags. Bit 0x02 comes from the model, and nothing
-		   reads bit 0x01. For the asset flags, `always_loaded` sets
-		   ASSET_ALWAYS_LOADED and `missions` sets ASSET_MISSION_FLAGS.
-		   OpenXWA adds ASSET_OPT_MODEL to a free slot that gets a model, and
-		   never removes it. `missions` can't set both of its flags: the model
-		   would never load. */
+		const char* type_name = XwauNames_Name(&names->object_types, t);
+		char        type_label[96];
+		if (type_name)
+			snprintf(type_label, sizeof type_label, "object type %d (%s)", t, type_name);
+		else
+			snprintf(type_label, sizeof type_label, "object type %d", t);
+		/* Object type files have no key for the record flags. Bit 0x02 comes
+		   from the model, and nothing reads bit 0x01. */
+		if ((s.recordFlags ^ m.recordFlags) & ~0x03)
+			ReportFatal(
+				mod_root,
+				"%s has record flags 0x%02X in XWINGALLIANCE.EXE instead of the original game's 0x%02X, and "
+				"object type files have no key for this",
+				type_label, m.recordFlags, s.recordFlags);
+		/* `always_loaded` sets ASSET_ALWAYS_LOADED and `missions` sets
+		   ASSET_MISSION_FLAGS. OpenXWA adds ASSET_OPT_MODEL to a free slot that
+		   gets a model, and never removes it. */
 		const uint8_t asset_changes = s.assetFlags ^ m.assetFlags;
 		const uint8_t allowed_asset_changes =
 			ASSET_ALWAYS_LOADED | ASSET_MISSION_FLAGS | (XwauGameType_HasRow(&s) ? 0 : ASSET_OPT_MODEL);
-		if (((s.recordFlags ^ m.recordFlags) & ~0x03) || (asset_changes & ~allowed_asset_changes) ||
-			((asset_changes & ASSET_OPT_MODEL) && !(m.assetFlags & ASSET_OPT_MODEL)) ||
-			(m.assetFlags & ASSET_MISSION_FLAGS) == ASSET_MISSION_FLAGS)
+		if ((asset_changes & ~allowed_asset_changes) ||
+			((asset_changes & ASSET_OPT_MODEL) && !(m.assetFlags & ASSET_OPT_MODEL)))
 			ReportFatal(
 				mod_root,
-				"changes the record flags of object type %d from 0x%02X to 0x%02X, or its asset flags "
-				"from 0x%02X to 0x%02X, and no key sets them",
-				t, s.recordFlags, m.recordFlags, s.assetFlags, m.assetFlags);
+				"%s has asset flags 0x%02X in XWINGALLIANCE.EXE instead of the original game's 0x%02X, and "
+				"object type files have no key for this",
+				type_label, m.assetFlags, s.assetFlags);
+		if ((m.assetFlags & ASSET_MISSION_FLAGS) == ASSET_MISSION_FLAGS)
+			ReportFatal(mod_root,
+						"%s loads its model only in Death Star missions and also never in them, so the model "
+						"never loads",
+						type_label);
 		Change change     = { .objectType  = t,
 							  .model       = mod_model,
 							  .list        = m.list,
