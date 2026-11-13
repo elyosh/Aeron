@@ -238,7 +238,7 @@ typedef struct LodScratch {
 	uint32_t*      source;         /* compact vertex -> model vertex */
 	uint32_t*      compact;        /* model vertex -> compact vertex */
 	uint32_t*      position_remap; /* compact vertex -> first compact vertex at its position */
-	uint8_t*       border;         /* per first vertex: other materials share this position */
+	uint8_t*       seam;           /* per first vertex: a material border or UV seam is at this position */
 	unsigned char* lock;
 	float*         attributes; /* compact vertex appearance, LOD_ATTRIBUTES each */
 } LodScratch;
@@ -251,7 +251,7 @@ static void scratch_free(LodScratch* s) {
 	free(s->source);
 	free(s->compact);
 	free(s->position_remap);
-	free(s->border);
+	free(s->seam);
 	free(s->lock);
 	free(s->attributes);
 }
@@ -266,11 +266,11 @@ static bool scratch_alloc(LodScratch* s, uint32_t max_class_indices, uint32_t ve
 	s->source         = malloc(sizeof *s->source * n);
 	s->compact        = malloc(sizeof *s->compact * (vertex_count ? vertex_count : 1));
 	s->position_remap = malloc(sizeof *s->position_remap * n);
-	s->border         = malloc(n);
+	s->seam           = malloc(n);
 	s->lock           = malloc(n);
 	s->attributes     = malloc(sizeof *s->attributes * LOD_ATTRIBUTES * n);
 	if (!s->order || !s->local || !s->simplified || !s->positions || !s->source || !s->compact ||
-		!s->position_remap || !s->border || !s->lock || !s->attributes) {
+		!s->position_remap || !s->seam || !s->lock || !s->attributes) {
 		scratch_free(s);
 		return false;
 	}
@@ -417,16 +417,21 @@ static float simplify_class(const AeronGltfModel* model, const uint32_t* indices
 				s->local[index_count++] = s->compact[v];
 			}
 		}
-		/* Protect the vertices whose position other materials share, unless
-		 * this is a coarse level. */
+		/* Unless this is a coarse level, protect the vertices on material
+		 * borders and UV seams. Across a UV seam, a collapse gives a triangle
+		 * a corner with the UV of the neighbouring face's mapping, which
+		 * stretches another part of the texture over it. The geometric error
+		 * doesn't see this: on a flat panel the collapse is free. */
 		meshopt_generatePositionRemap(s->position_remap, s->positions, vertex_count, sizeof(float) * 3);
-		memset(s->border, 0, vertex_count);
+		memset(s->seam, 0, vertex_count);
+		for (uint32_t v = 0; v < vertex_count; v++) {
+			const AeronGltfVertex* a = &model->vertices[s->source[v]];
+			const AeronGltfVertex* b = &model->vertices[s->source[s->position_remap[v]]];
+			if (a->prim_id != b->prim_id || a->uv[0] != b->uv[0] || a->uv[1] != b->uv[1])
+				s->seam[s->position_remap[v]] = 1;
+		}
 		for (uint32_t v = 0; v < vertex_count; v++)
-			if (model->vertices[s->source[v]].prim_id !=
-				model->vertices[s->source[s->position_remap[v]]].prim_id)
-				s->border[s->position_remap[v]] = 1;
-		for (uint32_t v = 0; v < vertex_count; v++)
-			s->lock[v] = !added && s->border[s->position_remap[v]] ? meshopt_SimplifyVertex_Protect : 0;
+			s->lock[v] = !added && s->seam[s->position_remap[v]] ? meshopt_SimplifyVertex_Protect : 0;
 
 		/* On a coarse level, a collapse that changes a primitive's average
 		 * appearance counts as error too. */

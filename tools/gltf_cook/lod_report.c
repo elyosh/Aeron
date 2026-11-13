@@ -7,7 +7,8 @@
  * Options change the generator's defaults:
  *   --errors A,B,C     target errors, as fractions of the model's radius
  *   --min-gain G       share of triangles a level must remove (0 to 1)
- *   --no-permissive    don't collapse across UV and normal seams
+ *   --no-permissive    don't collapse across normal seams, nor across UV seams
+ *                      on coarse levels
  *   --free-borders     don't lock the components' open borders
  *   --no-prune         don't let the simplifier remove small disconnected parts
  *   --coarse-from N    the first step of the error ladder (1 to 3) that crosses

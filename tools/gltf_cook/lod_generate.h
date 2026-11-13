@@ -21,8 +21,9 @@ typedef struct AeronLodGenerateOptions {
 	float min_gain;
 	/* Models with fewer triangles get no levels. */
 	uint32_t min_triangles;
-	/* Collapse edges across UV and normal seams. Vertices on a material
-	 * border are protected, so a triangle never mixes two materials. */
+	/* Collapse edges across normal seams. Vertices on a material border or
+	 * a UV seam are protected, so a triangle never mixes two materials or
+	 * two UV mappings. */
 	bool permissive;
 	/* Keep the open borders of each component in place, so that components
 	 * don't crack apart where they meet. */
