@@ -602,6 +602,22 @@ static int load_game_small_objects(const AeronConfigNode* node, CaptureGameScene
 	return 1;
 }
 
+static int load_game_model_lod(const AeronConfigNode* node, CaptureGameScene* game) {
+	static const char* const keys[] = { "max_error", "force", "tint" };
+	if (!only_keys(node, "game_scene.model_lod", keys, sizeof keys / sizeof keys[0]))
+		return 0;
+	const AeronConfigNode* max_error = AeronConfigNode_MapGet(node, "max_error");
+	const AeronConfigNode* force     = AeronConfigNode_MapGet(node, "force");
+	const int64_t          level     = force ? AeronConfigNode_Int(force, -2) : -1;
+	if ((max_error && (!scalar(max_error, &game->lod_max_error) || !(game->lod_max_error >= 0.0f))) ||
+		(force && (AeronConfigNode_Type(force) != AERON_CONFIG_INT || level < 0 || level > 3))) {
+		fprintf(stderr, "game_scene.model_lod takes max_error (0 or more) and force (0 to 3)\n");
+		return 0;
+	}
+	game->lod_force = (int)level;
+	return game_bool(node, "tint", 0, &game->lod_tint);
+}
+
 static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureConfig* config) {
 	const AeronConfigNode* node = AeronConfigFile_GetNode(yaml, "game_scene");
 	if (!node)
@@ -624,7 +640,8 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 										"cluster_debug",
 										"environment",
 										"bolts",
-										"small_objects" };
+										"small_objects",
+										"model_lod" };
 	CaptureGameScene*        game   = &config->game;
 	if (!only_keys(node, "game_scene", keys, sizeof keys / sizeof keys[0]))
 		return 0;
@@ -752,9 +769,12 @@ static int load_game_scene(AeronVfs* vfs, const AeronConfigFile* yaml, CaptureCo
 	const AeronConfigNode* lights = AeronConfigNode_MapGet(node, "point_lights");
 	const AeronConfigNode* bolts  = AeronConfigNode_MapGet(node, "bolts");
 	const AeronConfigNode* small  = AeronConfigNode_MapGet(node, "small_objects");
+	const AeronConfigNode* lod    = AeronConfigNode_MapGet(node, "model_lod");
+	game->lod_force               = -1;
 	if ((lights && !load_game_lights(lights, game)) ||
 		!load_game_instances(AeronConfigNode_MapGet(node, "instances"), config) ||
-		(bolts && !load_game_bolts(bolts, config)) || (small && !load_game_small_objects(small, game)))
+		(bolts && !load_game_bolts(bolts, config)) || (small && !load_game_small_objects(small, game)) ||
+		(lod && !load_game_model_lod(lod, game)))
 		return 0;
 	game->enabled = 1;
 	return 1;

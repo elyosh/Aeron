@@ -37,6 +37,11 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	if (!m) {
 		return;
 	}
+	/* A level shares everything but its index buffer with this mesh. */
+	for (uint32_t level = 0; level < m->lod_count; level++) {
+		Aeron_DestroyBuffer(m->lods[level]->ibo);
+		free(m->lods[level]);
+	}
 	if (m->vbo) {
 		Aeron_DestroyBuffer(m->vbo);
 	}
@@ -726,6 +731,54 @@ static bool mesh_light_variants(AeronSceneMesh* s, const AeronSceneMeshVariants*
 	return true;
 }
 
+/* Builds a mesh for each of the model's levels of detail. It shares this
+ * mesh's buffers, textures and materials, and has its own index buffer and
+ * ranges. If a level fails, it and the coarser ones are left out with a
+ * warning, and the model keeps more detail than it needs. */
+static void build_lods(AeronCommandBuffer* cmd, AeronSceneMesh* s, const AeronGltfModel* model,
+					   const char* name) {
+	for (uint32_t level = 0; level < model->lod_count && level < AERON_GLTF_MAX_LODS; level++) {
+		const AeronGltfLod*   lod   = &model->lods[level];
+		const uint32_t        bytes = lod->index_count * (uint32_t)sizeof(uint32_t);
+		const AeronBufferDesc desc  = { .usage = AERON_BUFFER_USAGE_INDEX, .size = bytes };
+		AeronBuffer*          ibo   = lod->index_count ? Aeron_CreateBuffer(&desc) : NULL;
+		AeronSceneMesh*       copy  = ibo ? malloc(sizeof *copy) : NULL;
+		AeronBufferUploadDesc upload = {
+			.buffer = ibo,
+			.data   = model->lod_indices + lod->index_offset,
+			.size   = bytes,
+		};
+		if (!copy || !Aeron_UploadBufferBatchCmd(cmd, &upload, 1)) {
+			Aeron_LogWarn("aeron.scene", "%s: level of detail %u failed to load; the model stays more detailed",
+						  name, level + 1);
+			Aeron_DestroyBuffer(ibo);
+			free(copy);
+			return;
+		}
+		char buffer_name[512];
+		snprintf(buffer_name, sizeof buffer_name, "%s.lod%u.indices", name, level + 1);
+		Aeron_GpuDebugNameBuffer(ibo, buffer_name);
+		*copy                           = *s;
+		copy->ibo                       = ibo;
+		copy->index_count               = lod->index_count;
+		copy->opaque_index_count        = lod->ranges[0];
+		copy->opaque_screen_index_count = lod->ranges[1];
+		copy->mask_index_offset         = lod->ranges[0];
+		copy->mask_index_count          = lod->ranges[2];
+		copy->mask_screen_index_count   = lod->ranges[3];
+		copy->blend_index_offset        = lod->ranges[0] + lod->ranges[2];
+		copy->blend_index_count         = lod->ranges[4];
+		copy->blend_screen_index_count  = lod->ranges[5];
+		copy->lod_count                 = 0;
+		memset(copy->lods, 0, sizeof copy->lods);
+		copy->lod_base                  = s;
+		copy->lod_level                 = level + 1;
+		s->lods[level]                  = copy;
+		s->lod_error[level]             = lod->error;
+		s->lod_count                    = level + 1;
+	}
+}
+
 static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightModel* flight_model,
 								   const char* debug_name, const AeronSceneMeshVariants* set,
 								   AeronEffectAtlas* effect_atlas, const AeronEffectData* effect_data,
@@ -836,14 +889,16 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 
 	/* ---- Merged VBO / IBO upload ---- */
 	if (model->vertex_count > 0 && model->index_count > 0) {
-		if (model->vertex_count > UINT32_MAX / (uint32_t)sizeof(AeronGltfVertex) ||
+		/* The levels' added vertices follow level 0's in the same buffer. */
+		const uint64_t gpu_vertices = (uint64_t)model->vertex_count + model->lod_vertex_count;
+		if (gpu_vertices > UINT32_MAX / (uint32_t)sizeof(AeronGltfVertex) ||
 			model->index_count > UINT32_MAX / (uint32_t)sizeof(uint32_t)) {
 			Aeron_LogError("aeron.scene", "%s: geometry exceeds 4 GiB buffer limits", name);
 			close_channel_payloads(channel_payloads);
 			AeronScene_MeshDestroy(s);
 			return NULL;
 		}
-		vbo_bytes = model->vertex_count * (uint32_t)sizeof(AeronGltfVertex);
+		vbo_bytes = (uint32_t)gpu_vertices * (uint32_t)sizeof(AeronGltfVertex);
 		ibo_bytes = model->index_count * (uint32_t)sizeof(uint32_t);
 		s->vbo =
 			Aeron_CreateBuffer(&(AeronBufferDesc) { .usage = AERON_BUFFER_USAGE_VERTEX, .size = vbo_bytes });
@@ -1148,6 +1203,8 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	s->bound_max[0] = flight_model->bounds.max.x;
 	s->bound_max[1] = flight_model->bounds.max.y;
 	s->bound_max[2] = flight_model->bounds.max.z;
+	/* Last, so that the levels copy the finished mesh. */
+	build_lods(cmd, s, model, name);
 	if (status) {
 		*status = AERON_SCENE_MESH_CREATE_SUCCESS;
 	}

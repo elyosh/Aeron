@@ -1468,6 +1468,7 @@ void Aeron_GltfMeshFree(AeronGltfModel* m) {
 		return;
 	free(m->vertices);
 	free(m->indices);
+	free(m->lod_indices);
 	free(m->materials);
 	free(m->prim_variant_material);
 	free(m->screen_rects);

@@ -2,14 +2,14 @@
 
 `AERON_flight_model_cooked` holds the data that `aeron_gltf_cook` adds to an
 [AERON_flight_model](../AERON_flight_model/README.md) asset for the game:
-texture locations, precomputed simulation and render data, and baked
-probes. Only the cooker writes it, and only cooked files contain it. A
-cooked file lists it in `extensionsRequired`, because its textures can only
-be found through it, and lists both extensions in `extensionsUsed`. Source
-files contain neither this extension nor its fields.
+texture locations, precomputed simulation and render data, levels of detail,
+and baked probes. Only the cooker writes it, and only cooked files contain
+it. A cooked file lists it in `extensionsRequired`, because its textures can
+only be found through it, and lists both extensions in `extensionsUsed`.
+Source files contain neither this extension nor its fields.
 
 It extends:
-- the model root node: `renderData` and `probeData`;
+- the model root node: `renderData`, `lodData` and `probeData`;
 - component nodes: `simulationData`;
 - textures: their atlas image and page.
 
@@ -91,6 +91,46 @@ one is the lexicographically smallest position. Each next one is the
 vertex with the largest minimum squared distance to the vertices already
 picked, with the lowest index winning ties. A game that needs fewer
 samples uses a prefix.
+
+## lodData
+
+`lodData` holds the model's levels of detail: simpler versions of the
+merged render triangles that the game draws when the model is small on
+screen. The cooker generates them, unless the root's
+[`lods.generate`](../AERON_flight_model/README.md) is false or the model has
+fewer than 300 triangles. Without `lodData` the model is always drawn in
+full. The game draws each instance at the coarsest level whose error, seen
+from the camera, covers at most a set number of pixels.
+
+```json
+"lodData": { "version": 1, "bufferView": 244, "meshHash": "c8a2caaa99132ad6" }
+```
+
+`meshHash` is the same hash as `renderData`'s. Level data made for other
+triangles is ignored with a warning, and the model is drawn in full.
+
+The buffer view contains exactly the following, little-endian:
+
+```text
+char magic[4] = "ALOD", u32 version = 1, u32 level_count, u32 vertex_count
+level[level_count]: f32 error, u32 index_count, u32 class_count[6], u32 added_vertex_count
+then for each level: u32 index[index_count], added_vertex[added_vertex_count]
+added_vertex: u32 source, u32 primitive, f32 uv[2]
+```
+
+- Levels go from the most detailed to the coarsest, at most 3.
+  `vertex_count` is the number of merged render vertices.
+- `error` is the largest distance between the level's surface and the full
+  model's, in metres.
+- `class_count` gives the level's index counts in the order of the merged
+  triangles: opaque, the opaque triangles with a screen material, mask, the
+  mask ones with a screen material, blend, and the blend ones with a screen
+  material. Each class's screen triangles end it.
+- An added vertex is a copy of merged vertex `source`, with another
+  primitive (its material) and UV. The added vertices of all levels follow
+  the merged vertices, level after level, and the indices number them in
+  that order. A level uses only the merged vertices and the added vertices
+  of levels up to its own.
 
 ## probeData
 

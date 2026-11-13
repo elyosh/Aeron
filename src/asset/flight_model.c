@@ -678,6 +678,8 @@ static bool build_model_render_data(const cgltf_data* data, const cgltf_node* ro
 		parse_cooked_extension(root, &cooked) &&
 		parse_cooked_reference(data, cooked, "renderData", "meshHash", &model->has_render_data,
 							   &model->render_data, &model->render_data_size, &model->render_mesh_hash) &&
+		parse_cooked_reference(data, cooked, "lodData", "meshHash", &model->has_lod_data, &model->lod_data,
+							   &model->lod_data_size, &model->lod_mesh_hash) &&
 		build_model_articulations(extension, model) && build_model_articulation_settings(extension, model) &&
 		build_model_component_sets(extension, model) && build_model_reflection_plane(extension, model);
 	cJSON_Delete(cooked);
@@ -1364,6 +1366,145 @@ static bool build_render_bvh(AeronFlightModel* model, const char* source_label) 
 	return model->render_bvh != NULL;
 }
 
+static uint32_t lod_read_u32(const uint8_t* p) {
+	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+static float lod_read_float(const uint8_t* p) {
+	const uint32_t bits = lod_read_u32(p);
+	float          value;
+	memcpy(&value, &bits, sizeof value);
+	return value;
+}
+
+/* Checks the cooked lodData against level 0 and fills render.lods, with
+ * the indices and added vertices. Returns false with `detail` when it
+ * doesn't fit. */
+static bool load_lod_data(AeronFlightModel* model, char* detail, size_t detail_size) {
+	AeronGltfModel* render = &model->render;
+	const uint8_t*  p      = model->lod_data;
+	const size_t    size   = model->lod_data_size;
+	if (size < 16 || memcmp(p, "ALOD", 4) != 0 || lod_read_u32(p + 4) != 1) {
+		snprintf(detail, detail_size, "not version 1 level data");
+		return false;
+	}
+	const uint32_t levels = lod_read_u32(p + 8);
+	if (levels == 0 || levels > AERON_GLTF_MAX_LODS || lod_read_u32(p + 12) != render->vertex_count ||
+		size < 16 + (size_t)levels * 36) {
+		snprintf(detail, detail_size, "%u levels over %u vertices, for a model of %u vertices", levels,
+				 lod_read_u32(p + 12), render->vertex_count);
+		return false;
+	}
+	/* The level indices point into the merged arrays that the loader
+	 * builds, so they only fit the triangles they were made from. When
+	 * renderData loaded, build_render_bvh already checked that the
+	 * triangles hash to its meshHash. */
+	uint64_t mesh_hash = model->render_mesh_hash;
+	if (!model->has_render_data) {
+		const AeronFaceBvhGeometry geometry = {
+			.positions       = render->vertices[0].pos,
+			.position_stride = sizeof *render->vertices,
+			.position_count  = render->vertex_count,
+			.triangles       = render->indices,
+			.triangle_stride = 3 * sizeof *render->indices,
+			.triangle_count  = render->index_count / 3,
+		};
+		mesh_hash = AeronFaceBvh_MeshHash(&geometry);
+	}
+	if (mesh_hash != model->lod_mesh_hash) {
+		snprintf(detail, detail_size, "made for other geometry");
+		return false;
+	}
+	/* The level headers, and the size they add up to. */
+	AeronGltfLod lods[AERON_GLTF_MAX_LODS];
+	uint32_t     added[AERON_GLTF_MAX_LODS];
+	size_t       needed = 16 + (size_t)levels * 36;
+	uint64_t     total_indices = 0, total_added = 0;
+	for (uint32_t l = 0; l < levels; l++) {
+		const uint8_t* h = p + 16 + (size_t)l * 36;
+		lods[l].error        = lod_read_float(h);
+		lods[l].index_count  = lod_read_u32(h + 4);
+		lods[l].index_offset = (uint32_t)total_indices;
+		uint64_t ranges      = 0;
+		for (int k = 0; k < 6; k++) {
+			lods[l].ranges[k] = lod_read_u32(h + 8 + 4 * (size_t)k);
+			if (k % 2 == 0)
+				ranges += lods[l].ranges[k];
+		}
+		added[l] = lod_read_u32(h + 32);
+		if (!(lods[l].error >= 0.0f) || !isfinite(lods[l].error) || lods[l].index_count % 3 != 0 ||
+			ranges != lods[l].index_count || lods[l].ranges[1] > lods[l].ranges[0] ||
+			lods[l].ranges[3] > lods[l].ranges[2] || lods[l].ranges[5] > lods[l].ranges[4]) {
+			snprintf(detail, detail_size, "level %u has invalid ranges", l + 1);
+			return false;
+		}
+		total_indices += lods[l].index_count;
+		total_added += added[l];
+		needed += 4 * (size_t)lods[l].index_count + 16 * (size_t)added[l];
+	}
+	if (needed != size || total_indices > UINT32_MAX || render->vertex_count + total_added > UINT32_MAX) {
+		snprintf(detail, detail_size, "size %zu, expected %zu", size, needed);
+		return false;
+	}
+	uint32_t*        indices  = malloc(sizeof *indices * (size_t)(total_indices ? total_indices : 1));
+	AeronGltfVertex* vertices =
+		realloc(render->vertices, sizeof *vertices * (size_t)(render->vertex_count + total_added));
+	if (!indices || !vertices) {
+		free(indices);
+		if (vertices)
+			render->vertices = vertices;
+		snprintf(detail, detail_size, "out of memory");
+		return false;
+	}
+	render->vertices    = vertices;
+	const uint8_t* q    = p + 16 + (size_t)levels * 36;
+	uint32_t       next = render->vertex_count;
+	for (uint32_t l = 0; l < levels; l++) {
+		/* A level's indices may use level 0's vertices and those added up to
+		 * and including its own. */
+		const uint32_t limit = next + added[l];
+		for (uint32_t i = 0; i < lods[l].index_count; i++, q += 4) {
+			indices[lods[l].index_offset + i] = lod_read_u32(q);
+			if (indices[lods[l].index_offset + i] >= limit) {
+				free(indices);
+				snprintf(detail, detail_size, "level %u indexes past its vertices", l + 1);
+				return false;
+			}
+		}
+		for (uint32_t a = 0; a < added[l]; a++, q += 16) {
+			const uint32_t source = lod_read_u32(q);
+			const uint32_t prim   = lod_read_u32(q + 4);
+			if (source >= render->vertex_count || prim >= render->total_prim_count) {
+				free(indices);
+				snprintf(detail, detail_size, "level %u adds an invalid vertex", l + 1);
+				return false;
+			}
+			AeronGltfVertex* v = &vertices[next++];
+			*v                 = vertices[source];
+			v->prim_id         = prim;
+			v->uv[0]           = lod_read_float(q + 8);
+			v->uv[1]           = lod_read_float(q + 12);
+		}
+	}
+	render->lod_count        = levels;
+	memcpy(render->lods, lods, sizeof lods[0] * levels);
+	render->lod_indices      = indices;
+	render->lod_index_count  = (uint32_t)total_indices;
+	render->lod_vertex_count = (uint32_t)total_added;
+	return true;
+}
+
+/* Loads the cooked levels of detail. Levels that don't fit the model are
+ * left out, with a warning: the model then draws level 0 only. */
+static void build_lods(AeronFlightModel* model, const char* source_label) {
+	if (!model->has_lod_data || !model->render.vertex_count || model->render.index_count < 3)
+		return;
+	char detail[160] = { 0 };
+	if (!load_lod_data(model, detail, sizeof detail))
+		SDL_Log("[flight_model] '%s' has invalid cooked level data (%s); it draws at full detail only",
+				source_label, detail);
+}
+
 bool Aeron_FlightModelBuildData(const cgltf_data* data, const char* source_label, AeronFlightModel* out) {
 	if (!data || !out)
 		return false;
@@ -1381,6 +1522,7 @@ bool Aeron_FlightModelBuildData(const cgltf_data* data, const char* source_label
 		Aeron_FlightModelFree(out);
 		return false;
 	}
+	build_lods(out, source_label ? source_label : "<memory glTF>");
 	return true;
 }
 
@@ -1503,9 +1645,13 @@ void Aeron_FlightModelReleaseSimulationData(AeronFlightModel* model) {
 		component->simulation_data_size = 0;
 	}
 	free(model->render_data);
+	free(model->lod_data);
 	free(model->articulations);
 	free(model->articulation_settings);
 	free(model->component_sets);
+	model->has_lod_data               = false;
+	model->lod_data                   = NULL;
+	model->lod_data_size              = 0;
 	model->component_set_count        = 0;
 	model->component_sets             = NULL;
 	model->has_render_data            = false;
@@ -1543,6 +1689,7 @@ void Aeron_FlightModelFreeSemantics(AeronFlightModel* model) {
 	free(model->lights);
 	free(model->controls);
 	free(model->render_data);
+	free(model->lod_data);
 	/* Render data has its own release path; leave it untouched. */
 	const AeronGltfModel     render     = model->render;
 	AeronFaceBvh* const      render_bvh = model->render_bvh;

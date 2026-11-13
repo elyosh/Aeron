@@ -945,6 +945,9 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 		AeronScene_SetSmallInstanceCull(scene, f->config.game.small_prepass_min_size * px_per_1080,
 										f->config.game.small_draw_min_size * px_per_1080);
 		AeronScene_SetShadowCasterMinSize(scene, f->config.game.small_shadow_min_size * px_per_1080);
+		AeronScene_SetLodMaxError(scene, f->config.game.lod_max_error * px_per_1080);
+		AeronScene_SetLodForce(scene, f->config.game.lod_force);
+		AeronScene_SetLodTint(scene, f->config.game.lod_tint);
 		return AeronScene_Render(scene, cmd) ? AeronScene_SceneRt(scene) : NULL;
 	}
 	AeronScene_SetPost(

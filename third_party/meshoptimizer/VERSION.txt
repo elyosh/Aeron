@@ -1,0 +1,5 @@
+meshoptimizer 1.3
+https://github.com/zeux/meshoptimizer/releases/tag/v1.3
+
+Only the sources the simplifier needs are kept: meshoptimizer.h,
+simplifier.cpp, allocator.cpp and indexgenerator.cpp.

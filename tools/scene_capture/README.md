@@ -34,6 +34,7 @@ the `scene_capture` target.
 | `bolts-benchmark.yaml` | The same scene with 1000 laser bolts and torpedoes. |
 | `flight-sun.yaml` | The same scene with a procedural sun and its lens flare, with the game's default flare elements. |
 | `asteroids.yaml` | An asteroid field from about 150 m to 5 km away, to compare asteroid materials. |
+| `lod-ships.yaml` | Six kinds of craft at radii from 60 to 2.5 px, in front of the lit hull of a Super Star Destroyer, to check levels of detail against a bright background. Needs the TFTC-R models. `lod_ships_scene.py` writes it. |
 | `shadow-casters.yaml` | A battle above a Super Star Destroyer, with shadows on its hull from 2 to 17 km away, to tune the culling of small objects and shadow casters. Needs the TFTC-R models. `shadow_casters_scene.py` writes it and can change the camera, the number of ships or the seed. |
 | `hangar-lights.yaml` | Hangar lit by point lights; `hangar-tubes.yaml` and `hangar-one-sided.yaml` use tube lights. |
 | `hangar-probes.yaml`, `flight-probes.yaml` | Scenes with environment probes. Build the test probes first with `probe_bakes.py --baker <build dir>/environment_bake --out captures/probe-assets`. |
@@ -94,6 +95,7 @@ forward).
 | `cluster_debug` | `true` shows the number of lights per cluster instead of the lit scene. |
 | `key_probe_shadow`, `key_shadow_all_sides`, `probe_occlusion`, `planar_reflection` | Hangar lighting options, as in the game's Hangar Lighting tool. |
 | `small_objects` | `{ prepass_min_size, draw_min_size, shadow_min_size }`: the game's `small_objects` settings, in pixels of a 1080-line view scaled to the image height. 0 (the default) turns one off. Instances smaller than `prepass_min_size` aren't drawn in the depth prepass and cast no shadow. Instances smaller than `draw_min_size` aren't drawn at all. As in the game, these two only apply with MSAA on and temporal upscaling off. A caster smaller than `shadow_min_size` at the depth of a shadow cascade's nearest receivers is left out of that cascade. |
+| `model_lod` | `{ max_error, force, tint }`: the game's `model_lod.max_error`, in pixels of a 1080-line view scaled to the image height (default 0, full detail); `force`, a level of detail (0 to 3) to draw every model at for comparisons; and `tint`, which colours models by their level (green, yellow, red for 1, 2, 3) in builds with the debug UI. Models have levels only once cooked with them. |
 | `bolts` | `{ models, count, center, extent, seed }`: up to 8192 bolts of the `models` listed (taken in turn), drawn as the game draws laser bolts, at random places in the box `center` ± `extent` (metres, camera axes) with random headings. They don't move. `seed` (default 1) picks the places. `min_width_px` (default 0, off) widens the bolts thinner than this many pixels and spreads their light over the wider strip, as the game's `projectiles.min_width_px` does. `fade_width_px` and `fade_power` (default 0, off) fade them as the game's `projectiles` settings do, in render pixels. |
 
 Each instance is `{ model, role, position, rotation_degrees, velocity, markings, probes }`:

@@ -323,6 +323,22 @@ typedef struct AeronGltfScreenRect {
 	char     source_name[AERON_GLTF_SCREEN_NAME_MAX];
 } AeronGltfScreenRect;
 
+/* The most levels of detail a model has after level 0. */
+#define AERON_GLTF_MAX_LODS 3
+
+/* One level of detail: a simpler set of triangles with level 0's classes. */
+typedef struct AeronGltfLod {
+	/* The largest distance from this level's surface to level 0's, in model
+	 * units. */
+	float    error;
+	/* Its indices: index_count of them from index_offset in lod_indices. */
+	uint32_t index_offset;
+	uint32_t index_count;
+	/* Index counts of its classes, in order: opaque, its screen part, mask,
+	 * its screen part, blend, its screen part, as level 0's ranges. */
+	uint32_t ranges[6];
+} AeronGltfLod;
+
 /* ===== Ship asset ===================================================
  *
  * One merged VBO + IBO covers the whole ship; per-vertex `component`
@@ -355,6 +371,15 @@ typedef struct AeronGltfModel {
 	uint32_t         opaque_screen_index_count;
 	uint32_t         mask_screen_index_count;
 	uint32_t         blend_screen_index_count;
+	/* Levels of detail from the cooked `lodData`, coarsest last; 0 without.
+	 * vertex_count and index_count above describe level 0. The vertices that
+	 * only levels use follow level 0's in `vertices`, lod_vertex_count of
+	 * them. */
+	uint32_t         lod_count;
+	AeronGltfLod     lods[AERON_GLTF_MAX_LODS];
+	uint32_t*        lod_indices;
+	uint32_t         lod_index_count;
+	uint32_t         lod_vertex_count;
 
 	/* Per-channel cooked KTX2 atlases (4): BC5/BC7 or RGBA8. */
 	AeronGltfChannelKtx2 channels[AERON_GLTF_CHANNEL_COUNT];

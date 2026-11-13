@@ -511,6 +511,29 @@ void AeronScene_SetSmallInstanceCull(AeronScene3D* scene, float prepass_min_px, 
  * AeronScene_SetSmallInstanceCull, it works with any MSAA and FSR mode. */
 void AeronScene_SetShadowCasterMinSize(AeronScene3D* scene, float min_px);
 
+/* The largest error a level of detail may show, in render pixels; 0 (the
+ * default) draws every model at full detail. Each instance gets the coarsest level of its mesh whose error,
+ * at the distance of the nearest point of its bounds, covers at most this
+ * many pixels. Every pass of the frame draws that level. */
+void AeronScene_SetLodMaxError(AeronScene3D* scene, float max_error_px);
+
+/* For comparisons: draws every instance at this level of detail, or at its
+ * mesh's coarsest when it has fewer; 0 is full detail. -1 (the default)
+ * chooses by AeronScene_SetLodMaxError. */
+void AeronScene_SetLodForce(AeronScene3D* scene, int level);
+
+/* A debug view: tints each instance by the level of detail it draws, green,
+ * yellow and red for levels 1, 2 and 3. Builds with the debug UI only. */
+void AeronScene_SetLodTint(AeronScene3D* scene, int enabled);
+
+/* The instances and their triangles at each level of detail (index 0 is
+ * full detail) in the last rendered frame. */
+typedef struct AeronSceneLodStats {
+	uint32_t instances[AERON_GLTF_MAX_LODS + 1];
+	uint64_t triangles[AERON_GLTF_MAX_LODS + 1];
+} AeronSceneLodStats;
+void AeronScene_GetLodStats(const AeronScene3D* scene, AeronSceneLodStats* out);
+
 /* The minimum width on screen, in render pixels, of emission_only
  * instances, such as laser bolts; 0 turns it off. The width is measured
  * across the bounds' two shorter axes, keeping the one that looks wider. A

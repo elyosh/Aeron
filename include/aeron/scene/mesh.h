@@ -80,7 +80,7 @@ typedef struct AeronSceneMeshCpuVertex {
 #define AERON_SCENE_MESH_LIGHT_VARIANT_WORDS (AERON_SCENE_MESH_LIGHT_VARIANT_INDICES / 32u)
 
 typedef struct AeronSceneMesh {
-	AeronBuffer* vbo; /* merged AeronGltfVertex stream */
+	AeronBuffer* vbo; /* merged AeronGltfVertex stream, then the levels' added vertices */
 	AeronBuffer* ibo; /* uint32 indices */
 	uint32_t     vertex_count;
 	uint32_t     index_count;
@@ -189,6 +189,18 @@ typedef struct AeronSceneMesh {
 	AeronEffectAtlas* effect_atlas;
 	uint32_t*         effect_libraries;
 	uint32_t          effect_library_count;
+	/* Levels of detail, from the model's cooked lodData, coarsest last:
+	 * lod_error is each one's error in model units. A level is a mesh that
+	 * shares this one's vertex buffer, textures and materials, with its own
+	 * index buffer and ranges, and lod_base pointing back to this mesh, which
+	 * owns it. vertex_count, index_count and the CPU copy describe level 0 in
+	 * both. */
+	uint32_t                     lod_count;
+	float                        lod_error[AERON_GLTF_MAX_LODS];
+	struct AeronSceneMesh*       lods[AERON_GLTF_MAX_LODS];
+	const struct AeronSceneMesh* lod_base;
+	/* On a level's mesh, its number (1 for the most detailed); 0 otherwise. */
+	uint32_t                     lod_level;
 } AeronSceneMesh;
 
 typedef enum AeronSceneMeshCreateStatus {

@@ -395,6 +395,7 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	s->color_format = desc && desc->color_format ? desc->color_format : AERON_TEXTURE_FORMAT_R11G11B10_UFLOAT;
 	s->emission.scale = 1.0f;
 	s->emission.bloom = 1.0f;
+	s->lod_force      = -1;
 	AeronSampleCount requested_samples =
 		desc && desc->sample_count ? desc->sample_count : AERON_SAMPLE_COUNT_1;
 	s->sample_count = scene_supported_sample_count(s->color_format, requested_samples);
@@ -1480,6 +1481,33 @@ void AeronScene_SetShadowCasterMinSize(AeronScene3D* s, float min_px) {
 	}
 }
 
+void AeronScene_SetLodMaxError(AeronScene3D* s, float max_error_px) {
+	if (s) {
+		s->lod_max_error_px = max_error_px > 0.0f ? max_error_px : 0.0f;
+	}
+}
+
+void AeronScene_SetLodForce(AeronScene3D* s, int level) {
+	if (s) {
+		s->lod_force = level < 0 ? -1 : level;
+	}
+}
+
+void AeronScene_SetLodTint(AeronScene3D* s, int enabled) {
+	if (s) {
+		s->lod_tint = enabled != 0;
+	}
+}
+
+void AeronScene_GetLodStats(const AeronScene3D* s, AeronSceneLodStats* out) {
+	if (out) {
+		memset(out, 0, sizeof *out);
+		if (s) {
+			*out = s->lod_stats;
+		}
+	}
+}
+
 void AeronScene_SetEmissionMinWidth(AeronScene3D* s, float min_width_px) {
 	if (s) {
 		s->emission.min_width_px = min_width_px > 0.0f ? min_width_px : 0.0f;
@@ -2326,6 +2354,67 @@ static uint32_t scene_prepare_batches(AeronScene3D* s) {
 	return records;
 }
 
+/* How many pixels one model unit of the instance covers at the nearest point
+ * of its bounds; 0 when it has no bounds. The scale is the largest of the
+ * transform's axes, so that a stretched instance stays on the detailed
+ * side. */
+static float scene_instance_px_per_unit(const AeronScene3D* s, const AeronSceneMeshInstance* instance,
+										 float focal_px) {
+	AeronSceneInstanceBox        box_storage;
+	const AeronSceneInstanceBox* box = scene_instance_world_box(instance, &box_storage);
+	if (!box) {
+		return 0.0f;
+	}
+	float d2 = 0.0f;
+	for (int a = 0; a < 3; a++) {
+		const float d = box->center[a] - s->camera.pos[a];
+		d2 += d * d;
+	}
+	const float  distance = fmaxf(sqrtf(d2) - box->radius, s->camera.near_z);
+	const float* t        = instance->transform;
+	float        scale2   = 0.0f;
+	for (int a = 0; a < 3; a++) {
+		const float column = t[a] * t[a] + t[4 + a] * t[4 + a] + t[8 + a] * t[8 + a];
+		const float row    = t[4 * a] * t[4 * a] + t[4 * a + 1] * t[4 * a + 1] + t[4 * a + 2] * t[4 * a + 2];
+		scale2             = fmaxf(scale2, fmaxf(column, row));
+	}
+	return focal_px * sqrtf(scale2) / distance;
+}
+
+/* The level of detail of each instance (AeronScene_SetLodMaxError): its
+ * mesh becomes the level's mesh, for every pass of the frame. */
+static void scene_choose_lods(AeronScene3D* s) {
+	memset(&s->lod_stats, 0, sizeof s->lod_stats);
+	const bool  choose   = s->lod_force >= 0 || (s->lod_max_error_px > 0.0f && s->render_h > 0);
+	const float focal_px = s->render_h > 0 ? (float)s->render_h / (2.0f * tanf(s->camera.v_half_rad)) : 0.0f;
+	for (int i = 0; i < s->instance_count; ++i) {
+		AeronSceneMeshInstance* instance = &s->instances[i];
+		/* An instance rendered again without being added again still has
+		 * last frame's level. */
+		if (instance->mesh && instance->mesh->lod_base) {
+			instance->mesh = instance->mesh->lod_base;
+		}
+		const AeronSceneMesh* mesh = instance->mesh;
+		if (!mesh) {
+			continue;
+		}
+		uint32_t level = 0;
+		if (choose && mesh->lod_count && s->lod_force >= 0) {
+			level = (uint32_t)s->lod_force < mesh->lod_count ? (uint32_t)s->lod_force : mesh->lod_count;
+		} else if (choose && mesh->lod_count) {
+			const float px_per_unit = scene_instance_px_per_unit(s, instance, focal_px);
+			while (level < mesh->lod_count && mesh->lod_error[level] * px_per_unit <= s->lod_max_error_px) {
+				level++;
+			}
+		}
+		if (level > 0) {
+			instance->mesh = mesh->lods[level - 1];
+		}
+		s->lod_stats.instances[level]++;
+		s->lod_stats.triangles[level] += instance->mesh->index_count / 3;
+	}
+}
+
 int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!s || !cmd) {
 		return 0;
@@ -2348,6 +2437,8 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		scene_storage_report_failure(s, "scene.mesh_tables.cpu", (uint32_t)sizeof(AeronSceneMeshTable));
 		return 0;
 	}
+	/* Before anything in the frame reads the instances' meshes. */
+	scene_choose_lods(s);
 	float frustum[5][4];
 	scene_camera_frustum(s, frustum);
 	SceneOrderKey* order_keys = s->order_keys;

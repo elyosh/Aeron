@@ -40,7 +40,8 @@ transforms:
 
 - `model`: `{ "role": "model" }`. Optional fields: `articulations`,
   `articulationSettings`, `componentSets`, `markings`, `energy`,
-  `skinVariants`, `reflectionProbes`, `lightGrid` and `reflectionPlane`.
+  `skinVariants`, `reflectionProbes`, `lightGrid`, `reflectionPlane` and
+  `lods`.
 - `component`: requires `meshType`, the name of the part's mesh type.
   Optional fields: `explosion`, `targetId`, `target`, the descriptor
   geometry, `rotation` and `tags`. `explosion` is a list that can have
@@ -263,6 +264,20 @@ The game shows in the plane the objects inside the probes' grid.
 
 Lights inside the grid's box are baked into the probes and have `baked`
 set (see [Lights](#lights)).
+
+## Levels of detail
+
+The cooker gives a model simpler versions of its triangles, called levels
+of detail, which the game draws when the model is small on screen. A model
+seen only from close, such as a cockpit, doesn't need them. The model root
+can turn them off:
+
+```json
+"lods": { "generate": false }
+```
+
+`generate` is optional and true by default. The cooker never makes levels
+for a model of fewer than 300 triangles.
 
 ## Skins
 

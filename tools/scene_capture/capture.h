@@ -136,6 +136,11 @@ typedef struct CaptureGameScene {
 	/* The game's small_objects settings, in pixels of a 1080-line view; 0 is
 	 * off (AeronScene_SetSmallInstanceCull, AeronScene_SetShadowCasterMinSize). */
 	float             small_prepass_min_size, small_draw_min_size, small_shadow_min_size;
+	/* The game's model_lod.max_error, in pixels of a 1080-line view (0 is
+	 * off), and a level to force for comparisons (-1 for none). */
+	float             lod_max_error;
+	int               lod_force;
+	int               lod_tint; /* the debug tint by level, in builds with the debug UI */
 	CaptureLight      lights[CAPTURE_MAX_LIGHTS];
 	int               light_count;
 } CaptureGameScene;

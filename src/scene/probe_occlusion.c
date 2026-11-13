@@ -197,7 +197,9 @@ static int gather_occluders(AeronScene3D* s, const AeronSceneProbeSet* set, cons
 				(in->shadow_flags & AERON_SCENE_INSTANCE_NO_CAST_SHADOW)) {
 				continue;
 			}
-			AeronSceneOccluder occluder = { in->mesh,
+			/* A level's mesh shares level 0's CPU triangles but has its own
+			 * index count, so occlusion uses the model's own mesh. */
+			AeronSceneOccluder occluder = { in->mesh->lod_base ? in->mesh->lod_base : in->mesh,
 											(uint16_t)(list == 0 ? i : AERON_SCENE_SHADOW_ONLY_BASE + i),
 											occluder_hash(in),
 											{ 0 },

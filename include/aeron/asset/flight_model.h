@@ -342,6 +342,15 @@ typedef struct AeronFlightModel {
 	uint8_t*               render_data;
 	size_t                 render_data_size;
 	uint64_t               render_mesh_hash;
+	/* Cooked levels of detail (`lodData` on the model root): an owned copy
+	 * of its buffer view, which the builds that include render data turn
+	 * into render.lods. Its layout is in
+	 * tools/extensions/AERON_flight_model_cooked/README.md. Its meshHash is
+	 * the same as renderData's. */
+	bool                   has_lod_data;
+	uint8_t*               lod_data;
+	size_t                 lod_data_size;
+	uint64_t               lod_mesh_hash;
 	/* Box-only BVH over the merged render triangles (renderer frame, metres),
 	 * filled by the render-including builds: cooked when renderData is
 	 * present, otherwise built at load. NULL for semantic-only builds. Freed

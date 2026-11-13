@@ -5,14 +5,16 @@
  * Runs on the cooked GLB. For each component it writes `simulationData` (the
  * face BVH and the 256-entry farthest-point vertex sample over the simulation
  * topology). For the model root it writes `renderData` (a box-only BVH over
- * the merged render triangles) and, when given a probes bake, `probeData`
- * (the bake layout and its two KTX2 images). The probe authoring fields are
+ * the merged render triangles), `lodData` (the generated levels of detail)
+ * unless the root's `lods.generate` is false, and, when given a probes
+ * bake, `probeData` (the bake layout and its two KTX2 images). The probe authoring fields are
  * only input to the bake, so they are removed. The data is appended to the
  * GLB's binary chunk as new buffer views, and existing references are
  * replaced. The result is reloaded and verified exactly as a game loads it.
  */
 
 #include "flight_data.h"
+#include "lod_generate.h"
 
 #include "aeron/asset/flight_model.h"
 #include "aeron/asset/opt_sim_model.h"
@@ -359,6 +361,71 @@ done:
 	return ok;
 }
 
+/* False when the model root's AERON_flight_model sets `lods.generate` to
+ * false. */
+static bool lods_wanted(cJSON* json, int root) {
+	const cJSON* node       = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(json, "nodes"), root);
+	const cJSON* extensions = cJSON_GetObjectItemCaseSensitive(node, "extensions");
+	const cJSON* extension  = cJSON_GetObjectItemCaseSensitive(extensions, AERON_FLIGHT_MODEL_EXTENSION);
+	const cJSON* lods       = cJSON_GetObjectItemCaseSensitive(extension, "lods");
+	return !cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(lods, "generate"));
+}
+
+static void put_u32(uint8_t* p, uint32_t value) {
+	p[0] = (uint8_t)value;
+	p[1] = (uint8_t)(value >> 8);
+	p[2] = (uint8_t)(value >> 16);
+	p[3] = (uint8_t)(value >> 24);
+}
+
+static void put_float(uint8_t* p, float value) {
+	uint32_t bits;
+	memcpy(&bits, &value, sizeof bits);
+	put_u32(p, bits);
+}
+
+/* Writes the generated levels in the lodData layout
+ * (tools/extensions/AERON_flight_model_cooked/README.md). An added vertex
+ * is stored as the level 0 vertex it copies, with its primitive and UV,
+ * the only fields the generator changes. */
+static bool cook_lods(const AeronGltfModel* render, const AeronLodLevel* levels, int count, uint8_t** bytes,
+					  size_t* size) {
+	size_t total = 16 + (size_t)count * 36;
+	for (int l = 0; l < count; l++)
+		total += 4 * (size_t)levels[l].index_count + 16 * (size_t)levels[l].vertex_count;
+	uint8_t* p = malloc(total);
+	if (!p)
+		return false;
+	memcpy(p, "ALOD", 4);
+	put_u32(p + 4, 1);
+	put_u32(p + 8, (uint32_t)count);
+	put_u32(p + 12, render->vertex_count);
+	for (int l = 0; l < count; l++) {
+		uint8_t* h = p + 16 + (size_t)l * 36;
+		put_float(h, levels[l].error);
+		put_u32(h + 4, levels[l].index_count);
+		for (int k = 0; k < 6; k++)
+			put_u32(h + 8 + 4 * (size_t)k, levels[l].ranges[k]);
+		put_u32(h + 32, levels[l].vertex_count);
+	}
+	uint8_t* q = p + 16 + (size_t)count * 36;
+	for (int l = 0; l < count; l++) {
+		for (uint32_t i = 0; i < levels[l].index_count; i++, q += 4)
+			put_u32(q, levels[l].indices[i]);
+		for (uint32_t a = 0; a < levels[l].vertex_count; a++, q += 16) {
+			const AeronGltfVertex* v      = &levels[l].vertices[a];
+			const uint32_t         source = levels[l].vertex_sources[a];
+			put_u32(q, source);
+			put_u32(q + 4, v->prim_id);
+			put_float(q + 8, v->uv[0]);
+			put_float(q + 12, v->uv[1]);
+		}
+	}
+	*bytes = p;
+	*size  = total;
+	return true;
+}
+
 static bool cook_render(const AeronGltfModel* render, uint8_t** bytes, size_t* size, uint64_t* hash) {
 	const AeronFaceBvhGeometry geometry = {
 		.positions       = render->vertices[0].pos,
@@ -393,8 +460,8 @@ static bool load_uncooked(const uint8_t* bytes, size_t size, AeronFlightModel* m
 
 /* Loads the result the way a game does; every BVH must come from cooked
  * data. */
-static bool verify(const uint8_t* bytes, size_t size, bool expect_render_data, bool expect_probes, char* error,
-				   size_t error_size) {
+static bool verify(const uint8_t* bytes, size_t size, bool expect_render_data, bool expect_probes,
+				   uint32_t expect_lods, char* error, size_t error_size) {
 	AeronFlightModel model;
 	if (!Aeron_FlightModelBuildMemory(bytes, size, "cooked flight data", &model))
 		return cook_error(error, error_size, "cooked GLB failed to load");
@@ -411,6 +478,8 @@ static bool verify(const uint8_t* bytes, size_t size, bool expect_render_data, b
 		ok = cook_error(error, error_size, "the model still loads without cooked render data");
 	if (ok && expect_probes && !model.probes)
 		ok = cook_error(error, error_size, "the model loads without its probes");
+	if (ok && model.render.lod_count != expect_lods)
+		ok = cook_error(error, error_size, "the model loads without its levels of detail");
 	if (sim.meshes)
 		Aeron_OptSimModelFree(&sim);
 	Aeron_FlightModelFree(&model);
@@ -471,17 +540,42 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, const char* 
 		}
 	}
 	const bool has_render = model.render.vertex_count && model.render.index_count >= 3;
+	uint64_t   mesh_hash  = 0;
 	if (has_render) {
 		uint8_t* bytes = NULL;
 		size_t   size  = 0;
-		uint64_t hash  = 0;
 		uint32_t view  = 0;
-		const bool added = cook_render(&model.render, &bytes, &size, &hash) &&
+		cJSON*     cooked = node_cooked_extension(glb.json, root);
+		const bool added  = cook_render(&model.render, &bytes, &size, &mesh_hash) &&
 						   glb_append_view(&glb, bytes, size, &view) &&
-						   add_reference(node_cooked_extension(glb.json, root), "renderData", "meshHash", view, hash);
+						   add_reference(cooked, "renderData", "meshHash", view, mesh_hash);
 		free(bytes);
 		if (!added) {
 			cook_error(error, error_size, "cooking render data failed");
+			goto done;
+		}
+	}
+	int lod_count = 0;
+	if (has_render && lods_wanted(glb.json, root)) {
+		AeronLodLevel                 levels[AERON_LOD_MAX_GENERATED];
+		const AeronLodGenerateOptions options = aeron_lod_default_options();
+		lod_count                             = aeron_lod_generate(&model.render, &options, levels);
+		if (lod_count < 0) {
+			cook_error(error, error_size, "out of memory generating levels of detail");
+			goto done;
+		}
+		uint8_t*   bytes = NULL;
+		size_t     size  = 0;
+		uint32_t   view  = 0;
+		cJSON*     cooked = node_cooked_extension(glb.json, root);
+		const bool added  = lod_count == 0 || (cook_lods(&model.render, levels, lod_count, &bytes, &size) &&
+											   glb_append_view(&glb, bytes, size, &view) &&
+											   add_reference(cooked, "lodData", "meshHash", view, mesh_hash));
+		free(bytes);
+		for (int l = 0; l < lod_count; l++)
+			aeron_lod_level_free(&levels[l]);
+		if (!added) {
+			cook_error(error, error_size, "cooking levels of detail failed");
 			goto done;
 		}
 	}
@@ -492,7 +586,7 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, const char* 
 		cook_error(error, error_size, "out of memory serializing GLB");
 		goto done;
 	}
-	if (!verify(*out, *out_size, has_render, probes_dir != NULL, error, error_size)) {
+	if (!verify(*out, *out_size, has_render, probes_dir != NULL, (uint32_t)lod_count, error, error_size)) {
 		free(*out);
 		*out = NULL;
 		goto done;

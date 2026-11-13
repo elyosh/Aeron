@@ -889,9 +889,10 @@ static cJSON* turn_steps_degrees(int steps) {
 
 /* Builds the AERON_flight_model object of the model root. It holds the
  * articulations in option order, the articulation settings, the component
- * sets, the markings, and the energy shared by the materials (bits of
- * kAnimEnergies). speedBackDegrees is written only when it differs from
- * speedDegrees. Returns NULL when out of memory. */
+ * sets, the markings, the energy shared by the materials (bits of
+ * kAnimEnergies), and `lods` for a model seen only from close.
+ * speedBackDegrees is written only when it differs from speedDegrees.
+ * Returns NULL when out of memory. */
 static cJSON* root_extension(const Build* b, unsigned energy) {
 	const OptGltfBuildOptions* o    = b->options;
 	cJSON*                     root = cJSON_CreateObject();
@@ -926,6 +927,10 @@ static cJSON* root_extension(const Build* b, unsigned energy) {
 	}
 	ok = ok && skin_variants_json((Build*)b, root, b->variants) && markings_json(root, b->variants, b->max_state_count) &&
 		 (!energy || opt_gltf_add_energy(root, energy));
+	if (ok && o->model.seen_close) {
+		cJSON* lods = OptJson_AddObject(root, "lods");
+		ok          = lods && OptJson_Add(lods, "generate", cJSON_CreateFalse());
+	}
 	if (!ok) {
 		cJSON_Delete(root);
 		return NULL;

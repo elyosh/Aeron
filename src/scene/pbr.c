@@ -633,7 +633,8 @@ static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kin
 
 #ifdef AERON_DEBUG_UI
 static int pbr_debug_active(const struct AeronScene3D* s) {
-	return s->pbr_debug_views || s->directional_shadow.debug_cascades || s->cluster_desc.debug_view;
+	return s->pbr_debug_views || s->directional_shadow.debug_cascades || s->cluster_desc.debug_view ||
+		   s->lod_tint;
 }
 
 static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull) {
@@ -642,9 +643,10 @@ static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kin
 	}
 	if (!s->pbr_debug_tried) {
 		s->pbr_debug_tried = 1;
-		s->pbr_debug_fs    = pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+		/* The debug shaders have a fourth uniform block, PbrDebugFS. */
+		s->pbr_debug_fs    = pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 4, 7);
 		s->pbr_mask_debug_fs =
-			pbr_shader("scene_pbr_mesh_mask_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+			pbr_shader("scene_pbr_mesh_mask_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 4, 7);
 	}
 	if (!s->pbr_debug_fs || !s->pbr_mask_debug_fs) {
 		return NULL;
@@ -1147,6 +1149,15 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 		}
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 3, &anim, sizeof anim);
 	}
+#ifdef AERON_DEBUG_UI
+	/* The debug shaders' level of detail block, last so that it replaces
+	 * the animation block, whose slot it takes. Without the debug shaders,
+	 * draws keep their own pipelines and need the animation block. */
+	if (!depth_only && pbr_debug_active(s) && s->pbr_debug_fs && s->pbr_mask_debug_fs) {
+		const uint32_t lod[4] = { s->lod_tint ? 1u : 0u, m->lod_level, 0u, 0u };
+		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 3, lod, sizeof lod);
+	}
+#endif
 }
 
 /* The batch's uniforms and its records, for a draw with the instanced

@@ -353,6 +353,23 @@ typedef struct Conversion {
 	int32_t*        control_textures;
 } Conversion;
 
+/* Whether the game only shows the model from close. It knows these models
+ * by the names it gives them: <name>Cockpit and <name>Exterior for the
+ * player's craft, <ship>Gunner and <ship>Gunner2 for its gunner seats, and
+ * the fallbacks TieCockpit, CombatSimCockpit and CorellianTransportGunner. A
+ * gunner seat with another name in a [Turrets] line is missed, and gets
+ * levels of detail it never uses. */
+static bool seen_close(const char* basename) {
+	static const char* const kEndings[] = { "cockpit", "exterior", "gunner", "gunner2" };
+	const size_t             length     = strlen(basename);
+	for (size_t i = 0; i < sizeof kEndings / sizeof kEndings[0]; ++i) {
+		const size_t ending = strlen(kEndings[i]);
+		if (length >= ending && strcasecmp(basename + length - ending, kEndings[i]) == 0)
+			return true;
+	}
+	return false;
+}
+
 /* Sets the options of stock mode, as the original game draws the model. */
 static bool prepare_stock(Conversion* c, const ModelConversion* mc, const char* basename, const char* label) {
 	c->options.geometry.normals              = OPT_GLTF_NORMALS_SMOOTHED;
@@ -1030,6 +1047,7 @@ bool ModelConversion_Build(const ModelConversion* mc, const char* opt_path, cons
 			 bake_xwau(c, mc, opt, basename, opt_path);
 	else if (ok)
 		ok = prepare_stock(c, mc, basename, opt_path) && place_cockpit(c, opt, opt_path);
+	c->options.model.seen_close = seen_close(basename);
 	/* The classic emission of the model, as physical radiance. */
 	if (ok)
 		c->options.material.emission_radiance = CLASSIC_RADIANCE;

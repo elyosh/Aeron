@@ -159,6 +159,16 @@ SamplerState g_specular_environment_sampler : register(s8, space2);
 Texture2D<float2> g_brdf_lut : register(t9, space2);
 SamplerState g_brdf_lut_sampler : register(s9, space2);
 
+#if AERON_PBR_DEBUG_VIEWS && !AERON_PBR_ANIM
+/* The instance's level of detail, for its tint (AeronScene_SetLodTint):
+ * x is 1 when the tint is on, y the level. Debug views draw without
+ * animation, so this takes the animation block's slot. */
+cbuffer PbrDebugFS : register(b3, space3)
+{
+    uint4 fs_debug_lod;
+};
+#endif
+
 #if AERON_PBR_ANIM
 /* Effect atlas (layer, emissive) and the mesh's animation records. */
 Texture2DArray g_effect_layer : register(t12, space2);
@@ -1258,6 +1268,20 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         _out.color = float4(cascade_color, 1.0f);
         return _out;
     }
+#if !AERON_PBR_ANIM
+    if (fs_debug_lod.x != 0u) {
+        /* Full detail keeps its colours; levels 1, 2 and 3 turn green,
+         * yellow and red. */
+        const float3 lod_tints[4] = {
+            float3(1.0f, 1.0f, 1.0f),
+            float3(0.35f, 1.0f, 0.35f),
+            float3(1.0f, 0.85f, 0.25f),
+            float3(1.0f, 0.3f, 0.3f)
+        };
+        const float3 tint = lod_tints[min(fs_debug_lod.y, 3u)];
+        lit = lit * tint + tint * (fs_debug_lod.y != 0u ? 0.02f : 0.0f);
+    }
+#endif
 #endif
 
     int isolate = 0;

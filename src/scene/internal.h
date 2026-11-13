@@ -449,6 +449,14 @@ struct AeronScene3D {
 	int   small_cull_active;
 	/* AeronScene_SetShadowCasterMinSize, in render pixels; 0 is off. */
 	float shadow_caster_min_px;
+	/* AeronScene_SetLodMaxError, in render pixels (0 is off), and
+	 * AeronScene_SetLodForce (-1 is off). */
+	float lod_max_error_px;
+	int   lod_force;
+	/* AeronScene_SetLodTint. */
+	int   lod_tint;
+	/* The levels chosen in the last frame (AeronScene_GetLodStats). */
+	AeronSceneLodStats lod_stats;
 	/* The current settings of emission_only instances. */
 	AeronSceneEmissionParams emission;
 	/* A copy of `emission` taken by AeronScene_Render. The bloom draw

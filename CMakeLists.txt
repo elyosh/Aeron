@@ -826,6 +826,23 @@ set_target_properties(aeron_cgltf PROPERTIES
     C_EXTENSIONS OFF
 )
 
+# meshoptimizer's simplifier, for the generated levels of detail. Its output
+# goes into cooked files, so it is built without contracting floating-point
+# operations, like flight_data.c.
+add_library(aeron_meshoptimizer STATIC
+    third_party/meshoptimizer/allocator.cpp
+    third_party/meshoptimizer/indexgenerator.cpp
+    third_party/meshoptimizer/simplifier.cpp
+)
+target_include_directories(aeron_meshoptimizer PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/meshoptimizer
+)
+if(MSVC)
+    target_compile_options(aeron_meshoptimizer PRIVATE /fp:precise)
+else()
+    target_compile_options(aeron_meshoptimizer PRIVATE -ffp-contract=off)
+endif()
+
 add_library(aeron_cjson STATIC
     third_party/cjson/cJSON.c
 )

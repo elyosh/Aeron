@@ -63,8 +63,33 @@ if(AERON_BUILD_TOOLS)
     target_include_directories(aeron_gltf_cook_tool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(aeron_gltf_cook_tool
         PUBLIC aeron_gltf_cook_lib
-        PRIVATE aeron_effect_library aeron_flight_model aeron_collision aeron_cjson aeron_yaml_json aeron_tool_log)
+        PRIVATE aeron_effect_library aeron_flight_model aeron_collision aeron_cjson aeron_yaml_json aeron_tool_log
+            aeron_lod_generate)
     set_target_properties(aeron_gltf_cook_tool PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON)
+
+    # Generated levels of detail, and aeron_lod_report, which measures them
+    # on cooked models.
+    add_library(aeron_lod_generate STATIC lod_generate.c)
+    target_include_directories(aeron_lod_generate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(aeron_lod_generate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/bcdec)
+    # aeron_scene's KTX2 reader and imgbake's sRGB table measure each
+    # primitive's average appearance.
+    target_link_libraries(aeron_lod_generate PUBLIC aeron_flight_model PRIVATE aeron_meshoptimizer aeron_scene imgbake)
+    if(NOT MSVC)
+        target_link_libraries(aeron_lod_generate PRIVATE m)
+        set_source_files_properties(lod_generate.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+    else()
+        set_source_files_properties(lod_generate.c PROPERTIES COMPILE_OPTIONS "/fp:precise")
+    endif()
+    set_target_properties(aeron_lod_generate PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON)
+    add_executable(aeron_lod_report lod_report.c)
+    # The model loader logs through SDL, which the engine library links.
+    target_link_libraries(aeron_lod_report PRIVATE aeron_lod_generate aeron_flight_model aeron)
+    set_target_properties(aeron_lod_report PROPERTIES
         C_STANDARD 11
         C_STANDARD_REQUIRED ON)
 

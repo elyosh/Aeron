@@ -1,0 +1,77 @@
+# Levels of detail test scene, written by lod_ships_scene.py. Rows from the
+# top: tiefighter, tieinterceptor, xwing, ywing, awing, assaultgunboat. From
+# left to right, each craft's radius on screen is 60, 30, 15, 8, 4, 2.5
+# pixels. Behind them, the lit hull of a Super Star Destroyer 7 km away. Set
+# asset_root to the folder holding mod/flight/models with the TFTC-R models.
+width: 2560
+height: 1440
+frames: 1
+fps: 60
+pan_degrees_per_second: 0
+pan_direction_degrees: 0
+shutter: 0.5
+quality: 0
+reference_samples: 0
+msaa_samples: 4
+cull: back
+bloom:
+  intensity: 0.15
+  kernel: 4
+tonemap: agx
+output_dir: captures/lod-ships
+asset_root: .
+models:
+  - mod/flight/models/superstardestroyertftc.glb
+  - mod/flight/models/tiefighter.glb
+  - mod/flight/models/tieinterceptor.glb
+  - mod/flight/models/xwing.glb
+  - mod/flight/models/ywing.glb
+  - mod/flight/models/awing.glb
+  - mod/flight/models/assaultgunboat.glb
+game_scene:
+  defaults: aeron/config/scene3d_defaults.yaml
+  sun_direction: [0.35,-0.45,-0.82]
+  sun_color: [2.513, 2.513, 2.513]
+  ambient: 0.08
+  small_objects:
+    prepass_min_size: 2.5
+    draw_min_size: 2.0
+    shadow_min_size: 4.0
+  instances:
+    - { model: mod/flight/models/superstardestroyertftc.glb, position: [-0.00, -0.00, 7460.22], rotation_degrees: [90, 180, 90] }
+    - { model: mod/flight/models/tiefighter.glb, position: [-83.35, -30.34, 114.64], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tiefighter.glb, position: [-112.65, -68.33, 258.23], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tiefighter.glb, position: [-80.71, -146.88, 555.05], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tiefighter.glb, position: [151.33, -275.40, 1040.73], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tiefighter.glb, position: [844.85, -512.50, 1936.75], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tiefighter.glb, position: [2000.40, -728.09, 2751.45], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tieinterceptor.glb, position: [-81.11, -17.71, 111.56], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tieinterceptor.glb, position: [-110.05, -40.05, 252.28], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tieinterceptor.glb, position: [-79.07, -86.34, 543.80], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tieinterceptor.glb, position: [148.26, -161.89, 1019.63], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tieinterceptor.glb, position: [825.36, -300.41, 1892.06], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/tieinterceptor.glb, position: [1946.67, -425.12, 2677.55], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [-98.82, -7.19, 135.93], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [-134.35, -16.30, 307.99], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [-96.68, -35.19, 664.92], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [181.28, -65.98, 1246.72], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [1007.64, -122.25, 2309.95], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/xwing.glb, position: [2371.76, -172.65, 3262.25], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [-107.53, 7.83, 147.91], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [-146.19, 17.74, 335.14], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [-105.21, 38.29, 723.53], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [197.26, 71.80, 1356.61], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [1096.46, 133.03, 2513.55], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/ywing.glb, position: [2580.81, 187.87, 3549.78], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/awing.glb, position: [-52.97, 11.57, 72.86], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/awing.glb, position: [-71.87, 26.16, 164.76], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/awing.glb, position: [-51.64, 56.39, 355.15], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/awing.glb, position: [96.83, 105.73, 665.90], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/awing.glb, position: [539.03, 196.19, 1235.67], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/awing.glb, position: [1271.33, 277.64, 1748.66], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/assaultgunboat.glb, position: [-132.02, 48.05, 181.59], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/assaultgunboat.glb, position: [-178.43, 108.24, 409.03], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/assaultgunboat.glb, position: [-127.84, 232.65, 879.19], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/assaultgunboat.glb, position: [239.70, 436.22, 1648.48], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/assaultgunboat.glb, position: [1338.22, 811.79, 3067.75], rotation_degrees: [35, 20, 0] }
+    - { model: mod/flight/models/assaultgunboat.glb, position: [3168.57, 1153.27, 4358.22], rotation_degrees: [35, 20, 0] }

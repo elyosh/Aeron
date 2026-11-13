@@ -1,10 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AERON_flight_model_cooked node extension",
-  "description": "Data that aeron_gltf_cook computes for a node of an AERON_flight_model asset. Only cooked files contain it. The model root has renderData and probeData, and each component has simulationData. Unknown fields are ignored.",
+  "description": "Data that aeron_gltf_cook computes for a node of an AERON_flight_model asset. Only cooked files contain it. The model root has renderData, lodData and probeData, and each component has simulationData. Unknown fields are ignored.",
   "type": "object",
   "properties": {
     "renderData": { "$ref": "#/$defs/renderData" },
+    "lodData": { "$ref": "#/$defs/lodData" },
     "probeData": { "$ref": "#/$defs/probeData" },
     "simulationData": { "$ref": "#/$defs/simulationData" }
   },
@@ -47,6 +48,17 @@
         "version": { "title": "Version", "description": "The data layout's version.", "const": 1 },
         "bufferView": { "title": "Buffer view", "description": "The buffer view holding the data.", "type": "integer", "minimum": 0 },
         "meshHash": { "$ref": "#/$defs/hash", "description": "The hash of the merged render triangles that the data was built from." }
+      }
+    },
+    "lodData": {
+      "title": "Level data",
+      "description": "The model's levels of detail, written by aeron_gltf_cook (README.md gives the buffer view's layout). Without it the model is always drawn in full. Data made for other triangles is ignored with a warning.",
+      "type": "object",
+      "required": ["version", "bufferView", "meshHash"],
+      "properties": {
+        "version": { "title": "Version", "description": "The data layout's version.", "const": 1 },
+        "bufferView": { "title": "Buffer view", "description": "The buffer view holding the data.", "type": "integer", "minimum": 0 },
+        "meshHash": { "$ref": "#/$defs/hash", "description": "The hash of the merged render triangles that the levels were made from, as renderData's." }
       }
     },
     "probeData": {

@@ -424,6 +424,9 @@ typedef struct OptGltfModelOptions {
 	 * radians. Each Cockpit hardpoint (type 31) gets a perspective camera
 	 * with it. 0 writes no camera. */
 	float eye_vertical_fov;
+	/* The model is only seen from close, such as a cockpit: the root sets
+	 * `lods.generate` to false, so the cooker makes no levels of detail. */
+	bool seen_close;
 } OptGltfModelOptions;
 
 /* Conversion options. Zero-initialized options give the defaults. */
