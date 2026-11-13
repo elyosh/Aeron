@@ -42,7 +42,7 @@ OPTIONS = dict(
     seed=1, sun='0.25,-0.9,-0.35', out='captures/shadow-casters', bench=0,
     defaults='aeron/config/scene3d_defaults.yaml',
     # The game's small_objects settings.
-    prepass_min=2.5, draw_min=0.6, shadow_min=4.0,
+    prepass_min=2.5, draw_min=2.0, shadow_min=4.0,
 )
 MODELS = 'mod/flight/models/'
 SSD = MODELS + 'superstardestroyertftc.glb'

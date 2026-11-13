@@ -33,7 +33,7 @@ game_scene:
   ambient: 0.08
   small_objects:
     prepass_min_size: 2.5
-    draw_min_size: 0.6
+    draw_min_size: 2.0
     shadow_min_size: 4.0
   instances:
     - { model: mod/flight/models/superstardestroyertftc.glb, position: [-0.00, -402.65, 8144.52], rotation_degrees: [180.0, -14.0, 0] }
