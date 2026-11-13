@@ -1096,7 +1096,32 @@ static bool primitive_is_screen(const AeronGltfModel* model, uint32_t prim_id) {
  * renderer issues a single indexed draw across all primitives.
  *
  * Also bakes per-vertex `component` (= mesh-table row: the component
- * ordinal, or a control's row) and `prim_id` (= global prim slot). */
+ * ordinal, or a control's row) and `prim_id` (= global prim slot).
+ *
+ * The primitives of a mesh often share one vertex array and each index a
+ * part of it. A primitive copies only the vertices its indices use, in
+ * their accessor order: copying the whole array for each primitive made
+ * the merged buffers 5 to 8 times larger than the triangles need. */
+
+/* Marks the vertices that primitive `p` uses in `used` (pos->count bytes)
+ * and returns how many there are. */
+static uint32_t primitive_used_vertices(const cgltf_primitive* p, const cgltf_accessor* pos, uint8_t* used) {
+	const cgltf_accessor* idx = p->indices;
+	if (!idx) {
+		memset(used, 1, pos->count);
+		return (uint32_t)pos->count;
+	}
+	memset(used, 0, pos->count);
+	uint32_t count = 0;
+	for (cgltf_size i = 0; i < idx->count; i++) {
+		const cgltf_size v = cgltf_accessor_read_index(idx, i);
+		if (v < pos->count && !used[v]) {
+			used[v] = 1;
+			count++;
+		}
+	}
+	return count;
+}
 static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node* node,
 									  uint16_t component_index, uint32_t prim_id, AeronGltfVertex* verts,
 									  uint32_t* indices, uint32_t* voff_io, uint32_t* ioff_io) {
@@ -1113,17 +1138,26 @@ static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node
 	uint32_t voff   = *voff_io;
 	uint32_t ioff   = *ioff_io;
 
-	float* positions = (float*)malloc((size_t)vcount * 3 * sizeof(float));
-	float* normals   = (float*)calloc(vcount, 3 * sizeof(float));
-	float* uvs       = (float*)calloc(vcount, 2 * sizeof(float));
-	float* tangents  = (float*)calloc(vcount, 4 * sizeof(float));
-	if (!positions || !normals || !uvs || !tangents) {
+	float*    positions = (float*)malloc((size_t)vcount * 3 * sizeof(float));
+	float*    normals   = (float*)calloc(vcount, 3 * sizeof(float));
+	float*    uvs       = (float*)calloc(vcount, 2 * sizeof(float));
+	float*    tangents  = (float*)calloc(vcount, 4 * sizeof(float));
+	uint8_t*  used      = (uint8_t*)malloc(vcount ? vcount : 1u);
+	uint32_t* remap     = (uint32_t*)malloc(sizeof(uint32_t) * (vcount ? vcount : 1u));
+	if (!positions || !normals || !uvs || !tangents || !used || !remap) {
 		free(positions);
 		free(normals);
 		free(uvs);
 		free(tangents);
+		free(used);
+		free(remap);
 		return false;
 	}
+	/* The used vertices, numbered in accessor order. */
+	primitive_used_vertices(p, pos, used);
+	uint32_t written = 0;
+	for (uint32_t i = 0; i < vcount; i++)
+		remap[i] = used[i] ? written++ : UINT32_MAX;
 	decode_vec3(pos, positions, vcount);
 	if (nrm)
 		decode_vec3(nrm, normals, vcount);
@@ -1141,7 +1175,9 @@ static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node
 	float matrix[16];
 	cgltf_node_transform_world(node, matrix);
 	for (uint32_t i = 0; i < vcount; i++) {
-		AeronGltfVertex* v = &verts[voff + i];
+		if (remap[i] == UINT32_MAX)
+			continue;
+		AeronGltfVertex* v = &verts[voff + remap[i]];
 		float            transformed[3];
 		transform_point(matrix, &positions[i * 3], transformed);
 		gltf_to_aeron3(transformed, v->pos);
@@ -1159,16 +1195,22 @@ static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node
 	free(normals);
 	free(uvs);
 	free(tangents);
+	free(used);
 
 	/* Indices — biased to the primitive's range inside the ship's
 	 * merged buffer. */
 	uint32_t* dst_idx = indices + ioff;
+	bool      valid   = true;
 	for (uint32_t i = 0; i < icount; i++) {
-		cgltf_size raw = idx ? cgltf_accessor_read_index(idx, i) : i;
-		dst_idx[i]     = (uint32_t)raw + voff;
+		const cgltf_size raw = idx ? cgltf_accessor_read_index(idx, i) : i;
+		valid                = valid && raw < vcount;
+		dst_idx[i]           = valid ? remap[raw] + voff : voff;
 	}
+	free(remap);
+	if (!valid)
+		return false;
 
-	*voff_io = voff + vcount;
+	*voff_io = voff + written;
 	*ioff_io = ioff + icount;
 	return true;
 }
@@ -1290,11 +1332,16 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			if (!pos || p->type != cgltf_primitive_type_triangles)
 				goto cleanup;
 			const cgltf_size prim_i = idx ? idx->count : pos->count;
-			if (pos->count > UINT32_MAX - total_v || prim_i > UINT32_MAX - total_i) {
+			uint8_t*         used   = (uint8_t*)malloc(pos->count ? pos->count : 1u);
+			if (!used)
+				goto cleanup;
+			const uint32_t prim_v = primitive_used_vertices(p, pos, used);
+			free(used);
+			if (prim_v > UINT32_MAX - total_v || prim_i > UINT32_MAX - total_i) {
 				SDL_Log("[flight_gltf] '%s' merged geometry exceeds 32-bit counts", source_label);
 				goto cleanup;
 			}
-			total_v += (uint32_t)pos->count;
+			total_v += prim_v;
 			total_i += (uint32_t)prim_i;
 			total_prims += 1u;
 		}
