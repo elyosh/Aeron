@@ -107,9 +107,10 @@ typedef struct AeronScenePbrEmissionVsBlock {
 	float _pad0;
 	float width_axis_b[3];
 	float _pad1;
-} AeronScenePbrEmissionVsBlock; /* 80 B */
+	float depth_map[4]; /* only for the bloom draw */
+} AeronScenePbrEmissionVsBlock; /* 96 B */
 
-typedef char AeronScenePbrEmissionVsBlockSizeCheck[sizeof(AeronScenePbrEmissionVsBlock) == 80 ? 1 : -1];
+typedef char AeronScenePbrEmissionVsBlockSizeCheck[sizeof(AeronScenePbrEmissionVsBlock) == 96 ? 1 : -1];
 
 /* The widest an emission_only instance gets, as a multiple of its real
  * width. A ribbon seen almost edge-on is about invisible anyway, and
@@ -738,14 +739,51 @@ static AeronGraphicsPipeline* pbr_emission_stamp_pipeline(struct AeronScene3D* s
 	return *pipe;
 }
 
-/* Pushes the second VS cbuffer for an emission batch of mesh `m`. Its
- * width is measured along the two shorter axes of its bounds, and the
- * shader keeps the one that is wider on screen. A laser bolt is a flat
- * ribbon: its longest axis is its length and one short axis has no extent.
- * A warhead is round, and the short axis that points at the camera looks
- * thin on screen, so the other one must be measured. */
+/* Returns the pipeline of the bloom draw of emission batches, and creates
+ * it on first use. It adds the emission, weighted by alpha, to a bloom
+ * level, which has no depth. Returns NULL when its shaders don't load. */
+static AeronGraphicsPipeline* pbr_emission_bloom_pipeline(struct AeronScene3D* s, AeronCullMode cull) {
+	AeronGraphicsPipeline** pipe = &s->pbr_emission_bloom_pipes[cull];
+	if (*pipe || !s->pbr_emission_bloom_vs || !s->pbr_emission_bloom_fs)
+		return *pipe;
+	AeronVertexAttributeDesc    attrs[6];
+	AeronVertexBufferLayoutDesc vbd;
+	pbr_vertex_input(attrs, &vbd);
+	*pipe = Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+		.vertex_shader       = s->pbr_emission_bloom_vs,
+		.fragment_shader     = s->pbr_emission_bloom_fs,
+		.primitive_type      = AERON_PRIMITIVE_TRIANGLES,
+		.cull_mode           = cull,
+		.vertex_buffers      = &vbd,
+		.vertex_buffer_count = 1,
+		.attributes          = attrs,
+		.attribute_count     = 6,
+		.color_format        = AERON_SCENE_BLOOM_FORMAT,
+		.blend =
+			{
+				.enabled   = 1,
+				.src_color = AERON_BLEND_SRC_ALPHA,
+				.dst_color = AERON_BLEND_ONE,
+				.color_op  = AERON_BLEND_OP_ADD,
+				.src_alpha = AERON_BLEND_ZERO,
+				.dst_alpha = AERON_BLEND_ONE,
+				.alpha_op  = AERON_BLEND_OP_ADD,
+			},
+	});
+	return *pipe;
+}
+
+/* Pushes the second VS cbuffer for an emission batch of mesh `m`, with the
+ * settings `p`, its minimum width in render pixels, and its emission
+ * multiplied by `scale`. `bloom` describes the bloom draw; it is NULL for
+ * the other draws. The width is measured along the two shorter axes of the
+ * bounds, and the shader keeps the one that is wider on screen. A laser
+ * bolt is a flat ribbon: its longest axis is its length and one short axis
+ * has almost no extent. A warhead is round, and the short axis that points
+ * at the camera looks thin on screen, so the other one must be measured. */
 static void pbr_push_emission_uniforms(const struct AeronScene3D* s, AeronRenderPass* pass,
-									   const AeronSceneMesh* m) {
+									   const AeronSceneMesh* m, const AeronSceneEmissionParams* p,
+									   float min_width_px, float scale, const AeronSceneEmissionBloomDraw* bloom) {
 	AeronScenePbrEmissionVsBlock block;
 	memset(&block, 0, sizeof block);
 	float extent[3];
@@ -764,13 +802,15 @@ static void pbr_push_emission_uniforms(const struct AeronScene3D* s, AeronRender
 	block.width_axis_b[b]      = 1.0f;
 	const int has_width        = block.half_width_a > 0.0f || block.half_width_b > 0.0f;
 	/* A mesh without a width has nothing to widen or fade. */
-	block.min_width_px   = has_width ? s->emission_min_width_px : 0.0f;
-	block.fade_width_px  = has_width ? s->emission_fade_width_px : 0.0f;
-	block.fade_power     = s->emission_fade_power;
+	block.min_width_px   = has_width ? min_width_px : 0.0f;
+	block.fade_width_px  = has_width ? p->fade_width_px : 0.0f;
+	block.fade_power     = p->fade_power;
 	block.render_size[0] = (float)s->render_w;
 	block.render_size[1] = (float)s->render_h;
 	block.max_widen      = PBR_EMISSION_MAX_WIDEN;
-	block.emissive_scale = AeronScene_EmissiveScale();
+	block.emissive_scale = AeronScene_EmissiveScale() * scale;
+	if (bloom)
+		memcpy(block.depth_map, bloom->depth_map, sizeof block.depth_map);
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 1, &block, sizeof block);
 }
 
@@ -848,6 +888,9 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	s->pbr_emission_fs = pbr_shader("scene_pbr_emission.frag", AERON_SHADER_STAGE_FRAGMENT, 2, 0, 2);
 	s->pbr_emission_stamp_vs =
 		pbr_shader("scene_pbr_emission_stamp_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 3);
+	s->pbr_emission_bloom_vs =
+		pbr_shader("scene_pbr_emission_bloom_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 3);
+	s->pbr_emission_bloom_fs = pbr_shader("scene_pbr_emission_bloom.frag", AERON_SHADER_STAGE_FRAGMENT, 3, 0, 2);
 	pbr_emission_pipeline(s, AERON_PBR_PIPE_MESH_BLEND, AERON_CULL_NONE);
 	pbr_emission_pipeline(s, AERON_PBR_PIPE_FORWARD_BLEND, AERON_CULL_NONE);
 	pbr_emission_stamp_pipeline(s, AERON_CULL_NONE);
@@ -968,7 +1011,13 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 		if (s->pbr_emission_stamp_pipes[cull])
 			Aeron_DestroyGraphicsPipeline(s->pbr_emission_stamp_pipes[cull]);
 		s->pbr_emission_stamp_pipes[cull] = NULL;
+		if (s->pbr_emission_bloom_pipes[cull])
+			Aeron_DestroyGraphicsPipeline(s->pbr_emission_bloom_pipes[cull]);
+		s->pbr_emission_bloom_pipes[cull] = NULL;
 	}
+	if (s->pbr_emission_bloom_depth_sampler)
+		Aeron_DestroySampler(s->pbr_emission_bloom_depth_sampler);
+	s->pbr_emission_bloom_depth_sampler = NULL;
 	if (s->pbr_instanced_vs)
 		Aeron_DestroyShader(s->pbr_instanced_vs);
 	if (s->pbr_instanced_stamp_vs)
@@ -979,6 +1028,12 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 		Aeron_DestroyShader(s->pbr_emission_fs);
 	if (s->pbr_emission_stamp_vs)
 		Aeron_DestroyShader(s->pbr_emission_stamp_vs);
+	if (s->pbr_emission_bloom_vs)
+		Aeron_DestroyShader(s->pbr_emission_bloom_vs);
+	if (s->pbr_emission_bloom_fs)
+		Aeron_DestroyShader(s->pbr_emission_bloom_fs);
+	s->pbr_emission_bloom_vs  = NULL;
+	s->pbr_emission_bloom_fs  = NULL;
 	s->pbr_instanced_vs       = NULL;
 	s->pbr_instanced_stamp_vs = NULL;
 	s->pbr_emission_vs        = NULL;
@@ -1559,7 +1614,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				batch->drawn = 1;
 				pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/1);
 				if (emission) {
-					pbr_push_emission_uniforms(s, pass, m);
+					pbr_push_emission_uniforms(s, pass, m, &s->emission, s->emission.min_width_px,
+											   s->emission.scale, NULL);
 					if (m->opaque_index_count != 0)
 						Aeron_DrawIndexedInstanced(pass, m->opaque_index_count, batch->count, 0, 0);
 				}
@@ -1606,8 +1662,64 @@ static int pbr_draw_emission_batch(struct AeronScene3D* s, AeronRenderPass* pass
 																   : AeronSceneInternal_WhiteArrayTexture(),
 							 atlas_sampler);
 	pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/0);
-	pbr_push_emission_uniforms(s, pass, m);
+	pbr_push_emission_uniforms(s, pass, m, &s->emission, s->emission.min_width_px, s->emission.scale, NULL);
 	Aeron_DrawIndexedInstanced(pass, count, batch->count, offset, 0);
+	return 1;
+}
+
+int AeronScenePbr_DrawEmissionBloom(struct AeronScene3D* s, AeronRenderPass* pass,
+									const AeronSceneEmissionParams* p, const AeronSceneEmissionBloomDraw* draw) {
+	AeronTexture* depth = s->depth_rt ? Aeron_DepthTargetGetTexture(s->depth_rt) : NULL;
+	if (!s->storage_ready || !depth) {
+		return 0;
+	}
+	if (!s->pbr_emission_bloom_depth_sampler) {
+		s->pbr_emission_bloom_depth_sampler = Aeron_CreateSampler(&(AeronSamplerDesc) {
+			.min_filter = AERON_FILTER_NEAREST,
+			.mag_filter = AERON_FILTER_NEAREST,
+			.mip_filter = AERON_FILTER_NEAREST,
+			.address_u  = AERON_ADDRESS_CLAMP_TO_EDGE,
+			.address_v  = AERON_ADDRESS_CLAMP_TO_EDGE,
+			.address_w  = AERON_ADDRESS_CLAMP_TO_EDGE,
+		});
+		if (!s->pbr_emission_bloom_depth_sampler) {
+			return 0;
+		}
+	}
+	Aeron_SetViewport(pass, &draw->viewport);
+	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, s->mesh_table_buffer);
+	/* Bindings persist across pipelines and draws in a pass. */
+	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 2, depth, s->pbr_emission_bloom_depth_sampler);
+	AeronSampler*          atlas_sampler = s->mesh_sampler ? s->mesh_sampler : s->pbr_sampler;
+	AeronGraphicsPipeline* bound         = NULL;
+	for (uint32_t b = 0; b < s->pbr_batch_count; ++b) {
+		const AeronScenePbrBatch* batch = &s->pbr_batches[b];
+		const AeronSceneMesh*     m     = batch->mesh;
+		if (!batch->emission || m->opaque_index_count + m->blend_index_count == 0) {
+			continue;
+		}
+		AeronGraphicsPipeline* pipeline = pbr_emission_bloom_pipeline(s, (AeronCullMode)batch->cull_mode);
+		if (!pipeline) {
+			return 0;
+		}
+		if (pipeline != bound) {
+			Aeron_BindGraphicsPipeline(pass, pipeline);
+			bound = pipeline;
+		}
+		Aeron_BindVertexBuffer(pass, 0, m->vbo, 0);
+		Aeron_BindIndexBuffer(pass, m->ibo, AERON_INDEX_FORMAT_UINT32, 0);
+		pbr_bind_material_resources(s, pass, m, atlas_sampler, 0);
+		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 1,
+								 m->atlas[AERON_GLTF_CHANNEL_EMISSIVE] ? m->atlas[AERON_GLTF_CHANNEL_EMISSIVE]
+																	   : AeronSceneInternal_WhiteArrayTexture(),
+								 atlas_sampler);
+		pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/0);
+		pbr_push_emission_uniforms(s, pass, m, p, draw->min_width_px, draw->scale, draw);
+		if (m->opaque_index_count != 0)
+			Aeron_DrawIndexedInstanced(pass, m->opaque_index_count, batch->count, 0, 0);
+		if (m->blend_index_count != 0)
+			Aeron_DrawIndexedInstanced(pass, m->blend_index_count, batch->count, m->blend_index_offset, 0);
+	}
 	return 1;
 }
 

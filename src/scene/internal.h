@@ -12,6 +12,9 @@
 #include "aeron/scene/scene3d.h"
 
 #define AERON_SCENE_BLOOM_REFERENCE_HEIGHT 2160
+/* The format of every bloom level, including mip0, which
+ * AeronScene_DrawEmissionBloom draws into. */
+#define AERON_SCENE_BLOOM_FORMAT AERON_TEXTURE_FORMAT_R11G11B10_UFLOAT
 
 /* Instance indices are 16 bits, and the shadow lists store a shadow-only
  * caster as AERON_SCENE_SHADOW_ONLY_BASE plus its index: so the instances
@@ -170,6 +173,18 @@ typedef struct AeronScenePbrBatch {
 	/* The batch was drawn in the pass being recorded. */
 	uint8_t drawn;
 } AeronScenePbrBatch;
+
+/* The settings of emission_only instances, such as laser bolts. */
+typedef struct AeronSceneEmissionParams {
+	/* AeronScene_SetEmissionMinWidth, in render pixels; 0 is off. */
+	float min_width_px;
+	/* AeronScene_SetEmissionFade; 0 is off. */
+	float fade_width_px;
+	float fade_power;
+	/* AeronScene_SetEmissionLight. */
+	float scale;
+	float bloom;
+} AeronSceneEmissionParams;
 
 /* One instance of a batch, read by the instanced vertex shaders (mirrors
  * PbrInstanceRecord in scene_pbr_vertex_common.hlsli). The previous transform
@@ -432,11 +447,14 @@ struct AeronScene3D {
 	float small_cull_prepass_px;
 	float small_cull_draw_px;
 	int   small_cull_active;
-	/* AeronScene_SetEmissionMinWidth, in render pixels; 0 is off. */
-	float emission_min_width_px;
-	/* AeronScene_SetEmissionFade; 0 is off. */
-	float emission_fade_width_px;
-	float emission_fade_power;
+	/* The current settings of emission_only instances. */
+	AeronSceneEmissionParams emission;
+	/* A copy of `emission` taken by AeronScene_Render. The bloom draw
+	 * (AeronScene_DrawEmissionBloom) runs later, after the caller may have
+	 * changed the settings. Valid from the end of a successful
+	 * AeronScene_Render to the next AeronScene_Begin. */
+	AeronSceneEmissionParams emission_frame;
+	int                      emission_frame_valid;
 
 	AeronSceneCamera camera;        /* render-resolution viewport */
 	AeronSceneCamera output_camera; /* caller's output-resolution viewport */
@@ -904,6 +922,13 @@ struct AeronScene3D {
 	 * indexed by cull mode. */
 	AeronShader*           pbr_emission_stamp_vs;
 	AeronGraphicsPipeline* pbr_emission_stamp_pipes[3];
+	/* The shaders of their bloom draw (AeronScene_DrawEmissionBloom), and
+	 * its pipelines indexed by cull mode. */
+	AeronShader*           pbr_emission_bloom_vs;
+	AeronShader*           pbr_emission_bloom_fs;
+	AeronGraphicsPipeline* pbr_emission_bloom_pipes[3];
+	/* Nearest and clamped, for the scene's depth. */
+	AeronSampler* pbr_emission_bloom_depth_sampler;
 };
 
 /* Shared small helpers (util.c). */
@@ -993,6 +1018,24 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
  * a dark color where no front face covers them (AeronScene_SetBackfaceFill).
  * Call after the opaque draws, in the same pass. */
 int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass);
+/* Where and how AeronScene_DrawEmissionBloom draws, in its target. */
+typedef struct AeronSceneEmissionBloomDraw {
+	/* The scene's output viewport, in target pixels. */
+	AeronRectI viewport;
+	/* A target pixel at p lies over the depth texture's coordinate
+	 * p * xy + zw (scene_pbr_emission_widen.hlsli). */
+	float depth_map[4];
+	/* The minimum width, in render pixels. */
+	float min_width_px;
+	/* The multiple of the emission that is added: bloom - scale. */
+	float scale;
+} AeronSceneEmissionBloomDraw;
+
+/* Draws the emission batches of the last render into `pass`, with the
+ * settings `p`, as `draw` describes. AeronScene_DrawEmissionBloom calls it
+ * once it has checked that there is something to draw. */
+int AeronScenePbr_DrawEmissionBloom(struct AeronScene3D* s, AeronRenderPass* pass,
+									const AeronSceneEmissionParams* p, const AeronSceneEmissionBloomDraw* draw);
 
 /* directional_shadow.c */
 int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);

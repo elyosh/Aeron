@@ -88,4 +88,18 @@ struct PbrEmissionVSOut {
 	nointerpolation uint4 material_lookup : TEXCOORD1;
 };
 
+/* PbrEmissionVSOut, plus what the bloom draw needs for its depth test and
+ * its light per pixel column (scene_pbr_emission_bloom.frag). */
+struct PbrEmissionBloomVSOut {
+	float4 position : SV_Position;
+	float2 uv : TEXCOORD0;
+	float  emissive_mul : COLOR0;
+	nointerpolation uint4 material_lookup : TEXCOORD1;
+	nointerpolation float4 depth_map : TEXCOORD2;
+	/* Where the pixel lies across the instance's width, from -1 to 1. */
+	float across : TEXCOORD3;
+	/* 1 when the instance is a flat strip, such as a laser bolt. */
+	nointerpolation float strip : TEXCOORD4;
+};
+
 #endif /* SCENE_PBR_VSOUT_HLSLI */

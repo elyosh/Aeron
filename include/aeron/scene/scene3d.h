@@ -522,6 +522,24 @@ void AeronScene_SetEmissionMinWidth(AeronScene3D* scene, float min_width_px);
  * 0 turns it off. */
 void AeronScene_SetEmissionFade(AeronScene3D* scene, float full_width_px, float power);
 
+/* Sets the brightness of emission_only instances, as multiples of their
+ * material's emission. They are drawn at `scale`, and the bloom gets
+ * `bloom` from them: when `bloom` is higher than `scale`,
+ * AeronScene_DrawEmissionBloom adds the difference to the bloom only. A
+ * low `scale` keeps the colours of bright laser bolts from clipping in the
+ * tone mapping, and `bloom` keeps their glow. Both default to 1. */
+void AeronScene_SetEmissionLight(AeronScene3D* scene, float scale, float bloom);
+
+/* Draws the emission_only instances of the last AeronScene_Render into
+ * `pass`, adding (bloom - scale) times their emission
+ * (AeronScene_SetEmissionLight). `pass` is the extra-light pass of
+ * AeronSceneBloom_Apply: a target of target_w x target_h pixels that
+ * covers the scene's output. Pixels hidden by the scene's depth add
+ * nothing. Call it after AeronScene_Render and before the next
+ * AeronScene_Begin. Returns 0 on failure. Returns 1 without drawing when
+ * `bloom` isn't above `scale` or nothing was rendered. */
+int AeronScene_DrawEmissionBloom(AeronScene3D* scene, AeronRenderPass* pass, int target_w, int target_h);
+
 /* Screen surfaces (gltf_mesh.h, "Screen surfaces"): the per-frame inputs of
  * every screen material. 16-byte rows only, so the C layout matches the
  * shader's structured buffer on every backend. */

@@ -5,7 +5,7 @@
  * The reference is four equally weighted pyramid bands at 2160p. At other
  * heights their weights move between native pyramid levels, keeping their
  * sum at 1, so the result is a blurred copy of the scene at its brightness.
- * The pyramid is a 2x2 bright pass, 13-tap downsamples and 3x3 tent
+ * The pyramid is a bright pass with a 4x4 tent, 13-tap downsamples and 3x3 tent
  * upsamples, so compact bright sources stay round and do not snap to the
  * coarse levels' texel grid as they move.
  * The bright pass has no threshold; presentation applies the runtime
@@ -43,10 +43,17 @@ void AeronSceneBloom_Destroy(AeronSceneBloom* b);
  * bar. Pass a value >= rt_h to disable scissoring (bloom across full
  * RT).
  *
+ * `extra` may be NULL. Otherwise it is called in the bright pass, after
+ * the scene has been filtered into mip0, to add more light before the
+ * bloom is spread. mip0 is target_w x target_h pixels and covers the whole
+ * flight RT, and the pass's scissor is already set. It returns zero on
+ * failure.
+ *
  * `cmd` must NOT have an active render or copy pass on entry. Returns zero
  * when dimensions differ from creation or recording fails. */
+typedef int (*AeronSceneBloomExtraFn)(AeronRenderPass* pass, int target_w, int target_h, void* userdata);
 int AeronSceneBloom_Apply(AeronSceneBloom* b, struct AeronCommandBuffer* cmd, AeronTexture* flight_color_rt,
-						  int rt_w, int rt_h, int scissor_max_y);
+						  int rt_w, int rt_h, int scissor_max_y, AeronSceneBloomExtraFn extra, void* userdata);
 
 /* Borrow the bloom mip0 texture — sampled by the final present pass
  * (scene_tonemap.frag) at fragment slot t1. */

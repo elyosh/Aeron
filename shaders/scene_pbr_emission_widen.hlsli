@@ -34,6 +34,10 @@ cbuffer PbrEmissionVSUniforms : register(b1, space1) {
 	float  _emission_pad0;
 	float3 emission_width_axis_b;
 	float  _emission_pad1;
+	/* Only for the bloom draw (scene_pbr_emission_bloom_instanced.vert):
+	 * a pixel at p in the bloom target lies over the depth texture's
+	 * coordinate p * xy + zw. */
+	float4 emission_depth_map;
 };
 
 /* Half the width on screen, in render pixels, of `half_axis` (in the
@@ -55,10 +59,15 @@ float pbr_emission_half_px(float4 center, float4 clip_center, float3 half_axis)
  * factor. It uses the camera without the FSR
  * jitter, so the jitter doesn't change it. Call it before
  * pbr_build_current_vertex, which then places the widened position, as
- * pbr_build_velocity does. */
-float pbr_emission_widen(inout VSIn input)
+ * pbr_build_velocity does.
+ *
+ * pbr_emission_widen_ex also returns the axis it measured the width along,
+ * and half the bounds' extent along that axis. */
+float pbr_emission_widen_ex(inout VSIn input, out float3 width_axis, out float half_extent)
 {
 	pbr_load_instance(input.instance_id);
+	width_axis  = emission_width_axis_a;
+	half_extent = emission_half_width_a;
 	if (emission_min_width_px <= 0.0f && emission_fade_width_px <= 0.0f)
 		return 1.0f;
 	const float4 center      = mul(craft_to_world, float4(emission_center, 1.0f));
@@ -69,8 +78,11 @@ float pbr_emission_widen(inout VSIn input)
 		center, clip_center, mul((float3x3)craft_to_world, emission_width_axis_a * emission_half_width_a));
 	const float half_b = pbr_emission_half_px(
 		center, clip_center, mul((float3x3)craft_to_world, emission_width_axis_b * emission_half_width_b));
-	const float  width_px   = 2.0f * max(half_a, half_b);
-	const float3 width_axis = half_a >= half_b ? emission_width_axis_a : emission_width_axis_b;
+	const float width_px = 2.0f * max(half_a, half_b);
+	if (half_a < half_b) {
+		width_axis  = emission_width_axis_b;
+		half_extent = emission_half_width_b;
+	}
 	/* The fade dims the instance as it gets thinner; there is no sudden cut. */
 	const float fade = emission_fade_width_px > 0.0f
 	                       ? pow(saturate(width_px / emission_fade_width_px), emission_fade_power)
@@ -83,6 +95,13 @@ float pbr_emission_widen(inout VSIn input)
 		input.position += width_axis * (offset * (1.0f / widen - 1.0f));
 	}
 	return widen * fade;
+}
+
+float pbr_emission_widen(inout VSIn input)
+{
+	float3 width_axis;
+	float  half_extent;
+	return pbr_emission_widen_ex(input, width_axis, half_extent);
 }
 
 #endif /* SCENE_PBR_EMISSION_WIDEN_HLSLI */

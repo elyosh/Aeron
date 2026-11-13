@@ -57,7 +57,7 @@ int CaptureBloom_Record(CaptureBloom* b, const CaptureConfig* c, AeronRenderTarg
 	AeronTexture* scene = Aeron_RenderTargetGetTexture(source);
 	AeronTexture* bloom = NULL;
 	if (b->bloom) {
-		if (!AeronSceneBloom_Apply(b->bloom, cmd, scene, c->width, c->height, c->height))
+		if (!AeronSceneBloom_Apply(b->bloom, cmd, scene, c->width, c->height, c->height, NULL, NULL))
 			return 0;
 		bloom = Aeron_RenderTargetGetTexture(AeronSceneBloom_ColorRt(b->bloom));
 	}

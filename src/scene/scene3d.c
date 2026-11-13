@@ -393,6 +393,8 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	s->output_w     = desc && desc->rt_width > 0 ? desc->rt_width : 3840;
 	s->output_h     = desc && desc->rt_height > 0 ? desc->rt_height : 2160;
 	s->color_format = desc && desc->color_format ? desc->color_format : AERON_TEXTURE_FORMAT_R11G11B10_UFLOAT;
+	s->emission.scale = 1.0f;
+	s->emission.bloom = 1.0f;
 	AeronSampleCount requested_samples =
 		desc && desc->sample_count ? desc->sample_count : AERON_SAMPLE_COUNT_1;
 	s->sample_count = scene_supported_sample_count(s->color_format, requested_samples);
@@ -548,8 +550,9 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 		proj[6] -= 2.0f * s->temporal_jitter[1] / (float)s->camera.viewport.height;
 	}
 	scene_mat4_mul(s->jittered_view_proj, proj, view);
-	s->instance_count      = 0;
-	s->instances_dropped   = 0;
+	s->instance_count       = 0;
+	s->emission_frame_valid = 0;
+	s->instances_dropped    = 0;
 	s->light_count         = 0;
 	s->lights_dropped      = 0;
 	s->cluster_active      = 0;
@@ -1473,16 +1476,63 @@ void AeronScene_SetSmallInstanceCull(AeronScene3D* s, float prepass_min_px, floa
 
 void AeronScene_SetEmissionMinWidth(AeronScene3D* s, float min_width_px) {
 	if (s) {
-		s->emission_min_width_px = min_width_px > 0.0f ? min_width_px : 0.0f;
+		s->emission.min_width_px = min_width_px > 0.0f ? min_width_px : 0.0f;
 	}
 }
 
 void AeronScene_SetEmissionFade(AeronScene3D* s, float full_width_px, float power) {
 	if (s) {
 		const int on              = full_width_px > 0.0f && power > 0.0f;
-		s->emission_fade_width_px = on ? full_width_px : 0.0f;
-		s->emission_fade_power    = on ? power : 0.0f;
+		s->emission.fade_width_px = on ? full_width_px : 0.0f;
+		s->emission.fade_power    = on ? power : 0.0f;
 	}
+}
+
+void AeronScene_SetEmissionLight(AeronScene3D* s, float scale, float bloom) {
+	if (s) {
+		s->emission.scale = isfinite(scale) && scale > 0.0f ? scale : 0.0f;
+		s->emission.bloom = isfinite(bloom) && bloom > 0.0f ? bloom : 0.0f;
+	}
+}
+
+int AeronScene_DrawEmissionBloom(AeronScene3D* s, AeronRenderPass* pass, int target_w, int target_h) {
+	if (!s || !pass || target_w <= 0 || target_h <= 0) {
+		return 0;
+	}
+	const AeronSceneEmissionParams* p     = &s->emission_frame;
+	const float                     extra = p->bloom - p->scale;
+	if (!s->emission_frame_valid || !(extra > 0.0f) || s->pbr_batch_count == 0) {
+		return 1;
+	}
+	AeronSceneEmissionBloomDraw draw;
+	memset(&draw, 0, sizeof draw);
+	/* The scene's output viewport, in target pixels. */
+	const AeronRectI out = s->output_camera.viewport;
+	const int        x0  = scene_scale_edge(out.x, target_w, s->output_w, 0);
+	const int        y0  = scene_scale_edge(out.y, target_h, s->output_h, 0);
+	draw.viewport        = (AeronRectI) { x0, y0, scene_scale_edge(out.x + out.width, target_w, s->output_w, 1) - x0,
+										  scene_scale_edge(out.y + out.height, target_h, s->output_h, 1) - y0 };
+	const AeronRectI* vp  = &draw.viewport;
+	const AeronRectI* rvp = &s->camera.viewport;
+	if (vp->width <= 0 || vp->height <= 0 || rvp->width <= 0 || rvp->height <= 0) {
+		return 1;
+	}
+	/* Render pixels per target pixel, along each axis. */
+	const float rx = (float)rvp->width / (float)vp->width;
+	const float ry = (float)rvp->height / (float)vp->height;
+	/* A target pixel at p lies over the depth texture's coordinate
+	 * (render viewport origin + (p - vp origin) * r) / render size. */
+	draw.depth_map[0] = rx / (float)s->render_w;
+	draw.depth_map[1] = ry / (float)s->render_h;
+	draw.depth_map[2] = ((float)rvp->x - (float)vp->x * rx) / (float)s->render_w;
+	draw.depth_map[3] = ((float)rvp->y - (float)vp->y * ry) / (float)s->render_h;
+	/* Instances are drawn at least one target pixel wide, keeping their
+	 * light: a strip at least that wide covers a pixel centre in every
+	 * column it crosses (scene_pbr_emission_bloom.frag). */
+	const float target_px = rx > ry ? rx : ry;
+	draw.min_width_px     = p->min_width_px > target_px ? p->min_width_px : target_px;
+	draw.scale        = extra;
+	return AeronScenePbr_DrawEmissionBloom(s, pass, p, &draw);
 }
 
 typedef char AeronSceneScreenFrameSizeCheck[sizeof(AeronSceneScreenFrame) == 1072 ? 1 : -1];
@@ -2742,6 +2792,8 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	s->scene_rt_out          = s->color_rt;
 	s->scene_rt_out_borrowed = 0;
 	s->screen_layer_active   = 0;
+	s->emission_frame        = s->emission;
+	s->emission_frame_valid  = 0;
 
 	/* With MSAA, the colour pass has its own depth, so the prepass can leave
 	 * instances out; FSR needs every instance's depth and motion. */
@@ -3103,7 +3155,11 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		}
 	}
 
-	return scene_finalize_output(s, cmd, mb_active, mb_regen, ssao_active);
+	if (!scene_finalize_output(s, cmd, mb_active, mb_regen, ssao_active)) {
+		return 0;
+	}
+	s->emission_frame_valid = 1;
+	return 1;
 }
 
 /* ---- accessors ---- */
