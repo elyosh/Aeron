@@ -190,6 +190,47 @@ static uint8_t image_linear_to_srgb(float c) {
 	return (uint8_t)(s * 255.0f + 0.5f);
 }
 
+/* The steps of linear light in image_srgb_tables' lookup. They are finer
+ * than the smallest gap between sRGB codes, near black (1 / 3295), so at most
+ * one halfway value between two codes lies inside a step. The code at the
+ * start of a step is then the nearest code of any value in the step, or one
+ * below it. */
+#define IMAGE_SRGB_STEPS 8192
+
+typedef struct ImageSrgbTables {
+	float linear[256];
+	/* The linear value halfway between each code and the next. */
+	float halfway[255];
+	/* The nearest code of the value at the start of each step. */
+	uint8_t code[IMAGE_SRGB_STEPS];
+} ImageSrgbTables;
+
+static void image_srgb_tables(ImageSrgbTables* t) {
+	for (int i = 0; i < 256; i++)
+		t->linear[i] = image_srgb_to_linear((float)i / 255.0f);
+	for (int i = 0; i < 255; i++)
+		t->halfway[i] = 0.5f * (t->linear[i] + t->linear[i + 1]);
+	int code = 0;
+	for (int step = 0; step < IMAGE_SRGB_STEPS; step++) {
+		const float value = (float)step / IMAGE_SRGB_STEPS;
+		while (code < 255 && value >= t->halfway[code])
+			code++;
+		t->code[step] = (uint8_t)code;
+	}
+}
+
+/* The sRGB code nearest to the linear value `value`, from 0 to 1. It
+ * doesn't branch on the value: a branch there is often mispredicted on real
+ * textures, and took most of the downsample's time. */
+static uint8_t image_srgb_encode(const ImageSrgbTables* t, float value) {
+	int step = (int)(value * IMAGE_SRGB_STEPS);
+	step     = step < 0 ? 0 : step >= IMAGE_SRGB_STEPS ? IMAGE_SRGB_STEPS - 1 : step;
+	const int code = t->code[step];
+	/* Past the start of the step, the value may cross one more halfway value
+	   (IMAGE_SRGB_STEPS). */
+	return (uint8_t)(code + ((code < 255) & (value >= t->halfway[code < 255 ? code : 254])));
+}
+
 /* 2x box filter of an image whose RGB is sRGB, in linear light. With
  * `straight`, RGB is weighted by alpha, as in
  * Aeron_ImageDownsampleStraightAlphaRgba8. */
@@ -202,15 +243,36 @@ static uint8_t* image_downsample_srgb(const uint8_t* source, int width, int heig
 	uint8_t*  result      = (uint8_t*)malloc((size_t)next_width * next_height * 4u);
 	if (!result)
 		return NULL;
-	/* The linear value of each code, and the linear value halfway between
-	   each code and the next, to find the nearest code. */
-	float linear[256], halfway[255];
-	for (int i = 0; i < 256; i++)
-		linear[i] = image_srgb_to_linear((float)i / 255.0f);
-	for (int i = 0; i < 255; i++)
-		halfway[i] = 0.5f * (linear[i] + linear[i + 1]);
+	ImageSrgbTables t;
+	image_srgb_tables(&t);
+	const size_t row_bytes = (size_t)width * 4u;
 	for (int y = 0; y < next_height; y++) {
-		for (int x = 0; x < next_width; x++) {
+		uint8_t* output = result + (size_t)y * next_width * 4u;
+		if (width > 1 && height > 1) {
+			/* Every output pixel has four samples. */
+			const uint8_t* top    = source + (size_t)y * 2u * row_bytes;
+			const uint8_t* bottom = top + row_bytes;
+			for (int x = 0; x < next_width; x++, top += 8, bottom += 8, output += 4) {
+				const unsigned alpha_sum = (unsigned)top[3] + top[7] + bottom[3] + bottom[7];
+				float          w0 = 1.0f, w1 = 1.0f, w2 = 1.0f, w3 = 1.0f, weight = 4.0f;
+				if (straight) {
+					w0     = (float)top[3] / 255.0f;
+					w1     = (float)top[7] / 255.0f;
+					w2     = (float)bottom[3] / 255.0f;
+					w3     = (float)bottom[7] / 255.0f;
+					weight = w0 + w1 + w2 + w3;
+				}
+				for (int c = 0; c < 3; c++) {
+					const float sum = t.linear[top[c]] * w0 + t.linear[top[4 + c]] * w1 +
+									  t.linear[bottom[c]] * w2 + t.linear[bottom[4 + c]] * w3;
+					output[c]       = weight > 0.0f ? image_srgb_encode(&t, sum / weight) : 0;
+				}
+				output[3] = (uint8_t)((alpha_sum + 2u) / 4u);
+			}
+			continue;
+		}
+		/* A level one pixel wide or high. */
+		for (int x = 0; x < next_width; x++, output += 4) {
 			float    rgb[3]    = { 0.0f, 0.0f, 0.0f };
 			float    weight    = 0.0f;
 			unsigned alpha_sum = 0;
@@ -226,25 +288,14 @@ static uint8_t* image_downsample_srgb(const uint8_t* source, int width, int heig
 					const uint8_t* pixel = source + ((size_t)source_y * width + source_x) * 4u;
 					const float    w     = straight ? (float)pixel[3] / 255.0f : 1.0f;
 					for (int channel = 0; channel < 3; channel++)
-						rgb[channel] += linear[pixel[channel]] * w;
+						rgb[channel] += t.linear[pixel[channel]] * w;
 					weight += w;
 					alpha_sum += pixel[3];
 					samples++;
 				}
 			}
-			uint8_t* output = result + ((size_t)y * next_width + x) * 4u;
-			for (int channel = 0; channel < 3; channel++) {
-				const float value = weight > 0.0f ? rgb[channel] / weight : 0.0f;
-				int         lo = 0, hi = 255;
-				while (lo < hi) {
-					const int mid = (lo + hi) / 2;
-					if (value < halfway[mid])
-						hi = mid;
-					else
-						lo = mid + 1;
-				}
-				output[channel] = (uint8_t)lo;
-			}
+			for (int channel = 0; channel < 3; channel++)
+				output[channel] = weight > 0.0f ? image_srgb_encode(&t, rgb[channel] / weight) : 0;
 			output[3] = (uint8_t)((alpha_sum + samples / 2u) / samples);
 		}
 	}
