@@ -6,7 +6,8 @@
  * The checks cover the spatial audio work (docs/spatial_audio_plan.md): the
  * inverse-distance curve, the direction of positional panning, the
  * conversion of DirectSound's coordinates, the DirectSound buffer cursors,
- * the fade before the max distance, and 3D batches and deferred settings.
+ * the fade before the max distance, 3D batches and deferred settings, the
+ * gain ramps, and output that doesn't depend on the chunk size.
  *
  * With --bench, it measures the cost of mixing 32 positional voices instead,
  * as a percentage of real time on one core.
@@ -660,6 +661,168 @@ static void test_shim_deferred(void) {
 	device->lpVtbl->Release(device);
 }
 
+/* --- gain ramps ----------------------------------------------------------- */
+
+enum { RAMP_FRAMES = 64 };
+
+/* Each output sample is rounded to S16, so the difference between two
+ * neighbours can be off by up to two steps of 1/32768. */
+#define STEP_TOLERANCE (2.0f / 32768.0f)
+
+static void render_into(float* out, int frames, int chunk_frames) {
+	if (!Aeron_AudioRenderHeadless(out, frames, chunk_frames)) {
+		printf("FAILED could not render %d frames\n", frames);
+		exit(1);
+	}
+}
+
+/* The largest change between neighbouring samples of one channel of `out`,
+ * over `frames` frames. */
+static float max_sample_step(const float* out, int channel, int frames) {
+	float largest = 0.0f;
+	for (int i = 1; i < frames; ++i) {
+		const float step = fabsf(out[i * 2 + channel] - out[(i - 1) * 2 + channel]);
+		if (step > largest) {
+			largest = step;
+		}
+	}
+	return largest;
+}
+
+/* A source that jumps from the left to the right moves over 64 frames, in
+ * equal steps, instead of at once. */
+static void test_ramp_jump(void) {
+	const float        left_pos[3]  = { -500.0f, 0.0f, 0.0f };
+	const float        right_pos[3] = { 500.0f, 0.0f, 0.0f };
+	const float        level        = CLIP_LEVEL * expected_attenuation(500.0f, 100.0f, 1000.0f, 1.0f);
+	AeronClip          clip         = make_constant_clip(4800);
+	AeronAudioSource3D source       = make_source(left_pos, 100.0f, 1000.0f);
+	char               what[192];
+
+	set_mixer_listener();
+	AeronVoice voice = play_source(clip, 1.0f, &source);
+	render(256, 256);
+	check(close_to(left_at(0), level) && close_to(right_at(0), 0.0f),
+		  "a new voice starts at its level, without a ramp");
+
+	/* The step into the first new frame counts too. */
+	const float last_left  = left_at(255);
+	const float last_right = right_at(255);
+	memcpy(source.pos, right_pos, sizeof source.pos);
+	Aeron_AudioVoiceSet3DSource(voice, &source);
+	render(256, 256);
+	const float largest = fmaxf(fmaxf(max_sample_step(g_out, 0, 256), max_sample_step(g_out, 1, 256)),
+								fmaxf(fabsf(left_at(0) - last_left), fabsf(right_at(0) - last_right)));
+	snprintf(what, sizeof what,
+			 "jump from -90 to +90 degrees: no step above %.5f between neighbouring samples (largest %.5f)",
+			 level / RAMP_FRAMES, largest);
+	check(largest <= level / RAMP_FRAMES + STEP_TOLERANCE, what);
+	snprintf(what, sizeof what, "halfway through the ramp, both channels at %.4f (got %.4f, %.4f)", level / 2,
+			 left_at(RAMP_FRAMES / 2), right_at(RAMP_FRAMES / 2));
+	check(close_to(left_at(RAMP_FRAMES / 2), level / 2) && close_to(right_at(RAMP_FRAMES / 2), level / 2),
+		  what);
+	snprintf(what, sizeof what, "after 64 frames, right only (got %.4f, %.4f)", left_at(RAMP_FRAMES),
+			 right_at(RAMP_FRAMES));
+	check(close_to(left_at(RAMP_FRAMES), 0.0f) && close_to(right_at(RAMP_FRAMES), level), what);
+
+	Aeron_AudioVoiceStop(voice);
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* A muted source moves out through its fade and past its max distance, one
+ * position per 64-frame chunk, then jumps out of range and stays there for
+ * one more chunk, so its last ramp can end. Each change of level spreads over
+ * 64 frames, so no step between neighbouring samples is larger than the
+ * largest change divided by 64. */
+static void test_ramp_range_fade(void) {
+	static const float distances[] = { 340.0f, 350.0f, 360.0f, 370.0f, 380.0f, 450.0f, 450.0f };
+
+	enum { COUNT = sizeof distances / sizeof distances[0] };
+
+	static float out[COUNT * RAMP_FRAMES * 2];
+	AeronClip    clip     = make_constant_clip(4800);
+	float        bound    = 0.0f;
+	float        previous = 0.0f;
+	char         what[192];
+	AeronVoice   voice = 0;
+
+	set_mixer_listener();
+	for (int i = 0; i < COUNT; ++i) {
+		const float        pos[3] = { 0.0f, 0.0f, -distances[i] };
+		AeronAudioSource3D source = make_source(pos, 100.0f, 400.0f);
+		source.mute_beyond_max    = 1;
+		source.fade_start         = 300.0f;
+		const float fade          = distances[i] >= 400.0f  ? 0.0f
+									: distances[i] > 300.0f ? (400.0f - distances[i]) / 100.0f
+															: 1.0f;
+		const float level =
+			CLIP_LEVEL * sqrtf(0.5f) * expected_attenuation(distances[i], 100.0f, 400.0f, 1.0f) * fade;
+		if (i == 0) {
+			voice = play_source(clip, 1.0f, &source);
+		} else {
+			Aeron_AudioVoiceSet3DSource(voice, &source);
+			if (fabsf(level - previous) > bound) {
+				bound = fabsf(level - previous);
+			}
+		}
+		previous = level;
+		render_into(out + i * RAMP_FRAMES * 2, RAMP_FRAMES, RAMP_FRAMES);
+	}
+	bound /= RAMP_FRAMES;
+	const float largest = max_sample_step(out, 0, COUNT * RAMP_FRAMES);
+	snprintf(what, sizeof what, "moving out through the fade and past max: no step above %.6f (largest %.6f)",
+			 bound, largest);
+	check(largest <= bound + STEP_TOLERANCE, what);
+	snprintf(what, sizeof what, "silent at the end (got %.6f)", out[(COUNT * RAMP_FRAMES - 1) * 2]);
+	check(close_to(out[(COUNT * RAMP_FRAMES - 1) * 2], 0.0f), what);
+
+	Aeron_AudioVoiceStop(voice);
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* The output doesn't depend on how the frames are split into chunks: the
+ * ramps, the rear filter and the resampling carry over from one chunk to the
+ * next. A noise clip at 22,050 Hz starts in front, then moves behind after
+ * 100 frames, which starts a ramp and the rear filter. Every split gives the
+ * same samples, bit for bit. */
+static void test_chunk_independence(void) {
+	enum { CLIP_RATE = 22050, FIRST = 100, TOTAL = 3000 };
+
+	static const int chunk_sizes[] = { 1024, 1, 7, 64, 480 };
+	static float     reference[TOTAL * 2];
+	static float     out[TOTAL * 2];
+	int16_t*         pcm  = (int16_t*)malloc(CLIP_RATE * sizeof(int16_t));
+	uint32_t         seed = 7;
+	char             what[128];
+
+	for (int i = 0; i < CLIP_RATE; ++i) {
+		seed   = seed * 1664525u + 1013904223u;
+		pcm[i] = (int16_t)(((int)(seed >> 16) - 32768) / 2);
+	}
+	AeronClip clip = Aeron_AudioClipCreate(pcm, CLIP_RATE, CLIP_RATE, 1, AERON_PCM_S16);
+	free(pcm);
+
+	set_mixer_listener();
+	for (size_t i = 0; i < sizeof chunk_sizes / sizeof chunk_sizes[0]; ++i) {
+		const int          chunk     = chunk_sizes[i];
+		const float        front[3]  = { 300.0f, 0.0f, -300.0f };
+		const float        behind[3] = { -200.0f, 50.0f, 400.0f };
+		float*             target    = i == 0 ? reference : out;
+		AeronAudioSource3D source    = make_source(front, 100.0f, 1000.0f);
+		AeronVoice         voice     = play_source(clip, 1.0f, &source);
+		render_into(target, FIRST, chunk);
+		memcpy(source.pos, behind, sizeof source.pos);
+		Aeron_AudioVoiceSet3DSource(voice, &source);
+		render_into(target + FIRST * 2, TOTAL - FIRST, chunk);
+		Aeron_AudioVoiceStop(voice);
+		if (i > 0) {
+			snprintf(what, sizeof what, "chunks of %d frames give the same output as chunks of 1024", chunk);
+			check(memcmp(reference, out, sizeof out) == 0, what);
+		}
+	}
+	Aeron_AudioClipDestroy(clip);
+}
+
 /* --- benchmark ----------------------------------------------------------- */
 
 /* 32 positional voices of a 22,050 Hz noise clip, circling the listener at
@@ -756,6 +919,9 @@ int main(int argc, char** argv) {
 	test_batch();
 	test_shim_range_fade();
 	test_shim_deferred();
+	test_ramp_jump();
+	test_ramp_range_fade();
+	test_chunk_independence();
 	Aeron_AudioShutdown();
 
 	if (g_failures) {

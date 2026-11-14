@@ -1,5 +1,6 @@
 #include "internal.h"
 
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -28,6 +29,9 @@
  * from the filter, as with a real head. */
 #define AERON_AUDIO_REAR_GAIN 0.7f
 #define AERON_AUDIO_REAR_CUTOFF_HZ 6000.0f
+/* A gain change ramps linearly over this many frames, as in OpenAL Soft, so
+ * it doesn't click. */
+#define AERON_AUDIO_RAMP_FRAMES 64
 
 typedef struct AeronClipData {
 	int16_t*       pcm; /* interleaved S16, channels = channels */
@@ -60,7 +64,16 @@ typedef struct AeronVoiceSlot {
 	/* A source change made inside a 3D batch, applied at its end. */
 	AeronAudioSource3D staged_source;
 	int                staged;
-	float              lowpass[2]; /* filter state for each output channel */
+	/* Gain ramps, for each output channel: the gain in use, the target the
+	   ramp heads to, the change per frame, and the frames left in the ramp.
+	   gains_set is clear until the first mixed chunk, which starts at its
+	   target. */
+	float gain_now[2];
+	float gain_target[2];
+	float gain_step[2];
+	int   ramp_frames;
+	int   gains_set;
+	float lowpass_state; /* the rear low-pass of a positional voice, on its mono signal */
 } AeronVoiceSlot;
 
 typedef struct AeronAudioStreamSlot {
@@ -253,29 +266,73 @@ static void Aeron_AudioBalanceGains(float gain, float balance, float* out_l, flo
 	}
 }
 
-/* Computes per-voice left/right gains, the doppler-adjusted step and the
- * low-pass filter coefficient. A coefficient of 1 turns the filter off. */
-static void Aeron_AudioComputeVoiceMix(const AeronVoiceSlot* voice, const AeronClipData* clip, float* out_l,
-									   float* out_r, double* out_step, float* out_lowpass) {
-	float base_step = ((float)clip->rate / (float)AERON_AUDIO_DEVICE_RATE) * voice->pitch;
+/* What a voice's mix settings head to in the current chunk: the gain of
+ * each output channel, and the coefficient of the rear low-pass. A
+ * coefficient of 1 turns the filter off. */
+typedef struct AeronVoiceMixTargets {
+	float gain[2];
+	float lowpass;
+} AeronVoiceMixTargets;
 
-	*out_lowpass = 1.0f;
+/* The unit vector from the listener to a positional voice, and its distance.
+ * Returns 0 for a 2D voice, or when there is no listener yet. */
+static int Aeron_AudioVoiceDirection(const AeronVoiceSlot* voice, float to_src[3], float* dist) {
+	if (!voice->is3d || !g_audio.has_listener) {
+		return 0;
+	}
+	const AeronAudioSource3D* source = &voice->source;
+	to_src[0]                        = source->pos[0] - g_audio.listener.pos[0];
+	to_src[1]                        = source->pos[1] - g_audio.listener.pos[1];
+	to_src[2]                        = source->pos[2] - g_audio.listener.pos[2];
+	*dist                            = Aeron_AudioNormalize(to_src);
+	return 1;
+}
+
+/* The playback step: the clip's rate and the pitch, and the doppler shift
+ * along the line from the source to the listener. Doesn't change the voice. */
+static double Aeron_AudioVoiceStep(const AeronVoiceSlot* voice, const AeronClipData* clip) {
+	float  base_step = ((float)clip->rate / (float)AERON_AUDIO_DEVICE_RATE) * voice->pitch;
+	double step      = base_step;
+	float  to_src[3];
+	float  dist;
+
+	if (g_audio.doppler_factor > 0.0f && Aeron_AudioVoiceDirection(voice, to_src, &dist)) {
+		float sl[3] = { -to_src[0], -to_src[1], -to_src[2] }; /* source -> listener (unit) */
+		float vls   = Aeron_AudioDot(g_audio.listener.vel, sl) * g_audio.distance_factor;
+		float vss   = Aeron_AudioDot(voice->source.vel, sl) * g_audio.distance_factor;
+		float num   = AERON_AUDIO_SOUND_SPEED - g_audio.doppler_factor * vls;
+		float den   = AERON_AUDIO_SOUND_SPEED - g_audio.doppler_factor * vss;
+		if (den > 1.0f && num > 1.0f) {
+			float ratio = num / den;
+			if (ratio < 0.5f) {
+				ratio = 0.5f;
+			}
+			if (ratio > 2.0f) {
+				ratio = 2.0f;
+			}
+			step *= ratio;
+		}
+	}
+	return step;
+}
+
+/* The gains and filter coefficient a voice heads to. Doesn't change the
+ * voice: the gains reach these targets through Aeron_AudioVoiceSetGainTargets. */
+static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, AeronVoiceMixTargets* out) {
+	float to_src[3];
+	float dist;
+
+	out->lowpass = 1.0f;
 	if (!voice->is3d) {
-		Aeron_AudioBalanceGains(voice->gain, voice->pan, out_l, out_r);
-		*out_step = base_step;
+		Aeron_AudioBalanceGains(voice->gain, voice->pan, &out->gain[0], &out->gain[1]);
 		return;
 	}
-	if (!g_audio.has_listener) {
-		Aeron_AudioEqualPowerPanGains(voice->gain, 0.0f, out_l, out_r);
-		*out_step = base_step;
+	if (!Aeron_AudioVoiceDirection(voice, to_src, &dist)) {
+		Aeron_AudioEqualPowerPanGains(voice->gain, 0.0f, &out->gain[0], &out->gain[1]);
 		return;
 	}
 
 	const AeronAudioSource3D* source = &voice->source;
-
-	float to_src[3] = { source->pos[0] - g_audio.listener.pos[0], source->pos[1] - g_audio.listener.pos[1],
-						source->pos[2] - g_audio.listener.pos[2] };
-	float dist      = Aeron_AudioNormalize(to_src);
 
 	/* Inverse-distance attenuation (DirectSound3D / OpenAL model). The
 	 * distances and the min and max distances use the same units, so the
@@ -329,30 +386,43 @@ static void Aeron_AudioComputeVoiceMix(const AeronVoiceSlot* voice, const AeronC
 		   cutoff right behind, so the filter starts without a jump. */
 		float rear   = 1.0f - expf(-2.0f * 3.14159265358979323846f * AERON_AUDIO_REAR_CUTOFF_HZ /
 								   (float)AERON_AUDIO_DEVICE_RATE);
-		*out_lowpass = 1.0f - (1.0f - rear) * behind;
+		out->lowpass = 1.0f - (1.0f - rear) * behind;
 	}
-	Aeron_AudioEqualPowerPanGains(voice->gain * atten, pan, out_l, out_r);
+	Aeron_AudioEqualPowerPanGains(voice->gain * atten, pan, &out->gain[0], &out->gain[1]);
+}
 
-	/* Doppler: shift along the source->listener line. */
-	double step = base_step;
-	if (g_audio.doppler_factor > 0.0f) {
-		float sl[3] = { -to_src[0], -to_src[1], -to_src[2] }; /* source -> listener (unit) */
-		float vls   = Aeron_AudioDot(g_audio.listener.vel, sl) * g_audio.distance_factor;
-		float vss   = Aeron_AudioDot(source->vel, sl) * g_audio.distance_factor;
-		float num   = AERON_AUDIO_SOUND_SPEED - g_audio.doppler_factor * vls;
-		float den   = AERON_AUDIO_SOUND_SPEED - g_audio.doppler_factor * vss;
-		if (den > 1.0f && num > 1.0f) {
-			float ratio = num / den;
-			if (ratio < 0.5f) {
-				ratio = 0.5f;
-			}
-			if (ratio > 2.0f) {
-				ratio = 2.0f;
-			}
-			step *= ratio;
+/* Points the gain ramps of a voice at new targets. A target that differs
+ * from the current one starts a ramp of AERON_AUDIO_RAMP_FRAMES from the
+ * gains in use. A change too small to ramp, and a voice's first chunk, jump
+ * to the target: a new sound starts at its level, so its attack is kept. */
+static void Aeron_AudioVoiceSetGainTargets(AeronVoiceSlot* voice, const float target[2]) {
+	if (!voice->gains_set) {
+		for (int c = 0; c < 2; ++c) {
+			voice->gain_now[c]    = target[c];
+			voice->gain_target[c] = target[c];
+		}
+		voice->ramp_frames = 0;
+		voice->gains_set   = 1;
+		return;
+	}
+	if (target[0] == voice->gain_target[0] && target[1] == voice->gain_target[1]) {
+		return;
+	}
+	int ramp = 0;
+	for (int c = 0; c < 2; ++c) {
+		voice->gain_target[c] = target[c];
+		voice->gain_step[c]   = (target[c] - voice->gain_now[c]) / (float)AERON_AUDIO_RAMP_FRAMES;
+		if (fabsf(voice->gain_step[c]) > FLT_EPSILON) {
+			ramp = 1;
 		}
 	}
-	*out_step = step;
+	if (ramp) {
+		voice->ramp_frames = AERON_AUDIO_RAMP_FRAMES;
+	} else {
+		voice->gain_now[0] = target[0];
+		voice->gain_now[1] = target[1];
+		voice->ramp_frames = 0;
+	}
 }
 
 /* Linear-interpolated sample fetch from a clip channel. */
@@ -377,9 +447,11 @@ static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 		Aeron_AudioFreeVoiceLocked(voice);
 		return;
 	}
-	float  gl, gr, lowpass;
-	double step;
-	Aeron_AudioComputeVoiceMix(voice, clip, &gl, &gr, &step, &lowpass);
+	AeronVoiceMixTargets targets;
+	Aeron_AudioVoiceMixTargets(voice, &targets);
+	Aeron_AudioVoiceSetGainTargets(voice, targets.gain);
+	const double step    = Aeron_AudioVoiceStep(voice, clip);
+	const float  lowpass = targets.lowpass;
 
 	int mixed = 0;
 	for (; mixed < frames; ++mixed) {
@@ -391,30 +463,41 @@ static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 			}
 		}
 		float left, right;
-		if (clip->channels >= 2 && voice->is3d) {
+		if (voice->is3d) {
 			/* A positional sound comes from one point, so a stereo clip is
 			   mixed down to mono before it is panned. Panning each channel
 			   on its own would drop one of them at the side. */
-			float mono = 0.5f * (Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop) +
-								 Aeron_AudioSampleClip(clip, voice->pos, 1, voice->loop));
-			left       = mono * gl;
-			right      = mono * gr;
+			float mono = clip->channels >= 2
+							 ? 0.5f * (Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop) +
+									   Aeron_AudioSampleClip(clip, voice->pos, 1, voice->loop))
+							 : Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop);
+			/* The rear low-pass works on the mono signal, before panning.
+			   Without the filter, its state follows the signal, so that it
+			   starts from the current sound when the voice moves behind. */
+			if (lowpass < 1.0f) {
+				mono = voice->lowpass_state + lowpass * (mono - voice->lowpass_state);
+			}
+			voice->lowpass_state = mono;
+			left                 = mono * voice->gain_now[0];
+			right                = mono * voice->gain_now[1];
 		} else if (clip->channels >= 2) {
-			left  = Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop) * gl;
-			right = Aeron_AudioSampleClip(clip, voice->pos, 1, voice->loop) * gr;
+			left  = Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop) * voice->gain_now[0];
+			right = Aeron_AudioSampleClip(clip, voice->pos, 1, voice->loop) * voice->gain_now[1];
 		} else {
 			float mono = Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop);
-			left       = mono * gl;
-			right      = mono * gr;
+			left       = mono * voice->gain_now[0];
+			right      = mono * voice->gain_now[1];
 		}
-		/* Without the filter, its state follows the output, so that it
-		   starts from the current sound when the voice moves behind. */
-		if (lowpass < 1.0f) {
-			left  = voice->lowpass[0] + lowpass * (left - voice->lowpass[0]);
-			right = voice->lowpass[1] + lowpass * (right - voice->lowpass[1]);
+		/* The ramp ends exactly on its target. */
+		if (voice->ramp_frames > 0) {
+			if (--voice->ramp_frames == 0) {
+				voice->gain_now[0] = voice->gain_target[0];
+				voice->gain_now[1] = voice->gain_target[1];
+			} else {
+				voice->gain_now[0] += voice->gain_step[0];
+				voice->gain_now[1] += voice->gain_step[1];
+			}
 		}
-		voice->lowpass[0] = left;
-		voice->lowpass[1] = right;
 		g_audio.mix[mixed * 2] += left;
 		g_audio.mix[mixed * 2 + 1] += right;
 		voice->pos += step;
@@ -996,12 +1079,10 @@ static AeronVoiceSlot* Aeron_AudioResolvePlayingVoiceLocked(AeronVoice voice, ui
 
 static size_t Aeron_AudioVoiceCursorLocked(const AeronVoiceSlot* voice, const AeronClipData* clip,
 										   uint64_t played) {
-	float  left, right, lowpass;
-	double step;
-	Aeron_AudioComputeVoiceMix(voice, clip, &left, &right, &step, &lowpass);
-	uint64_t pending = voice->mixed_until > played ? voice->mixed_until - played : 0;
-	double   heard   = voice->advanced - (double)pending * step;
-	double   frame   = (double)voice->start_frame + (heard > 0.0 ? heard : 0.0);
+	const double step    = Aeron_AudioVoiceStep(voice, clip);
+	uint64_t     pending = voice->mixed_until > played ? voice->mixed_until - played : 0;
+	double       heard   = voice->advanced - (double)pending * step;
+	double       frame   = (double)voice->start_frame + (heard > 0.0 ? heard : 0.0);
 	if (voice->loop) {
 		return (size_t)fmod(frame, (double)clip->frames);
 	}
