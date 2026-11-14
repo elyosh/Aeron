@@ -272,7 +272,17 @@ int AeronUi_BeginModal(AeronUiContext* ctx, const char* title, int* open, const 
 	const UiRect full = { 0.0f, 0.0f, (float)ctx->out_w, (float)ctx->out_h };
 	ui_draw_fill(ctx, &full, ctx->theme.scrim, NULL);
 
-	return ui_begin_window_common(ctx, title, desc, id);
+	const int visible = ui_begin_window_common(ctx, title, desc, id);
+	/* The modal's widgets get IDs of their own. Otherwise a button with the
+	   same label as one under the modal has the same ID, and the focus check
+	   finds the one under the modal and moves the focus back to the modal's
+	   first widget. */
+	ctx->scope_pushed_id[ctx->scope_depth] = 0;
+	if (visible && ctx->id_stack_depth < AERON_UI_ID_STACK_CAP) {
+		ctx->id_stack[ctx->id_stack_depth++]   = id;
+		ctx->scope_pushed_id[ctx->scope_depth] = 1;
+	}
+	return visible;
 }
 
 void AeronUi_EndModal(AeronUiContext* ctx) {
@@ -280,6 +290,10 @@ void AeronUi_EndModal(AeronUiContext* ctx) {
 		Aeron_LogWarn("aeron.scene", "unbalanced AeronUi_EndModal");
 		return;
 	}
+	if (ctx->scope_pushed_id[ctx->scope_depth] && ctx->id_stack_depth > 0) {
+		ctx->id_stack_depth--;
+	}
+	ctx->scope_pushed_id[ctx->scope_depth] = 0;
 	ui_end_window_common(ctx);
 	ctx->scope_depth--;
 }

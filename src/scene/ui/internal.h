@@ -165,7 +165,9 @@ struct AeronUiContext {
 	int       scope_depth;    /* current modal scope while declaring */
 	int       top_scope_prev; /* interactive scope (modal lag, 1 frame) */
 	AeronUiId scope_saved_focus[AERON_UI_MAX_SCOPES];
-	AeronUiId modal_open_id; /* modal declared this frame, 0 = none */
+	/* The modal of the scope pushed its ID on the ID stack. */
+	unsigned char scope_pushed_id[AERON_UI_MAX_SCOPES];
+	AeronUiId     modal_open_id; /* modal declared this frame, 0 = none */
 
 	/* Navigation intents for the current frame (consumed by widgets,
 	 * leftovers resolved at EndFrame). */
