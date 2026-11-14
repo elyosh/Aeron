@@ -34,9 +34,10 @@ typedef enum AeronPcmFormat { AERON_PCM_U8 = 0, AERON_PCM_S16 = 1 } AeronPcmForm
 
 /* Positional audio uses right-handed coordinates, as OpenAL does: the
  * listener's right is front x top. Positions, velocities and the min and max
- * distances of a voice all use the same units. The output is stereo, so a
- * sound behind the listener is made quieter and duller to tell it apart from
- * one in front. */
+ * distances of a voice all use the same units. A positional voice plays a
+ * stereo clip mixed down to mono. The output is stereo, so a sound behind
+ * the listener is made quieter and duller to tell it apart from one in
+ * front. */
 typedef struct AeronAudioListener {
 	float pos[3];   /* world position */
 	float front[3]; /* forward orientation vector (need not be normalized) */

@@ -365,7 +365,15 @@ static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 			}
 		}
 		float left, right;
-		if (clip->channels >= 2) {
+		if (clip->channels >= 2 && voice->is3d) {
+			/* A positional sound comes from one point, so a stereo clip is
+			   mixed down to mono before it is panned. Panning each channel
+			   on its own would drop one of them at the side. */
+			float mono = 0.5f * (Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop) +
+								 Aeron_AudioSampleClip(clip, voice->pos, 1, voice->loop));
+			left       = mono * gl;
+			right      = mono * gr;
+		} else if (clip->channels >= 2) {
 			left  = Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop) * gl;
 			right = Aeron_AudioSampleClip(clip, voice->pos, 1, voice->loop) * gr;
 		} else {
