@@ -43,9 +43,11 @@ typedef enum AeronPcmFormat { AERON_PCM_U8 = 0, AERON_PCM_S16 = 1 } AeronPcmForm
 /* Positional audio uses right-handed coordinates, as OpenAL does: the
  * listener's right is front x top. Positions, velocities and the min and max
  * distances of a voice all use the same units. A positional voice plays a
- * stereo clip mixed down to mono. With speakers, a sound behind the listener
- * is made quieter and duller to tell it apart from one in front. With
- * headphones, an HRTF gives the direction (see Aeron_AudioSetSpatialSettings). */
+ * stereo clip mixed down to mono. With stereo speakers, a sound behind the
+ * listener is made quieter and duller to tell it apart from one in front.
+ * With 5.1 and 7.1 speakers, it is panned between the speakers around it.
+ * With headphones, an HRTF gives the direction (see
+ * Aeron_AudioSetSpatialSettings). */
 typedef struct AeronAudioListener {
 	float pos[3];   /* world position */
 	float front[3]; /* forward orientation vector (need not be normalized) */
@@ -181,8 +183,10 @@ void     Aeron_AudioStreamClose(AeronAudioStream stream);
 void Aeron_AudioSetMasterGain(float gain);
 
 /* Sets the number of channels of the output: 2, 6 (5.1) or 8 (7.1), in SDL's
- * order. Voices and streams play on the first two, front left and front
- * right. Reopens the device, so call it from the control thread while no
+ * order. With speakers, positional voices are panned over all of them but
+ * LFE; with headphones, they play on the first two. 2D voices and streams
+ * always play on the first two, front left and front right. Reopens the
+ * device, so call it from the control thread while no
  * other thread uses audio. Fails, and keeps the current count, while any
  * voice or stream exists. */
 int Aeron_AudioSetOutputChannels(int channels);

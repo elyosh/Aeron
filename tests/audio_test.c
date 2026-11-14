@@ -12,8 +12,8 @@
  * mutex.
  *
  * With --bench, it measures the cost of mixing 32 positional voices instead,
- * with stereo panning and with HRTF, as a percentage of real time on one
- * core, and how long a call from another thread waits while they mix.
+ * with stereo panning, HRTF and 5.1 panning, as a percentage of real time on
+ * one core, and how long a call from another thread waits while they mix.
  *
  * Built with the tools as aeron_audio_test. It prints each check and exits
  * with a non-zero status when a check fails.
@@ -1490,7 +1490,7 @@ static void render_silent_scene(AeronClip looping, AeronClip once, float* out, s
 		if (phase == 10) {
 			Aeron_AudioVoiceSetGain(vc, 0.3f);
 		}
-		render_into(out + c * CHUNK * 2, CHUNK, CHUNK);
+		render_into(out + c * CHUNK * Aeron_AudioOutputChannels(), CHUNK, CHUNK);
 	}
 	stopped_at[0] = Aeron_AudioVoiceStopAndGetPosition(va);
 	stopped_at[1] = Aeron_AudioVoiceStopAndGetPosition(vb);
@@ -1508,8 +1508,8 @@ static void render_silent_scene(AeronClip looping, AeronClip once, float* out, s
 static void test_silent_skip(void) {
 	enum { FRAMES = 128 * 64, CLIP_RATE = 22050 };
 
-	static float with_skip[FRAMES * 2];
-	static float without[FRAMES * 2];
+	static float with_skip[FRAMES * 6];
+	static float without[FRAMES * 6];
 	int16_t*     pcm  = (int16_t*)malloc(CLIP_RATE * 2 * sizeof(int16_t));
 	uint32_t     seed = 9;
 	char         what[192];
@@ -1523,10 +1523,16 @@ static void test_silent_skip(void) {
 	free(pcm);
 
 	set_mixer_listener();
-	for (int mode = 0; mode < 2; ++mode) {
-		const char* name = mode ? "HRTF" : "speakers";
+	static const char* const names[3] = { "speakers", "HRTF", "5.1 speakers" };
+	for (int mode = 0; mode < 3; ++mode) {
+		const char* name = names[mode];
 		size_t      at_with[4], at_without[4];
-		set_output_mode(mode ? AERON_AUDIO_OUTPUT_HEADPHONES : AERON_AUDIO_OUTPUT_SPEAKERS);
+		set_output_mode(mode == 1 ? AERON_AUDIO_OUTPUT_HEADPHONES : AERON_AUDIO_OUTPUT_SPEAKERS);
+		if (!Aeron_AudioSetOutputChannels(mode == 2 ? 6 : 2)) {
+			check(0, "the output channel count can be set");
+			continue;
+		}
+		const size_t   bytes  = (size_t)FRAMES * (size_t)Aeron_AudioOutputChannels() * sizeof(float);
 		const uint64_t before = Aeron_AudioSilentSkips();
 		render_silent_scene(looping, once, with_skip, at_with);
 		const uint64_t skipped = Aeron_AudioSilentSkips() - before;
@@ -1536,13 +1542,148 @@ static void test_silent_skip(void) {
 		snprintf(what, sizeof what,
 				 "%s: skipping %llu silent voice chunks gives the same output and positions as mixing them",
 				 name, (unsigned long long)skipped);
-		check(skipped > 20 && memcmp(with_skip, without, sizeof without) == 0 &&
+		check(skipped > 20 && memcmp(with_skip, without, bytes) == 0 &&
 				  memcmp(at_with, at_without, sizeof at_with) == 0,
 			  what);
 	}
 	set_output_mode(AERON_AUDIO_OUTPUT_SPEAKERS);
+	Aeron_AudioSetOutputChannels(2);
 	Aeron_AudioClipDestroy(looping);
 	Aeron_AudioClipDestroy(once);
+}
+
+/* --- 5.1 and 7.1 ------------------------------------------------------------- */
+
+/* The level of each channel of a positional voice of the constant clip, at
+ * an azimuth and an elevation in degrees, close enough for full gain. */
+static void measure_surround(AeronClip clip, int channels, float azimuth, float elevation, float* levels) {
+	static float out[256 * 8];
+	const float  a      = azimuth * 3.14159265f / 180.0f;
+	const float  e      = elevation * 3.14159265f / 180.0f;
+	const float  pos[3] = { 50.0f * cosf(e) * sinf(a), 50.0f * sinf(e), -50.0f * cosf(e) * cosf(a) };
+	const AeronAudioSource3D source = make_source(pos, 100.0f, 131072.0f);
+	AeronVoice               voice  = play_source(clip, 1.0f, &source);
+	render_into(out, 256, 256);
+	Aeron_AudioVoiceStop(voice);
+	for (int c = 0; c < channels; ++c) {
+		levels[c] = out[255 * channels + c] / CLIP_LEVEL;
+	}
+	flush_delay();
+}
+
+/* With 5.1 and 7.1 speakers, a positional voice at a speaker's angle plays on
+ * that speaker only, and the LFE channel never gets it. In every direction,
+ * up and down included, the total power is 1. A source that jumps from one
+ * speaker to another ramps on every channel, and the output doesn't depend
+ * on the chunk size. */
+static void test_surround(void) {
+	static const struct {
+		int         channels;
+		int         speakers;
+		float       angle[7];
+		int         channel[7];
+		const char* name;
+	} layouts[2] = {
+		{ 6, 5, { 0.0f, -30.0f, 30.0f, -110.0f, 110.0f }, { 2, 0, 1, 4, 5 }, "5.1" },
+		{ 8, 7, { 0.0f, -30.0f, 30.0f, -90.0f, 90.0f, -150.0f, 150.0f }, { 2, 0, 1, 6, 7, 4, 5 }, "7.1" },
+	};
+
+	static const char* const names[8] = { "FL", "FR", "FC", "LFE", "BL", "BR", "SL", "SR" };
+	AeronClip                clip     = make_constant_clip(4800);
+	float                    levels[8];
+	char                     what[192];
+
+	set_mixer_listener();
+	for (int l = 0; l < 2; ++l) {
+		const int channels = layouts[l].channels;
+		if (!Aeron_AudioSetOutputChannels(channels)) {
+			check(0, "the output switches to more channels");
+			continue;
+		}
+		for (int i = 0; i < layouts[l].speakers; ++i) {
+			measure_surround(clip, channels, layouts[l].angle[i], 0.0f, levels);
+			float others = 0.0f;
+			for (int c = 0; c < channels; ++c) {
+				if (c != layouts[l].channel[i]) {
+					others = fmaxf(others, fabsf(levels[c]));
+				}
+			}
+			snprintf(what, sizeof what, "%s: a source at %+.0f° plays on %s only (%.4f, others at most %.4f)",
+					 layouts[l].name, layouts[l].angle[i], names[layouts[l].channel[i]],
+					 levels[layouts[l].channel[i]], others);
+			check(close_to(levels[layouts[l].channel[i]], 1.0f) && others <= 1e-4f, what);
+		}
+
+		float worst_power = 0.0f;
+		float worst_lfe   = 0.0f;
+		for (int e = -90; e <= 90; e += 30) {
+			for (int a = -180; a < 180; a += 7) {
+				measure_surround(clip, channels, (float)a, (float)e, levels);
+				float power = 0.0f;
+				for (int c = 0; c < channels; ++c) {
+					power += levels[c] * levels[c];
+				}
+				worst_power = fmaxf(worst_power, fabsf(power - 1.0f));
+				worst_lfe   = fmaxf(worst_lfe, fabsf(levels[3]));
+			}
+		}
+		snprintf(what, sizeof what,
+				 "%s: the total power is 1 in every direction (largest error %.5f), and LFE stays silent",
+				 layouts[l].name, worst_power);
+		check(worst_power <= 1e-3f && worst_lfe == 0.0f, what);
+
+		/* Straight up: every main speaker at the same level. */
+		measure_surround(clip, channels, 0.0f, 90.0f, levels);
+		float spread = 0.0f;
+		for (int i = 0; i < layouts[l].speakers; ++i) {
+			spread = fmaxf(spread,
+						   fabsf(levels[layouts[l].channel[i]] - 1.0f / sqrtf((float)layouts[l].speakers)));
+		}
+		snprintf(what, sizeof what, "%s: a source overhead plays on every main speaker at the same level",
+				 layouts[l].name);
+		check(spread <= 1e-4f, what);
+	}
+
+	/* 5.1: from front left to back right after 1000 frames, in chunks of
+	   1024, 7 and 64 frames. */
+	enum { JUMP_TOTAL = 3000, JUMP_AT = 1000 };
+
+	static float     jump_reference[JUMP_TOTAL * 6];
+	static float     jump_out[JUMP_TOTAL * 6];
+	static const int jump_chunks[3] = { 1024, 7, 64 };
+	const float      fl[3]          = { -25.0f, 0.0f, -43.3f };
+	const float      br[3]          = { 47.0f, 0.0f, 17.1f };
+	Aeron_AudioSetOutputChannels(6);
+	for (int i = 0; i < 3; ++i) {
+		float*             target = i == 0 ? jump_reference : jump_out;
+		AeronAudioSource3D source = make_source(fl, 100.0f, 131072.0f);
+		flush_delay();
+		AeronVoice voice = play_source(clip, 1.0f, &source);
+		render_into(target, JUMP_AT, jump_chunks[i]);
+		memcpy(source.pos, br, sizeof source.pos);
+		Aeron_AudioVoiceSet3DSource(voice, &source);
+		render_into(target + JUMP_AT * 6, JUMP_TOTAL - JUMP_AT, jump_chunks[i]);
+		Aeron_AudioVoiceStop(voice);
+		if (i > 0) {
+			snprintf(what, sizeof what, "5.1: chunks of %d frames give the same output as chunks of 1024",
+					 jump_chunks[i]);
+			check(memcmp(jump_reference, jump_out, sizeof jump_out) == 0, what);
+		}
+	}
+	/* From the frame after the voice starts: it starts at its level. */
+	float largest_step = 0.0f;
+	for (int f = g_delay + 1; f < JUMP_TOTAL; ++f) {
+		for (int c = 0; c < 6; ++c) {
+			largest_step =
+				fmaxf(largest_step, fabsf(jump_reference[f * 6 + c] - jump_reference[(f - 1) * 6 + c]));
+		}
+	}
+	snprintf(what, sizeof what, "5.1: the jump ramps over 64 frames on every channel (largest step %.5f)",
+			 largest_step);
+	check(largest_step <= CLIP_LEVEL / 64.0f + STEP_TOLERANCE, what);
+
+	check(Aeron_AudioSetOutputChannels(2), "back to 2 channels");
+	Aeron_AudioClipDestroy(clip);
 }
 
 /* --- output and limiter --------------------------------------------------- */
@@ -1805,6 +1946,36 @@ static int run_bench(void) {
 	for (int v = 0; v < VOICES; ++v) {
 		Aeron_AudioVoiceStop(voices[v]);
 	}
+
+	/* The same voices on a 5.1 output, panned between its speakers. The
+	   channel count only changes while no voice exists. */
+	if (Aeron_AudioSetOutputChannels(6)) {
+		static float surround_out[CHUNK * 6];
+		for (int v = 0; v < VOICES; ++v) {
+			const float pos[3] = { radius[v] * sinf(angle[v]), 0.0f, -radius[v] * cosf(angle[v]) };
+			const AeronAudioSource3D source = make_source(pos, 100.0f, 131072.0f);
+			voices[v]                       = play_source(clip, 0.1f, &source);
+		}
+		uint64_t ticks = 0;
+		for (int c = 0; c < chunks; ++c) {
+			bench_move_voices(voices, radius, angle, VOICES, 0);
+			const uint64_t start = SDL_GetPerformanceCounter();
+			render_into(surround_out, CHUNK, CHUNK);
+			if (c >= WARMUP_SECONDS * RATE / CHUNK) {
+				ticks += SDL_GetPerformanceCounter() - start;
+			}
+		}
+		const int    measured_chunks = chunks - WARMUP_SECONDS * RATE / CHUNK;
+		const double mix_seconds     = (double)ticks / (double)SDL_GetPerformanceFrequency();
+		printf("bench: %d positional voices, 5.1 panning: %.2f%% of one core, %.3f ms per %d-frame chunk (%s "
+			   "build)\n",
+			   VOICES, 100.0 * mix_seconds / ((double)measured_chunks * CHUNK / RATE),
+			   1000.0 * mix_seconds / measured_chunks, CHUNK, build);
+		for (int v = 0; v < VOICES; ++v) {
+			Aeron_AudioVoiceStop(voices[v]);
+		}
+		Aeron_AudioSetOutputChannels(2);
+	}
 	Aeron_AudioClipDestroy(clip);
 	return 0;
 }
@@ -1849,6 +2020,7 @@ int main(int argc, char** argv) {
 	test_hrtf_chunk_independence();
 	test_hrtf_loudness();
 	test_silent_skip();
+	test_surround();
 	test_output_channels();
 	test_limiter_delay();
 	test_limiter_peak();

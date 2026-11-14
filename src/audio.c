@@ -38,8 +38,9 @@
 
 #define AERON_AUDIO_DEVICE_RATE 48000
 /* The output has 2 channels by default; Aeron_AudioSetOutputChannels can
- * choose 6 or 8. Voices and streams mix into the first two, front left and
- * front right. */
+ * choose 6 or 8. 2D voices and streams mix into the first two, front left
+ * and front right; positional voices on speakers use all but LFE (see
+ * Aeron_AudioSurroundGains). */
 #define AERON_AUDIO_DEFAULT_CHANNELS 2
 #define AERON_AUDIO_MAX_CHANNELS 8
 #define AERON_AUDIO_MAX_CLIPS 2048
@@ -117,9 +118,9 @@ typedef struct AeronVoiceMixState {
 	   ramp heads to, the change per frame, and the frames left in the ramp.
 	   gains_set is clear until the first mixed chunk, which starts at its
 	   target. */
-	float gain_now[2];
-	float gain_target[2];
-	float gain_step[2];
+	float gain_now[AERON_AUDIO_MAX_CHANNELS];
+	float gain_target[AERON_AUDIO_MAX_CHANNELS];
+	float gain_step[AERON_AUDIO_MAX_CHANNELS];
 	int   ramp_frames;
 	int   gains_set;
 	float lowpass_state; /* the rear low-pass of a positional voice, on its mono signal */
@@ -430,7 +431,7 @@ static void Aeron_AudioBalanceGains(float gain, float balance, float* out_l, flo
  * of the mono signal, and the direction is in radians: the azimuth is
  * positive to the right, and the elevation positive upwards. */
 typedef struct AeronVoiceMixTargets {
-	float gain[2];
+	float gain[AERON_AUDIO_MAX_CHANNELS];
 	float lowpass;
 	int   hrtf;
 	float azimuth;
@@ -479,6 +480,68 @@ static double Aeron_AudioVoiceStep(const AeronVoiceSlot* voice, const AeronClipD
 	return step;
 }
 
+/* The main speakers of the 5.1 and 7.1 outputs, in order of angle, with
+ * their channel in SDL's order (FL FR FC LFE BL BR, then SL SR). Angles are
+ * in degrees, positive to the right. The LFE channel gets no positional
+ * sound. */
+typedef struct AeronSpeakerLayout {
+	int   count;
+	int   channel[7];
+	float angle[7];
+} AeronSpeakerLayout;
+
+static const AeronSpeakerLayout g_speakers_51 = { 5,
+												  { 4, 0, 2, 1, 5 },
+												  { -110.0f, -30.0f, 0.0f, 30.0f, 110.0f } };
+static const AeronSpeakerLayout g_speakers_71 = { 7,
+												  { 4, 6, 0, 2, 1, 7, 5 },
+												  { -150.0f, -90.0f, -30.0f, 0.0f, 30.0f, 90.0f, 150.0f } };
+
+/* Pans a positional voice over the speakers of a 5.1 or 7.1 output. The two
+ * speakers on either side of the azimuth share the sound (2D VBAP), with a
+ * total power of 1. As the elevation rises, the sound spreads to all main
+ * speakers: with s = |sin(elevation)|, each speaker gets
+ * sqrt((1 - s²)·pair² + s²/N), so the total power stays 1 and a sound right
+ * overhead plays on every speaker at the same level. `azimuth` is in
+ * radians, positive to the right; `sin_elevation` is in [-1, 1]. */
+static void Aeron_AudioSurroundGains(int channels, float azimuth, float sin_elevation, float gain,
+									 float* out) {
+	const AeronSpeakerLayout* layout  = channels == 8 ? &g_speakers_71 : &g_speakers_51;
+	const float               deg     = 3.14159265358979323846f / 180.0f;
+	const float               theta   = azimuth / deg;
+	float                     pair[7] = { 0 };
+
+	for (int i = 0; i < layout->count; ++i) {
+		const int last = i == layout->count - 1;
+		const int next = last ? 0 : i + 1;
+		float     a    = layout->angle[i];
+		float     b    = layout->angle[next] + (last ? 360.0f : 0.0f);
+		float     t    = theta;
+		if (last && t < layout->angle[0]) {
+			t += 360.0f;
+		}
+		if (t < a || t > b) {
+			continue;
+		}
+		/* Weights that make the sum of the two speaker directions point at
+		   the source, scaled so that the total power is 1. */
+		const float span = sinf((b - a) * deg);
+		float       g1   = sinf((b - t) * deg) / span;
+		float       g2   = sinf((t - a) * deg) / span;
+		g1               = g1 > 0.0f ? g1 : 0.0f;
+		g2               = g2 > 0.0f ? g2 : 0.0f;
+		const float norm = sqrtf(g1 * g1 + g2 * g2);
+		pair[i]          = g1 / norm;
+		pair[next]       = g2 / norm;
+		break;
+	}
+
+	const float s2 = sin_elevation * sin_elevation;
+	for (int i = 0; i < layout->count; ++i) {
+		out[layout->channel[i]] = gain * sqrtf((1.0f - s2) * pair[i] * pair[i] + s2 / (float)layout->count);
+	}
+}
+
 /* The gains and filter coefficient a voice heads to, and, with `hrtf` set,
  * its direction for the HRTF. Doesn't change the voice: the gains reach these
  * targets through Aeron_AudioVoiceSetGainTargets. */
@@ -486,6 +549,7 @@ static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, int hrtf, Ae
 	float to_src[3];
 	float dist;
 
+	memset(out->gain, 0, sizeof out->gain);
 	out->lowpass   = 1.0f;
 	out->hrtf      = 0;
 	out->azimuth   = 0.0f;
@@ -548,6 +612,17 @@ static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, int hrtf, Ae
 		return;
 	}
 
+	/* With 5.1 and 7.1 speakers, there are speakers behind the listener, so
+	   there is no rear cue either. */
+	if (g_audio.out_channels > 2) {
+		float y = dist >= 1e-3f ? Aeron_AudioDot(to_src, top) : 0.0f;
+		y       = y > 1.0f ? 1.0f : y < -1.0f ? -1.0f : y;
+		const float azimuth =
+			dist >= 1e-3f ? atan2f(Aeron_AudioDot(to_src, right), Aeron_AudioDot(to_src, front)) : 0.0f;
+		Aeron_AudioSurroundGains(g_audio.out_channels, azimuth, y, voice->gain * atten, out->gain);
+		return;
+	}
+
 	float pan = Aeron_AudioDot(to_src, right); /* to_src already normalized */
 	if (pan < -1.0f) {
 		pan = -1.0f;
@@ -574,13 +649,13 @@ static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, int hrtf, Ae
 	Aeron_AudioEqualPowerPanGains(voice->gain * atten, pan, &out->gain[0], &out->gain[1]);
 }
 
-/* Points the gain ramps of a voice at new targets. A target that differs
+/* Points the gain ramps of a voice at new targets, one per output channel. A target that differs
  * from the current one starts a ramp of AERON_AUDIO_RAMP_FRAMES from the
  * gains in use. A change too small to ramp, and a voice's first chunk, jump
  * to the target: a new sound starts at its level, so its attack is kept. */
-static void Aeron_AudioVoiceSetGainTargets(AeronVoiceMixState* voice, const float target[2]) {
+static void Aeron_AudioVoiceSetGainTargets(AeronVoiceMixState* voice, const float* target, int channels) {
 	if (!voice->gains_set) {
-		for (int c = 0; c < 2; ++c) {
+		for (int c = 0; c < channels; ++c) {
 			voice->gain_now[c]    = target[c];
 			voice->gain_target[c] = target[c];
 		}
@@ -588,11 +663,15 @@ static void Aeron_AudioVoiceSetGainTargets(AeronVoiceMixState* voice, const floa
 		voice->gains_set   = 1;
 		return;
 	}
-	if (target[0] == voice->gain_target[0] && target[1] == voice->gain_target[1]) {
+	int same = 1;
+	for (int c = 0; c < channels; ++c) {
+		same = same && target[c] == voice->gain_target[c];
+	}
+	if (same) {
 		return;
 	}
 	int ramp = 0;
-	for (int c = 0; c < 2; ++c) {
+	for (int c = 0; c < channels; ++c) {
 		voice->gain_target[c] = target[c];
 		voice->gain_step[c]   = (target[c] - voice->gain_now[c]) / (float)AERON_AUDIO_RAMP_FRAMES;
 		if (fabsf(voice->gain_step[c]) > FLT_EPSILON) {
@@ -602,8 +681,9 @@ static void Aeron_AudioVoiceSetGainTargets(AeronVoiceMixState* voice, const floa
 	if (ramp) {
 		voice->ramp_frames = AERON_AUDIO_RAMP_FRAMES;
 	} else {
-		voice->gain_now[0] = target[0];
-		voice->gain_now[1] = target[1];
+		for (int c = 0; c < channels; ++c) {
+			voice->gain_now[c] = target[c];
+		}
 		voice->ramp_frames = 0;
 	}
 }
@@ -671,7 +751,9 @@ static float Aeron_AudioClipSample(const AeronClipData* clip, const AeronClipTap
  * returns the number mixed: fewer when a voice that doesn't loop reaches the
  * end of its clip. With `mono_out`, a positional voice writes its mono
  * signal there instead of mixing it, scaled by the first channel's gain, for
- * the HRTF to filter.
+ * the HRTF to filter. Otherwise, with more than 2 output channels, a
+ * positional voice plays on every channel with its own gain; 2D voices play
+ * on the first two.
  * 2D voices run this under the mixer mutex, jobs without it. It only reads
  * the clip's PCM and format. */
 static int Aeron_AudioRenderVoice(const AeronClipData* clip, AeronVoiceMixState* state, double step,
@@ -702,6 +784,11 @@ static int Aeron_AudioRenderVoice(const AeronClipData* clip, AeronVoiceMixState*
 			right                = mono * state->gain_now[1];
 			if (mono_out) {
 				mono_out[mixed] = left;
+			} else if (channels > 2) {
+				float* frame = &g_audio.mix[mixed * channels];
+				for (int c = 0; c < channels; ++c) {
+					frame[c] += mono * state->gain_now[c];
+				}
 			}
 		} else if (clip->channels >= 2) {
 			left  = Aeron_AudioClipSample(clip, &taps, 0) * state->gain_now[0];
@@ -714,14 +801,16 @@ static int Aeron_AudioRenderVoice(const AeronClipData* clip, AeronVoiceMixState*
 		/* The ramp ends exactly on its target. */
 		if (state->ramp_frames > 0) {
 			if (--state->ramp_frames == 0) {
-				state->gain_now[0] = state->gain_target[0];
-				state->gain_now[1] = state->gain_target[1];
+				for (int c = 0; c < channels; ++c) {
+					state->gain_now[c] = state->gain_target[c];
+				}
 			} else {
-				state->gain_now[0] += state->gain_step[0];
-				state->gain_now[1] += state->gain_step[1];
+				for (int c = 0; c < channels; ++c) {
+					state->gain_now[c] += state->gain_step[c];
+				}
 			}
 		}
-		if (!mono_out) {
+		if (!mono_out && !(positional && channels > 2)) {
 			g_audio.mix[mixed * channels] += left;
 			g_audio.mix[mixed * channels + 1] += right;
 		}
@@ -732,10 +821,18 @@ static int Aeron_AudioRenderVoice(const AeronClipData* clip, AeronVoiceMixState*
 }
 
 /* Whether a voice is silent for the whole chunk: its gain ramp is finished
- * and both gains are 0, so every frame it mixes would add zeros. */
-static int Aeron_AudioVoiceSilent(const AeronVoiceMixState* state) {
-	return state->gains_set && state->ramp_frames == 0 && state->gain_now[0] == 0.0f &&
-		   state->gain_now[1] == 0.0f;
+ * and the gains of all `channels` output channels are 0, so every frame it
+ * mixes would add zeros. */
+static int Aeron_AudioVoiceSilent(const AeronVoiceMixState* state, int channels) {
+	if (!state->gains_set || state->ramp_frames != 0) {
+		return 0;
+	}
+	for (int c = 0; c < channels; ++c) {
+		if (state->gain_now[c] != 0.0f) {
+			return 0;
+		}
+	}
+	return 1;
 }
 
 /* Advances a silent voice without mixing it. It uses the same position
@@ -995,7 +1092,7 @@ static void Aeron_AudioLimitFrame(AeronAudioLimiter* limiter, float* frame, int 
  *     comes back into range sounds the same.
  */
 static void Aeron_AudioRunJob(AeronVoiceJob* job, int channels) {
-	const int silent = Aeron_AudioVoiceSilent(&job->state);
+	const int silent = Aeron_AudioVoiceSilent(&job->state, channels);
 	if (!job->hrtf) {
 		if (silent && job->skip_silent && job->lowpass == 1.0f) {
 			job->mixed = Aeron_AudioSkipVoice(job->clip, &job->state, job->step, job->loop, 1, job->frames);
@@ -1074,11 +1171,11 @@ static void Aeron_AudioMixChunk(int frames) {
 		}
 		AeronVoiceMixTargets targets;
 		Aeron_AudioVoiceMixTargets(voice, hrtf != NULL, &targets);
-		Aeron_AudioVoiceSetGainTargets(&voice->state, targets.gain);
+		Aeron_AudioVoiceSetGainTargets(&voice->state, targets.gain, channels);
 		const double step = Aeron_AudioVoiceStep(voice, clip);
 		if (!voice->is3d) {
 			int mixed;
-			if (Aeron_AudioVoiceSilent(&voice->state) && !g_audio.silent_skip_off) {
+			if (Aeron_AudioVoiceSilent(&voice->state, channels) && !g_audio.silent_skip_off) {
 				mixed = Aeron_AudioSkipVoice(clip, &voice->state, step, voice->loop, 0, frames);
 				++g_audio.silent_skips;
 			} else {
