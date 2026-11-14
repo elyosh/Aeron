@@ -32,6 +32,11 @@ typedef uint64_t AeronVoice; /* 0 == invalid */
 
 typedef enum AeronPcmFormat { AERON_PCM_U8 = 0, AERON_PCM_S16 = 1 } AeronPcmFormat;
 
+/* Positional audio uses right-handed coordinates, as OpenAL does: the
+ * listener's right is front x top. Positions, velocities and the min and max
+ * distances of a voice all use the same units. The output is stereo, so a
+ * sound behind the listener is made quieter and duller to tell it apart from
+ * one in front. */
 typedef struct AeronAudioListener {
 	float pos[3];   /* world position */
 	float front[3]; /* forward orientation vector (need not be normalized) */
@@ -99,6 +104,8 @@ int Aeron_AudioVoiceIsPlaying(AeronVoice voice);
 
 /* Positional model (shared listener + global tuning factors). */
 void Aeron_AudioSetListener(const AeronAudioListener* listener);
+/* distance_factor is the number of metres in one unit. Only doppler uses it,
+ * to compare speeds with the speed of sound. */
 void Aeron_AudioSetDistanceModel(float distance_factor, float rolloff_factor, float doppler_factor);
 
 /* Queued PCM streams -------------------------------------------------------

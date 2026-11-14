@@ -19,6 +19,11 @@
 #define AERON_AUDIO_MAX_STREAMS 8
 #define AERON_AUDIO_MIX_CHUNK 1024
 #define AERON_AUDIO_SOUND_SPEED 343.0f /* metres/second, for doppler */
+/* A sound right behind the listener is this much quieter (-3 dB), and a
+ * low-pass filter softens it above this frequency. Most of the cue comes
+ * from the filter, as with a real head. */
+#define AERON_AUDIO_REAR_GAIN 0.7f
+#define AERON_AUDIO_REAR_CUTOFF_HZ 6000.0f
 
 typedef struct AeronClipData {
 	int16_t*       pcm; /* interleaved S16, channels = channels */
@@ -51,6 +56,7 @@ typedef struct AeronVoiceSlot {
 	float     vel3[3];
 	float     min_dist;
 	float     max_dist;
+	float     lowpass[2]; /* filter state for each output channel */
 } AeronVoiceSlot;
 
 typedef struct AeronAudioStreamSlot {
@@ -233,11 +239,13 @@ static void Aeron_AudioBalanceGains(float gain, float balance, float* out_l, flo
 	}
 }
 
-/* Computes per-voice left/right gains and the doppler-adjusted step. */
+/* Computes per-voice left/right gains, the doppler-adjusted step and the
+ * low-pass filter coefficient. A coefficient of 1 turns the filter off. */
 static void Aeron_AudioComputeVoiceMix(const AeronVoiceSlot* voice, const AeronClipData* clip, float* out_l,
-									   float* out_r, double* out_step) {
+									   float* out_r, double* out_step, float* out_lowpass) {
 	float base_step = ((float)clip->rate / (float)AERON_AUDIO_DEVICE_RATE) * voice->pitch;
 
+	*out_lowpass = 1.0f;
 	if (!voice->is3d) {
 		Aeron_AudioBalanceGains(voice->gain, voice->pan, out_l, out_r);
 		*out_step = base_step;
@@ -251,9 +259,11 @@ static void Aeron_AudioComputeVoiceMix(const AeronVoiceSlot* voice, const AeronC
 
 	float to_src[3] = { voice->pos3[0] - g_audio.listener.pos[0], voice->pos3[1] - g_audio.listener.pos[1],
 						voice->pos3[2] - g_audio.listener.pos[2] };
-	float dist      = Aeron_AudioNormalize(to_src) * g_audio.distance_factor;
+	float dist      = Aeron_AudioNormalize(to_src);
 
-	/* Inverse-distance attenuation (DirectSound3D / OpenAL model). */
+	/* Inverse-distance attenuation (DirectSound3D / OpenAL model). The
+	 * distances and the min and max distances use the same units, so the
+	 * distance factor doesn't change it. */
 	float atten    = 1.0f;
 	float min_dist = voice->min_dist > 0.0f ? voice->min_dist : 1.0f;
 	float clamped  = dist;
@@ -278,6 +288,22 @@ static void Aeron_AudioComputeVoiceMix(const AeronVoiceSlot* voice, const AeronC
 	}
 	if (pan > 1.0f) {
 		pan = 1.0f;
+	}
+
+	/* Stereo panning sounds the same in front and behind. To tell them
+	 * apart, a sound behind the listener is quieter and duller. The effect
+	 * grows from none at the side to full right behind. */
+	float behind = -Aeron_AudioDot(to_src, front);
+	if (behind > 0.0f) {
+		if (behind > 1.0f) {
+			behind = 1.0f;
+		}
+		atten *= 1.0f - (1.0f - AERON_AUDIO_REAR_GAIN) * behind;
+		/* The coefficient goes from 1 (no filter) at the side to the rear
+		   cutoff right behind, so the filter starts without a jump. */
+		float rear   = 1.0f - expf(-2.0f * 3.14159265358979323846f * AERON_AUDIO_REAR_CUTOFF_HZ /
+								   (float)AERON_AUDIO_DEVICE_RATE);
+		*out_lowpass = 1.0f - (1.0f - rear) * behind;
 	}
 	Aeron_AudioEqualPowerPanGains(voice->gain * atten, pan, out_l, out_r);
 
@@ -325,9 +351,9 @@ static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 		Aeron_AudioFreeVoiceLocked(voice);
 		return;
 	}
-	float  gl, gr;
+	float  gl, gr, lowpass;
 	double step;
-	Aeron_AudioComputeVoiceMix(voice, clip, &gl, &gr, &step);
+	Aeron_AudioComputeVoiceMix(voice, clip, &gl, &gr, &step, &lowpass);
 
 	int mixed = 0;
 	for (; mixed < frames; ++mixed) {
@@ -347,6 +373,14 @@ static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 			left       = mono * gl;
 			right      = mono * gr;
 		}
+		/* Without the filter, its state follows the output, so that it
+		   starts from the current sound when the voice moves behind. */
+		if (lowpass < 1.0f) {
+			left  = voice->lowpass[0] + lowpass * (left - voice->lowpass[0]);
+			right = voice->lowpass[1] + lowpass * (right - voice->lowpass[1]);
+		}
+		voice->lowpass[0] = left;
+		voice->lowpass[1] = right;
 		g_audio.mix[mixed * 2] += left;
 		g_audio.mix[mixed * 2 + 1] += right;
 		voice->pos += step;
@@ -893,9 +927,9 @@ static AeronVoiceSlot* Aeron_AudioResolvePlayingVoiceLocked(AeronVoice voice, ui
 
 static size_t Aeron_AudioVoiceCursorLocked(const AeronVoiceSlot* voice, const AeronClipData* clip,
 										   uint64_t played) {
-	float  left, right;
+	float  left, right, lowpass;
 	double step;
-	Aeron_AudioComputeVoiceMix(voice, clip, &left, &right, &step);
+	Aeron_AudioComputeVoiceMix(voice, clip, &left, &right, &step, &lowpass);
 	uint64_t pending = voice->mixed_until > played ? voice->mixed_until - played : 0;
 	double   heard   = voice->advanced - (double)pending * step;
 	double   frame   = (double)voice->start_frame + (heard > 0.0 ? heard : 0.0);

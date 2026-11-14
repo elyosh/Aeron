@@ -132,6 +132,14 @@ const DSCompatGuid IID_IDirectSound3DListener = {
 
 #define DS3DMODE_DISABLE 2u
 
+/* DirectSound uses left-handed coordinates, and the Aeron mixer uses
+ * right-handed ones. Negating z converts a position, velocity or direction. */
+static void DSoundCompat_ToMixerCoords(float x, float y, float z, float out[3]) {
+	out[0] = x;
+	out[1] = y;
+	out[2] = -z;
+}
+
 static int DSoundCompat_GuidEqual(const void* a, const DSCompatGuid* b) {
 	return a != NULL && memcmp(a, b, sizeof(DSCompatGuid)) == 0;
 }
@@ -214,13 +222,10 @@ static int DS3DBuffer_SetPosition(void* self, float x, float y, float z, uint32_
 	(void)apply;
 	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
 	DSoundBuffer_LockState(owner);
-	owner->pos3[0] = x;
-	owner->pos3[1] = y;
-	owner->pos3[2] = z;
-	owner->is3d    = 1;
+	DSoundCompat_ToMixerCoords(x, y, z, owner->pos3);
+	owner->is3d = 1;
 	if (owner->voice) {
-		float pos[3] = { x, y, z };
-		Aeron_AudioVoiceSet3DPosition(owner->voice, pos);
+		Aeron_AudioVoiceSet3DPosition(owner->voice, owner->pos3);
 	}
 	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
@@ -230,12 +235,9 @@ static int DS3DBuffer_SetVelocity(void* self, float x, float y, float z, uint32_
 	(void)apply;
 	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
 	DSoundBuffer_LockState(owner);
-	owner->vel3[0] = x;
-	owner->vel3[1] = y;
-	owner->vel3[2] = z;
+	DSoundCompat_ToMixerCoords(x, y, z, owner->vel3);
 	if (owner->voice) {
-		float vel[3] = { x, y, z };
-		Aeron_AudioVoiceSet3DVelocity(owner->voice, vel);
+		Aeron_AudioVoiceSet3DVelocity(owner->voice, owner->vel3);
 	}
 	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
@@ -279,8 +281,9 @@ static int DSoundCompat_QueryInterface3DBuffer(DSBuffer* owner, void** out) {
 }
 
 /* IDirectSound3DListener: a single shared listener obtained from the primary
- * buffer. Accumulates position/orientation/velocity and the distance model,
- * pushing them to the Aeron mixer on CommitDeferredSettings. */
+ * buffer. It keeps the position, orientation and velocity in mixer
+ * coordinates and sends them to the Aeron mixer on CommitDeferredSettings.
+ * The distance model is sent when it changes. */
 typedef struct DS3DListener {
 	const void** lpVtbl;
 	int          refcount;
@@ -323,30 +326,22 @@ static int DS3DListener_SetOrientation(void* self, float fx, float fy, float fz,
 									   uint32_t apply) {
 	(void)apply;
 	DS3DListener* l = (DS3DListener*)self;
-	l->front[0]     = fx;
-	l->front[1]     = fy;
-	l->front[2]     = fz;
-	l->top[0]       = tx;
-	l->top[1]       = ty;
-	l->top[2]       = tz;
+	DSoundCompat_ToMixerCoords(fx, fy, fz, l->front);
+	DSoundCompat_ToMixerCoords(tx, ty, tz, l->top);
 	return DS_OK;
 }
 
 static int DS3DListener_SetPosition(void* self, float x, float y, float z, uint32_t apply) {
 	(void)apply;
 	DS3DListener* l = (DS3DListener*)self;
-	l->pos[0]       = x;
-	l->pos[1]       = y;
-	l->pos[2]       = z;
+	DSoundCompat_ToMixerCoords(x, y, z, l->pos);
 	return DS_OK;
 }
 
 static int DS3DListener_SetVelocity(void* self, float x, float y, float z, uint32_t apply) {
 	(void)apply;
 	DS3DListener* l = (DS3DListener*)self;
-	l->vel[0]       = x;
-	l->vel[1]       = y;
-	l->vel[2]       = z;
+	DSoundCompat_ToMixerCoords(x, y, z, l->vel);
 	return DS_OK;
 }
 
