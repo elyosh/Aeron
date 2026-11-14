@@ -439,6 +439,7 @@ set(AERON_SOURCES
     src/aeron.c
     src/atlas_pack.c
     src/audio.c
+    src/audio_hrtf.c
     src/config_file.c
     src/diagnostics.c
     src/dialog.c
@@ -465,6 +466,26 @@ set(AERON_SOURCES
 )
 
 add_library(aeron ${AERON_SOURCES})
+
+# The built-in HRTF data set for headphone output, OpenAL Soft's default
+# (third_party/openal-soft-hrtf), embedded as a C array.
+set(AERON_HRTF_DATA "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openal-soft-hrtf/Default HRTF.mhr")
+set(AERON_HRTF_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/aeron_hrtf_default.c")
+add_custom_command(
+    OUTPUT "${AERON_HRTF_SOURCE}"
+    COMMAND ${CMAKE_COMMAND} "-DINPUT=${AERON_HRTF_DATA}" "-DOUTPUT=${AERON_HRTF_SOURCE}"
+        -DSYMBOL=aeron_hrtf_default -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake"
+    DEPENDS "${AERON_HRTF_DATA}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake"
+    COMMENT "Embedding the default HRTF data set"
+    VERBATIM)
+target_sources(aeron PRIVATE "${AERON_HRTF_SOURCE}")
+# The HRTF filtering is the costly part of mixing. Optimizing it in Debug
+# builds too lets them mix 32 HRTF voices in real time. -O3, because GCC
+# only vectorizes its main loop at -O3.
+if(NOT MSVC)
+    set_source_files_properties(src/audio_hrtf.c PROPERTIES
+        COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O3>")
+endif()
 
 set_target_properties(aeron PROPERTIES
     C_STANDARD 99
@@ -802,7 +823,7 @@ endif()
 # The debug host remains part of aeron, while the shared ImGui context and
 # SDL backends live in aeron_imgui for reuse by standalone asset tools.
 if(AERON_DEBUG_UI)
-    target_sources(aeron PRIVATE src/debug_ui.cpp)
+    target_sources(aeron PRIVATE src/debug_ui.cpp src/audio_debug.cpp)
     target_link_libraries(aeron PUBLIC aeron_imgui)
     target_compile_definitions(aeron PUBLIC AERON_DEBUG_UI=1)
     target_compile_features(aeron PUBLIC cxx_std_17)

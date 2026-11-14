@@ -12,8 +12,8 @@
  * mutex.
  *
  * With --bench, it measures the cost of mixing 32 positional voices instead,
- * as a percentage of real time on one core, and how long a call from another
- * thread waits while they mix.
+ * with stereo panning and with HRTF, as a percentage of real time on one
+ * core, and how long a call from another thread waits while they mix.
  *
  * Built with the tools as aeron_audio_test. It prints each check and exits
  * with a non-zero status when a check fails.
@@ -29,6 +29,7 @@
 
 #include "aeron/audio.h"
 #include "aeron/compat/dsound.h"
+#include "audio_hrtf.h"
 #include "internal.h"
 
 enum { RATE = 48000, MAX_FRAMES = 4096 };
@@ -1151,6 +1152,399 @@ static void test_job_clip_write(void) {
 	flush_delay();
 }
 
+/* --- HRTF ------------------------------------------------------------------ */
+
+static void set_output_mode(AeronAudioOutputMode mode) {
+	AeronAudioSpatialSettings settings;
+	memset(&settings, 0, sizeof settings);
+	settings.mode = mode;
+	Aeron_AudioSetSpatialSettings(&settings);
+}
+
+/* A mono S16 clip at the mixer's rate. */
+static AeronClip make_noise_clip(int frames, uint32_t seed, int level_divisor) {
+	int16_t* pcm = (int16_t*)malloc((size_t)frames * sizeof(int16_t));
+	for (int i = 0; i < frames; ++i) {
+		seed   = seed * 1664525u + 1013904223u;
+		pcm[i] = (int16_t)(((int)(seed >> 16) - 32768) / level_divisor);
+	}
+	AeronClip clip = Aeron_AudioClipCreate(pcm, (size_t)frames, RATE, 1, AERON_PCM_S16);
+	free(pcm);
+	return clip;
+}
+
+/* The built-in data set loads. Truncated data, an unknown header and a rate
+ * other than 48,000 Hz are refused with a message, and the mixer keeps its
+ * data set. */
+static void test_hrtf_loader(void) {
+	size_t         size;
+	const uint8_t* data = Aeron_HrtfBuiltinData(&size);
+	char           error[192];
+	char           what[256];
+
+	AeronHrtf* hrtf = Aeron_HrtfLoad(data, size, error, sizeof error);
+	snprintf(what, sizeof what, "the built-in data set loads: %d taps, %d responses (%s)",
+			 hrtf ? Aeron_HrtfTaps(hrtf) : 0, hrtf ? Aeron_HrtfResponses(hrtf) : 0, hrtf ? "ok" : error);
+	check(hrtf && Aeron_HrtfTaps(hrtf) == 64 && Aeron_HrtfResponses(hrtf) == 1982, what);
+	Aeron_HrtfFree(hrtf);
+
+	hrtf = Aeron_HrtfLoad(data, size - 1, error, sizeof error);
+	snprintf(what, sizeof what, "a data set one byte short is refused (%s)", error);
+	check(!hrtf && error[0], what);
+	Aeron_HrtfFree(hrtf);
+	hrtf = Aeron_HrtfLoad(data, 20, error, sizeof error);
+	check(!hrtf, "a data set cut after its header is refused");
+	Aeron_HrtfFree(hrtf);
+
+	uint8_t* copy = (uint8_t*)malloc(size);
+	memcpy(copy, data, size);
+	copy[8] = 0x44; /* 44,100 Hz */
+	copy[9] = 0xAC;
+	hrtf    = Aeron_HrtfLoad(copy, size, error, sizeof error);
+	snprintf(what, sizeof what, "a data set at 44,100 Hz is refused, pointing to makemhr (%s)", error);
+	check(!hrtf && strstr(error, "makemhr -r 48000") != NULL, what);
+	Aeron_HrtfFree(hrtf);
+	memcpy(copy, "MinPHR01", 8);
+	hrtf = Aeron_HrtfLoad(copy, size, error, sizeof error);
+	check(!hrtf, "an older format is refused");
+	Aeron_HrtfFree(hrtf);
+	check(!Aeron_AudioLoadHrtfData(copy, size, error, sizeof error),
+		  "the mixer refuses it too, and keeps its data set");
+	free(copy);
+}
+
+/* Renders `frames` frames of a positional noise voice at `pos`, from
+ * silence, in chunks of `chunk`. */
+static void render_positional(AeronClip clip, const float pos[3], float* out, int frames, int chunk) {
+	const AeronAudioSource3D source = make_source(pos, 100.0f, 131072.0f);
+	flush_delay();
+	AeronVoice voice = play_source(clip, 1.0f, &source);
+	render_into(out, frames, chunk);
+	Aeron_AudioVoiceStop(voice);
+}
+
+static double channel_energy(const float* out, int channel, int first, int frames) {
+	double energy = 0.0;
+	for (int i = first; i < frames; ++i) {
+		energy += (double)out[i * 2 + channel] * (double)out[i * 2 + channel];
+	}
+	return energy;
+}
+
+/* On headphones, a source at the right is far louder in the right ear. A
+ * source at the mirror position on the left gives the same output with the
+ * ears swapped, exactly. */
+static void test_hrtf_directions(void) {
+	enum { FRAMES = 4096 };
+
+	static float right_out[FRAMES * 2];
+	static float left_out[FRAMES * 2];
+	AeronClip    clip = make_noise_clip(RATE, 11, 8);
+	char         what[192];
+
+	set_output_mode(AERON_AUDIO_OUTPUT_HEADPHONES);
+	set_mixer_listener();
+	const float side[3] = { 50.0f, 0.0f, 0.0f };
+	render_positional(clip, side, right_out, FRAMES, 1024);
+	const double left_energy  = channel_energy(right_out, 0, 1024, FRAMES);
+	const double right_energy = channel_energy(right_out, 1, 1024, FRAMES);
+	snprintf(what, sizeof what, "a source at +90° is far louder in the right ear (right/left energy %.1f)",
+			 right_energy / left_energy);
+	check(right_energy > 10.0 * left_energy, what);
+
+	/* An impulse from the right reaches the left ear later, by the
+	   difference of the two ears' delays in the data set. The responses are
+	   minimum-phase, so each starts at its delay. */
+	int16_t impulse_pcm[4800];
+	memset(impulse_pcm, 0, sizeof impulse_pcm);
+	impulse_pcm[0]          = (int16_t)(CLIP_LEVEL * 32768.0f);
+	AeronClip       impulse = Aeron_AudioClipCreate(impulse_pcm, 4800, RATE, 1, AERON_PCM_S16);
+	size_t          hrtf_size;
+	const uint8_t*  hrtf_data = Aeron_HrtfBuiltinData(&hrtf_size);
+	AeronHrtf*      hrtf      = Aeron_HrtfLoad(hrtf_data, hrtf_size, NULL, 0);
+	AeronHrtfFilter filter;
+	Aeron_HrtfGetFilter(hrtf, 3.14159265f / 2.0f, 0.0f, &filter);
+	Aeron_HrtfFree(hrtf);
+	render_positional(impulse, side, right_out, 1024, 1024);
+	int first[2] = { -1, -1 };
+	for (int ch = 0; ch < 2; ++ch) {
+		float peak = 0.0f;
+		for (int i = 0; i < 1024; ++i) {
+			peak = fmaxf(peak, fabsf(right_out[i * 2 + ch]));
+		}
+		for (int i = 0; i < 1024 && first[ch] < 0; ++i) {
+			if (fabsf(right_out[i * 2 + ch]) > 0.1f * peak) {
+				first[ch] = i;
+			}
+		}
+	}
+	const int expected_lag = filter.delay[0] - filter.delay[1];
+	snprintf(
+		what, sizeof what,
+		"an impulse from the right reaches the left ear %d frames later (expected about %d, from delays %d "
+		"and %d)",
+		first[0] - first[1], expected_lag, filter.delay[0], filter.delay[1]);
+	check(expected_lag > 10 && abs(first[0] - first[1] - expected_lag) <= 3, what);
+	Aeron_AudioClipDestroy(impulse);
+
+	/* 33° to the right and 20° up, then the mirror position. */
+	const float a        = 33.0f * 3.14159265f / 180.0f;
+	const float e        = 20.0f * 3.14159265f / 180.0f;
+	const float plus[3]  = { 50.0f * cosf(e) * sinf(a), 50.0f * sinf(e), -50.0f * cosf(e) * cosf(a) };
+	const float minus[3] = { -plus[0], plus[1], plus[2] };
+	render_positional(clip, plus, right_out, FRAMES, 1024);
+	render_positional(clip, minus, left_out, FRAMES, 1024);
+	int mirrored = 1;
+	for (int i = 0; i < FRAMES && mirrored; ++i) {
+		mirrored = right_out[i * 2] == left_out[i * 2 + 1] && right_out[i * 2 + 1] == left_out[i * 2];
+	}
+	check(mirrored, "a source at +33° and one at -33° give the same output with the ears swapped");
+
+	set_output_mode(AERON_AUDIO_OUTPUT_SPEAKERS);
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* A constant signal from a source that circles the listener once a second.
+ * The level changes with the direction, and each change crossfades between
+ * the old and the new filter over 64 frames, so no step between neighbouring
+ * samples is much larger than the change of one chunk spread over 64
+ * frames. Switching filters at once would step by the whole change. */
+static void test_hrtf_circling(void) {
+	enum { CHUNK = 256, CHUNKS = RATE / CHUNK };
+
+	static float out[CHUNK * CHUNKS * 2];
+	AeronClip    clip           = make_constant_clip(4800);
+	float        largest_change = 0.0f;
+	float        largest_step   = 0.0f;
+	char         what[192];
+
+	set_output_mode(AERON_AUDIO_OUTPUT_HEADPHONES);
+	set_mixer_listener();
+	flush_delay();
+	const float        start[3] = { 0.0f, 0.0f, -50.0f };
+	AeronAudioSource3D source   = make_source(start, 100.0f, 131072.0f);
+	AeronVoice         voice    = play_source(clip, 1.0f, &source);
+	for (int c = 0; c < CHUNKS; ++c) {
+		const float angle = 2.0f * 3.14159265f * (float)c / (float)CHUNKS;
+		source.pos[0]     = 50.0f * sinf(angle);
+		source.pos[2]     = -50.0f * cosf(angle);
+		Aeron_AudioVoiceSet3DSource(voice, &source);
+		render_into(out + c * CHUNK * 2, CHUNK, CHUNK);
+	}
+	Aeron_AudioVoiceStop(voice);
+	/* Leave out the first three chunks, where the voice starts from silence. */
+	for (int c = 3; c < CHUNKS; ++c) {
+		for (int ch = 0; ch < 2; ++ch) {
+			const float now    = out[((c + 1) * CHUNK - 1) * 2 + ch];
+			const float before = out[(c * CHUNK - 1) * 2 + ch];
+			largest_change     = fmaxf(largest_change, fabsf(now - before));
+		}
+	}
+	for (int ch = 0; ch < 2; ++ch) {
+		largest_step = fmaxf(largest_step, max_sample_step(out + 3 * CHUNK * 2, ch, (CHUNKS - 3) * CHUNK));
+	}
+	snprintf(what, sizeof what,
+			 "a circling source changes smoothly: largest step %.6f, largest change per chunk %.6f",
+			 largest_step, largest_change);
+	check(largest_step <= 4.0f * largest_change / 64.0f + STEP_TOLERANCE, what);
+
+	set_output_mode(AERON_AUDIO_OUTPUT_SPEAKERS);
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* On headphones too, the output doesn't depend on how the frames are split
+ * into chunks: two noise voices, one of which moves after 100 frames, which
+ * starts a crossfade. The filter history, tails and crossfades carry over. */
+static void test_hrtf_chunk_independence(void) {
+	enum { FIRST = 100, TOTAL = 3000 };
+
+	static const int chunk_sizes[] = { 1024, 1, 7, 64, 480 };
+	static float     reference[TOTAL * 2];
+	static float     out[TOTAL * 2];
+	AeronClip        clip = make_noise_clip(RATE, 5, 4);
+	char             what[128];
+
+	set_output_mode(AERON_AUDIO_OUTPUT_HEADPHONES);
+	set_mixer_listener();
+	for (size_t i = 0; i < sizeof chunk_sizes / sizeof chunk_sizes[0]; ++i) {
+		const int          chunk    = chunk_sizes[i];
+		const float        a_pos[3] = { 300.0f, 0.0f, -300.0f };
+		const float        b_pos[3] = { -40.0f, 30.0f, 10.0f };
+		const float        moved[3] = { -200.0f, -50.0f, 400.0f };
+		float*             target   = i == 0 ? reference : out;
+		AeronAudioSource3D a        = make_source(a_pos, 100.0f, 1000.0f);
+		AeronAudioSource3D b        = make_source(b_pos, 100.0f, 1000.0f);
+		flush_delay();
+		AeronVoice va = play_source(clip, 0.5f, &a);
+		AeronVoice vb = Aeron_AudioVoicePlay3DSource(clip, 0.5f, 1.0f, 1, &b, 777);
+		render_into(target, FIRST, chunk);
+		memcpy(a.pos, moved, sizeof a.pos);
+		Aeron_AudioVoiceSet3DSource(va, &a);
+		render_into(target + FIRST * 2, TOTAL - FIRST, chunk);
+		Aeron_AudioVoiceStop(va);
+		Aeron_AudioVoiceStop(vb);
+		if (i > 0) {
+			snprintf(what, sizeof what,
+					 "with HRTF, chunks of %d frames give the same output as chunks of 1024", chunk);
+			check(memcmp(reference, out, sizeof out) == 0, what);
+		}
+	}
+	set_output_mode(AERON_AUDIO_OUTPUT_SPEAKERS);
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* Pink noise straight ahead is as loud on headphones as with stereo
+ * panning, within 0.5 dB, so switching the output doesn't change the level.
+ * The loudness is the RMS of both channels over 1.5 s. */
+static void test_hrtf_loudness(void) {
+	enum { SECONDS = 2, PIECE = MAX_FRAMES };
+
+	int16_t* pcm  = (int16_t*)malloc(SECONDS * RATE * sizeof(int16_t));
+	uint32_t seed = 3;
+	double   b0 = 0.0, b1 = 0.0, b2 = 0.0;
+	double   energy[2] = { 0.0, 0.0 };
+	char     what[192];
+
+	/* Paul Kellet's pink noise filter, on white noise. */
+	for (int i = 0; i < SECONDS * RATE; ++i) {
+		seed            = seed * 1664525u + 1013904223u;
+		const double w  = ((double)(seed >> 8) / 16777216.0) * 2.0 - 1.0;
+		b0              = 0.99765 * b0 + w * 0.0990460;
+		b1              = 0.96300 * b1 + w * 0.2965164;
+		b2              = 0.57000 * b2 + w * 1.0526913;
+		const double pk = (b0 + b1 + b2 + w * 0.1848) * 0.05;
+		pcm[i]          = (int16_t)lrint(fmax(-1.0, fmin(1.0, pk)) * 32767.0);
+	}
+	AeronClip clip = Aeron_AudioClipCreate(pcm, SECONDS * RATE, RATE, 1, AERON_PCM_S16);
+	free(pcm);
+
+	set_mixer_listener();
+	for (int mode = 0; mode < 2; ++mode) {
+		set_output_mode(mode ? AERON_AUDIO_OUTPUT_HEADPHONES : AERON_AUDIO_OUTPUT_SPEAKERS);
+		const float              front[3] = { 0.0f, 0.0f, -50.0f };
+		const AeronAudioSource3D source   = make_source(front, 100.0f, 131072.0f);
+		flush_delay();
+		AeronVoice voice = play_source(clip, 1.0f, &source);
+		for (int done = 0; done < SECONDS * RATE; done += PIECE) {
+			render(PIECE, 1024);
+			if (done >= RATE / 2) {
+				energy[mode] += channel_energy(g_out, 0, 0, PIECE) + channel_energy(g_out, 1, 0, PIECE);
+			}
+		}
+		Aeron_AudioVoiceStop(voice);
+	}
+	set_output_mode(AERON_AUDIO_OUTPUT_SPEAKERS);
+	const double db = 10.0 * log10(energy[1] / energy[0]);
+	snprintf(what, sizeof what,
+			 "pink noise in front is as loud on headphones as on speakers (%+.2f dB, gain for 0 dB %.4f)", db,
+			 sqrt(energy[0] / energy[1]));
+	check(fabs(db) <= 0.5, what);
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* --- silent voices ----------------------------------------------------------- */
+
+/* Renders the scene of test_silent_skip into `out`, in chunks of 64 frames:
+ * a fade to silence can then end on a chunk's last frame, with the HRTF
+ * filter still ringing. Returns the positions at which the voices stopped. */
+static void render_silent_scene(AeronClip looping, AeronClip once, float* out, size_t stopped_at[4]) {
+	enum { CHUNK = 64, CHUNKS = 128 };
+
+	const float in_range[3]    = { 300.0f, 0.0f, -300.0f };
+	const float far_front[3]   = { 100.0f, 0.0f, -2000.0f };
+	const float far_back[3]    = { 0.0f, 0.0f, 2000.0f };
+	const float far_left[3]    = { -2000.0f, 300.0f, 0.0f };
+	const float back_behind[3] = { -200.0f, 50.0f, 300.0f };
+	const float near[3]        = { 100.0f, 0.0f, -100.0f };
+	const float gone[3]        = { 0.0f, -100.0f, -5000.0f };
+	const float behind[3]      = { 100.0f, 0.0f, 200.0f };
+
+	/* a: in range, out in front, behind, to the side, then back in range
+	   behind the listener. d: behind, out behind, and straight back in
+	   behind. b: ends while muted. c: 2D, at a gain of 0, then heard. */
+	AeronAudioSource3D a = make_source(in_range, 100.0f, 1000.0f);
+	AeronAudioSource3D b = make_source(near, 100.0f, 1000.0f);
+	AeronAudioSource3D d = make_source(behind, 100.0f, 1000.0f);
+	a.mute_beyond_max = b.mute_beyond_max = d.mute_beyond_max = 1;
+	a.fade_start = d.fade_start = 750.0f;
+	flush_delay();
+	AeronVoice va = Aeron_AudioVoicePlay3DSource(looping, 0.3f, 1.0f, 1, &a, 0);
+	AeronVoice vb = Aeron_AudioVoicePlay3DSource(once, 0.3f, 1.0f, 0, &b, 0);
+	AeronVoice vc = Aeron_AudioVoicePlay(looping, 0.0f, 0.0f, 1.0f, 1);
+	AeronVoice vd = Aeron_AudioVoicePlay3DSource(looping, 0.3f, 1.0f, 1, &d, 5000);
+	for (int c = 0; c < CHUNKS; ++c) {
+		const int    phase = c / 4;
+		const float* pos   = phase < 4    ? in_range
+							 : phase < 16 ? far_front
+							 : phase < 20 ? far_back
+							 : phase < 24 ? far_left
+										  : back_behind;
+		memcpy(a.pos, pos, sizeof a.pos);
+		/* A slow drift while muted changes the direction on every chunk. */
+		a.pos[0] += 2.5f * (float)c;
+		Aeron_AudioVoiceSet3DSource(va, &a);
+		memcpy(b.pos, phase < 2 ? near : gone, sizeof b.pos);
+		Aeron_AudioVoiceSet3DSource(vb, &b);
+		memcpy(d.pos, phase < 4 ? behind : phase < 20 ? far_back : back_behind, sizeof d.pos);
+		Aeron_AudioVoiceSet3DSource(vd, &d);
+		if (phase == 10) {
+			Aeron_AudioVoiceSetGain(vc, 0.3f);
+		}
+		render_into(out + c * CHUNK * 2, CHUNK, CHUNK);
+	}
+	stopped_at[0] = Aeron_AudioVoiceStopAndGetPosition(va);
+	stopped_at[1] = Aeron_AudioVoiceStopAndGetPosition(vb);
+	stopped_at[2] = Aeron_AudioVoiceStopAndGetPosition(vc);
+	stopped_at[3] = Aeron_AudioVoiceStopAndGetPosition(vd);
+}
+
+/* A voice that is silent for a whole chunk, because it is muted beyond its
+ * max distance or has a gain of 0, skips mixing. The output must be the same
+ * as without the skip, bit for bit, with speakers and with HRTF. The scene
+ * has a looping stereo voice that goes out of range, moves around while
+ * muted (behind the listener too), and comes back behind it; one that comes
+ * straight back from behind; one that ends while muted; and a 2D voice that
+ * starts at a gain of 0 and is then heard. */
+static void test_silent_skip(void) {
+	enum { FRAMES = 128 * 64, CLIP_RATE = 22050 };
+
+	static float with_skip[FRAMES * 2];
+	static float without[FRAMES * 2];
+	int16_t*     pcm  = (int16_t*)malloc(CLIP_RATE * 2 * sizeof(int16_t));
+	uint32_t     seed = 9;
+	char         what[192];
+
+	for (int i = 0; i < CLIP_RATE * 2; ++i) {
+		seed   = seed * 1664525u + 1013904223u;
+		pcm[i] = (int16_t)(((int)(seed >> 16) - 32768) / 4);
+	}
+	AeronClip looping = Aeron_AudioClipCreate(pcm, CLIP_RATE, CLIP_RATE, 2, AERON_PCM_S16);
+	AeronClip once    = Aeron_AudioClipCreate(pcm, 3000, CLIP_RATE, 1, AERON_PCM_S16);
+	free(pcm);
+
+	set_mixer_listener();
+	for (int mode = 0; mode < 2; ++mode) {
+		const char* name = mode ? "HRTF" : "speakers";
+		size_t      at_with[4], at_without[4];
+		set_output_mode(mode ? AERON_AUDIO_OUTPUT_HEADPHONES : AERON_AUDIO_OUTPUT_SPEAKERS);
+		const uint64_t before = Aeron_AudioSilentSkips();
+		render_silent_scene(looping, once, with_skip, at_with);
+		const uint64_t skipped = Aeron_AudioSilentSkips() - before;
+		Aeron_AudioSetSilentSkip(0);
+		render_silent_scene(looping, once, without, at_without);
+		Aeron_AudioSetSilentSkip(1);
+		snprintf(what, sizeof what,
+				 "%s: skipping %llu silent voice chunks gives the same output and positions as mixing them",
+				 name, (unsigned long long)skipped);
+		check(skipped > 20 && memcmp(with_skip, without, sizeof without) == 0 &&
+				  memcmp(at_with, at_without, sizeof at_with) == 0,
+			  what);
+	}
+	set_output_mode(AERON_AUDIO_OUTPUT_SPEAKERS);
+	Aeron_AudioClipDestroy(looping);
+	Aeron_AudioClipDestroy(once);
+}
+
 /* --- output and limiter --------------------------------------------------- */
 
 /* The output can have 6 channels. A 2D voice plays on the first two, front
@@ -1297,13 +1691,19 @@ static int SDLCALL wait_probe(void* user) {
  * the audio. Positions change once per chunk, as they would with per-frame
  * updates from the game. */
 /* Moves the voices a little along their circles, in one batch, as the game
- * commits its updates once per frame. */
-static void bench_move_voices(const AeronVoice* voices, const float* radius, float* angle, int count) {
+ * commits its updates once per frame. With `half_muted`, every other voice
+ * is muted beyond its max distance, as in a busy battle. */
+static void bench_move_voices(const AeronVoice* voices, const float* radius, float* angle, int count,
+							  int half_muted) {
 	Aeron_Audio3DBeginBatch();
 	for (int v = 0; v < count; ++v) {
 		angle[v] += 0.02f;
-		const float              pos[3] = { radius[v] * sinf(angle[v]), 0.0f, -radius[v] * cosf(angle[v]) };
-		const AeronAudioSource3D source = make_source(pos, 100.0f, 131072.0f);
+		const float        pos[3] = { radius[v] * sinf(angle[v]), 0.0f, -radius[v] * cosf(angle[v]) };
+		AeronAudioSource3D source = make_source(pos, 100.0f, 131072.0f);
+		if (half_muted && v % 2 == 1) {
+			source.max_dist        = 40.0f;
+			source.mute_beyond_max = 1;
+		}
 		Aeron_AudioVoiceSet3DSource(voices[v], &source);
 	}
 	Aeron_Audio3DEndBatch();
@@ -1325,7 +1725,6 @@ static int run_bench(void) {
 	AeronVoice voices[VOICES];
 	float      radius[VOICES];
 	float      angle[VOICES];
-	uint64_t   ticks = 0;
 	int        chunks;
 
 	for (int i = 0; i < CLIP_RATE; ++i) {
@@ -1343,38 +1742,44 @@ static int run_bench(void) {
 		voices[v]                       = play_source(clip, 0.1f, &source);
 	}
 
-	chunks = (WARMUP_SECONDS + SECONDS) * RATE / CHUNK;
-	for (int c = 0; c < chunks; ++c) {
-		bench_move_voices(voices, radius, angle, VOICES);
-		const uint64_t start = SDL_GetPerformanceCounter();
-		render(CHUNK, CHUNK);
-		if (c >= WARMUP_SECONDS * RATE / CHUNK) {
-			ticks += SDL_GetPerformanceCounter() - start;
-		}
-	}
-
-	const int    measured_chunks = chunks - WARMUP_SECONDS * RATE / CHUNK;
-	const double mix_seconds     = (double)ticks / (double)SDL_GetPerformanceFrequency();
-	const double audio_seconds   = (double)measured_chunks * CHUNK / RATE;
 #ifdef NDEBUG
 	const char* build = "optimized";
 #else
 	const char* build = "debug";
 #endif
-	printf("bench: %d positional voices, stereo panning: %.2f%% of one core, %.3f ms per %d-frame chunk (%s "
-		   "build)\n",
-		   VOICES, 100.0 * mix_seconds / audio_seconds, 1000.0 * mix_seconds / measured_chunks, CHUNK, build);
+	static const char* const mode_names[4] = { "stereo panning", "HRTF", "stereo panning, half of them muted",
+											   "HRTF, half of them muted" };
+	chunks                                 = (WARMUP_SECONDS + SECONDS) * RATE / CHUNK;
+	for (int mode = 0; mode < 4; ++mode) {
+		set_output_mode(mode % 2 ? AERON_AUDIO_OUTPUT_HEADPHONES : AERON_AUDIO_OUTPUT_SPEAKERS);
+		uint64_t ticks = 0;
+		for (int c = 0; c < chunks; ++c) {
+			bench_move_voices(voices, radius, angle, VOICES, mode >= 2);
+			const uint64_t start = SDL_GetPerformanceCounter();
+			render(CHUNK, CHUNK);
+			if (c >= WARMUP_SECONDS * RATE / CHUNK) {
+				ticks += SDL_GetPerformanceCounter() - start;
+			}
+		}
+		const int    measured_chunks = chunks - WARMUP_SECONDS * RATE / CHUNK;
+		const double mix_seconds     = (double)ticks / (double)SDL_GetPerformanceFrequency();
+		const double audio_seconds   = (double)measured_chunks * CHUNK / RATE;
+		printf("bench: %d positional voices, %s: %.2f%% of one core, %.3f ms per %d-frame chunk (%s build)\n",
+			   VOICES, mode_names[mode], 100.0 * mix_seconds / audio_seconds,
+			   1000.0 * mix_seconds / measured_chunks, CHUNK, build);
+	}
 
-	/* The same mix, while a second thread checks a voice as fast as it can.
-	   A check waits while the mixer holds its mutex, but not while the
+	/* The HRTF mix again, while a second thread checks a voice as fast as it
+	   can. A check waits while the mixer holds its mutex, but not while the
 	   positional voices mix. */
 	WaitProbe probe;
 	memset(&probe, 0, sizeof probe);
 	probe.voice        = voices[0];
 	SDL_Thread* thread = SDL_CreateThread(wait_probe, "wait probe", &probe);
 	const int   probed = PROBE_SECONDS * RATE / CHUNK;
+	set_output_mode(AERON_AUDIO_OUTPUT_HEADPHONES);
 	for (int c = 0; thread && c < probed; ++c) {
-		bench_move_voices(voices, radius, angle, VOICES);
+		bench_move_voices(voices, radius, angle, VOICES, 0);
 		render(CHUNK, CHUNK);
 	}
 	SDL_SetAtomicInt(&probe.stop, 1);
@@ -1389,12 +1794,14 @@ static int run_bench(void) {
 			   (below += probe.buckets[p999]) < probe.calls - probe.calls / 1000) {
 			++p999;
 		}
-		printf("bench: a voice status check from another thread, while mixing: mean %.3f us, 99.9%% under "
+		printf("bench: a voice status check from another thread, while mixing with HRTF: mean %.3f us, "
+			   "99.9%% under "
 			   "%d us, at most %.1f us (%llu checks)\n",
 			   probe.calls ? (double)probe.total_ticks * us_per_tick / (double)probe.calls : 0.0, p999 + 1,
 			   (double)probe.max_ticks * us_per_tick, (unsigned long long)probe.calls);
 	}
 
+	set_output_mode(AERON_AUDIO_OUTPUT_SPEAKERS);
 	for (int v = 0; v < VOICES; ++v) {
 		Aeron_AudioVoiceStop(voices[v]);
 	}
@@ -1436,6 +1843,12 @@ int main(int argc, char** argv) {
 	test_resampler_sine();
 	test_job_stop();
 	test_job_clip_write();
+	test_hrtf_loader();
+	test_hrtf_directions();
+	test_hrtf_circling();
+	test_hrtf_chunk_independence();
+	test_hrtf_loudness();
+	test_silent_skip();
 	test_output_channels();
 	test_limiter_delay();
 	test_limiter_peak();

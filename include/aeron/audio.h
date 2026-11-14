@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "aeron/vfs.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -41,9 +43,9 @@ typedef enum AeronPcmFormat { AERON_PCM_U8 = 0, AERON_PCM_S16 = 1 } AeronPcmForm
 /* Positional audio uses right-handed coordinates, as OpenAL does: the
  * listener's right is front x top. Positions, velocities and the min and max
  * distances of a voice all use the same units. A positional voice plays a
- * stereo clip mixed down to mono. The output is stereo, so a sound behind
- * the listener is made quieter and duller to tell it apart from one in
- * front. */
+ * stereo clip mixed down to mono. With speakers, a sound behind the listener
+ * is made quieter and duller to tell it apart from one in front. With
+ * headphones, an HRTF gives the direction (see Aeron_AudioSetSpatialSettings). */
 typedef struct AeronAudioListener {
 	float pos[3];   /* world position */
 	float front[3]; /* forward orientation vector (need not be normalized) */
@@ -189,6 +191,33 @@ int Aeron_AudioOutputChannels(void);
  * when SDL converts. 0 when unknown. It follows the device when the system
  * changes it. */
 int Aeron_AudioDeviceChannels(void);
+
+/* Spatial output --------------------------------------------------------- */
+
+typedef enum AeronAudioOutputMode {
+	/* Positional voices are panned between the speakers. */
+	AERON_AUDIO_OUTPUT_SPEAKERS = 0,
+	/* Positional voices are filtered with an HRTF and play on the first two
+	   channels. On headphones, they then seem to come from their direction,
+	   including above and behind the listener. */
+	AERON_AUDIO_OUTPUT_HEADPHONES = 1,
+} AeronAudioOutputMode;
+
+typedef struct AeronAudioSpatialSettings {
+	AeronAudioOutputMode mode;
+} AeronAudioSpatialSettings;
+
+/* Applies at the next mixed chunk. Headphones use the HRTF data set loaded
+ * with Aeron_AudioLoadHrtf, or the built-in one if none was loaded. */
+void Aeron_AudioSetSpatialSettings(const AeronAudioSpatialSettings* settings);
+
+/* Loads an OpenAL Soft .mhr data set (MinPHR03 or MinPHR02, at 48,000 Hz)
+ * through the VFS. With a NULL path, loads the built-in data set, derived
+ * from SADIE II subject D1. On failure, writes a message to `error`, keeps
+ * the current data set, and returns 0. Call it from the control thread; it
+ * can wait up to one mixed chunk for the voices that use the current data
+ * set. */
+int Aeron_AudioLoadHrtf(AeronVfsRoot root, const char* path, char* error, size_t error_size);
 
 /* Pauses / resumes the output device. The mixer callback stops, freezing
  * voices, queued-stream consumption, and queued-stream

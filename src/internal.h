@@ -417,6 +417,14 @@ void Aeron_AudioSetJobHook(AeronAudioJobHook hook, void* user);
 /* For tests: how many Aeron_AudioClipWrite calls are waiting for a job to
  * end. */
 int Aeron_AudioClipWritersWaiting(void);
+/* For tests: turns the skipping of silent voices on or off (it is on by
+ * default), and counts the voice chunks that were skipped. The output is the
+ * same either way. */
+void     Aeron_AudioSetSilentSkip(int enabled);
+uint64_t Aeron_AudioSilentSkips(void);
+/* Loads an HRTF data set from memory, as Aeron_AudioLoadHrtf does from a
+ * file. NULL loads the built-in data set. */
+int Aeron_AudioLoadHrtfData(const void* data, size_t size, char* error, size_t error_size);
 
 void Aeron_BeginInputFrame(AeronInputSnapshot* input);
 void Aeron_HandleEvent(const SDL_Event* event);
