@@ -43,6 +43,8 @@ int Aeron_Init(const AeronConfig* config) {
 	if (g_aeron.initialized) {
 		return 1;
 	}
+	/* Before the log file, which can fail, so thread sinks always work. */
+	Aeron_LogInstallOutput();
 	Aeron_DiagnosticsInit(config);
 
 	memset(&g_aeron, 0, sizeof(g_aeron));

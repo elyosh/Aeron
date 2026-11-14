@@ -19,7 +19,18 @@ static struct {
 	/* Hashes of the SDL warnings already logged. */
 	Uint32 sdl_warnings[AERON_LOG_SDL_WARNING_LIMIT];
 	int    sdl_warning_count;
+	/* Aeron_LogFileOutput is SDL's log output. */
+	int installed;
 } s_log_file;
+
+/* A thread's sink. It is made on the thread's first Aeron_LogSetThreadSink
+ * call, kept while the thread runs, and freed by SDL when the thread ends. */
+typedef struct AeronLogThreadSink {
+	AeronLogSink sink;
+	void*        user;
+} AeronLogThreadSink;
+
+static SDL_TLSID s_log_thread_sink;
 
 static const char* const k_log_priority_names[SDL_LOG_PRIORITY_COUNT] = {
 	"", "TRACE", "VERBOSE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL",
@@ -50,6 +61,46 @@ static int Aeron_LogSdlWarningSeen(const char* message) {
 	return 0;
 }
 
+static AeronLogLevel Aeron_LogLevelFromSdl(SDL_LogPriority priority) {
+	switch (priority) {
+		case SDL_LOG_PRIORITY_TRACE:
+			return AERON_LOG_TRACE;
+		case SDL_LOG_PRIORITY_VERBOSE:
+			return AERON_LOG_VERBOSE;
+		case SDL_LOG_PRIORITY_DEBUG:
+			return AERON_LOG_DEBUG;
+		case SDL_LOG_PRIORITY_WARN:
+			return AERON_LOG_WARN;
+		case SDL_LOG_PRIORITY_ERROR:
+			return AERON_LOG_ERROR;
+		case SDL_LOG_PRIORITY_CRITICAL:
+			return AERON_LOG_CRITICAL;
+		default:
+			return AERON_LOG_INFO;
+	}
+}
+
+/* Sends a line to the calling thread's sink. Returns 0 when the thread has
+ * none. */
+static int Aeron_LogToThreadSink(int category, SDL_LogPriority priority, const char* message) {
+	const AeronLogThreadSink* thread_sink = (const AeronLogThreadSink*)SDL_GetTLS(&s_log_thread_sink);
+	char                      line[1100];
+
+	if (!thread_sink || !thread_sink->sink) {
+		return 0;
+	}
+	if (!message) {
+		message = "";
+	}
+	/* SDL's own messages get their category, as in the log file. */
+	if (category > SDL_LOG_CATEGORY_APPLICATION && category < (int)SDL_arraysize(k_log_sdl_category_names)) {
+		SDL_snprintf(line, sizeof line, "%s: %s", k_log_sdl_category_names[category], message);
+		message = line;
+	}
+	thread_sink->sink(thread_sink->user, Aeron_LogLevelFromSdl(priority), message);
+	return 1;
+}
+
 /* Runs under SDL's log output lock, so writes from different threads do not interleave. */
 static void SDLCALL Aeron_LogFileOutput(void* userdata, int category, SDL_LogPriority priority,
 										const char* message) {
@@ -58,6 +109,9 @@ static void SDLCALL Aeron_LogFileOutput(void* userdata, int category, SDL_LogPri
 	int    length;
 
 	(void)userdata;
+	if (Aeron_LogToThreadSink(category, priority, message)) {
+		return;
+	}
 	/* SDL's warnings are logged once each. Its errors are all logged. */
 	if (category != SDL_LOG_CATEGORY_APPLICATION && priority <= SDL_LOG_PRIORITY_WARN && message &&
 		Aeron_LogSdlWarningSeen(message)) {
@@ -89,6 +143,47 @@ static void SDLCALL Aeron_LogFileOutput(void* userdata, int category, SDL_LogPri
 	SDL_WriteIO(s_log_file.stream, "\n", 1);
 }
 
+void Aeron_LogInstallOutput(void) {
+	if (s_log_file.installed) {
+		return;
+	}
+	s_log_file.installed = 1;
+	SDL_GetLogOutputFunction(&s_log_file.forward, &s_log_file.forward_userdata);
+	SDL_SetLogOutputFunction(Aeron_LogFileOutput, NULL);
+}
+
+int Aeron_LogSetThreadSink(AeronLogSink sink, void* user) {
+	AeronLogThreadSink* thread_sink = (AeronLogThreadSink*)SDL_GetTLS(&s_log_thread_sink);
+
+	if (!thread_sink) {
+		if (!sink) {
+			return 1;
+		}
+		thread_sink = (AeronLogThreadSink*)SDL_calloc(1, sizeof *thread_sink);
+		if (!thread_sink) {
+			return 0;
+		}
+		if (!SDL_SetTLS(&s_log_thread_sink, thread_sink, SDL_free)) {
+			SDL_free(thread_sink);
+			return 0;
+		}
+	}
+	thread_sink->sink = sink;
+	thread_sink->user = sink ? user : NULL;
+	return 1;
+}
+
+void Aeron_LogGetThreadSink(AeronLogSink* sink, void** user) {
+	const AeronLogThreadSink* thread_sink = (const AeronLogThreadSink*)SDL_GetTLS(&s_log_thread_sink);
+
+	if (sink) {
+		*sink = thread_sink ? thread_sink->sink : NULL;
+	}
+	if (user) {
+		*user = thread_sink ? thread_sink->user : NULL;
+	}
+}
+
 void Aeron_LogFileInit(const char* directory, const char* app_name) {
 	char         stamp[128];
 	char         path[AERON_MAX_PATH];
@@ -96,6 +191,7 @@ void Aeron_LogFileInit(const char* directory, const char* app_name) {
 	SDL_DateTime date;
 	int          length;
 
+	Aeron_LogInstallOutput();
 	if (s_log_file.stream || !directory || !app_name) {
 		return;
 	}
@@ -141,8 +237,6 @@ void Aeron_LogFileInit(const char* directory, const char* app_name) {
 	}
 	SDL_strlcpy(s_log_file.directory, directory, sizeof s_log_file.directory);
 	s_log_file.start_counter = SDL_GetPerformanceCounter();
-	SDL_GetLogOutputFunction(&s_log_file.forward, &s_log_file.forward_userdata);
-	SDL_SetLogOutputFunction(Aeron_LogFileOutput, NULL);
 	Aeron_LogInfo("aeron.log", "session started %04d-%02d-%02d %02d:%02d:%02d, logging to %s", date.year,
 				  date.month, date.day, date.hour, date.minute, date.second, path);
 }

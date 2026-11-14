@@ -6,10 +6,16 @@ struct AeronThread {
 	SDL_Thread*     handle;
 	AeronThreadFunc function;
 	void*           user;
+	/* The log sink of the thread that made this one (aeron/log.h). */
+	AeronLogSink log_sink;
+	void*        log_sink_user;
 };
 
 static int SDLCALL Aeron_ThreadTrampoline(void* userdata) {
 	AeronThread* thread = (AeronThread*)userdata;
+	if (thread->log_sink && !Aeron_LogSetThreadSink(thread->log_sink, thread->log_sink_user)) {
+		Aeron_LogWarn("aeron.sync", "a new thread can't use the log sink of the thread that started it");
+	}
 	return thread->function(thread->user);
 }
 
@@ -25,6 +31,7 @@ AeronThread* Aeron_ThreadCreate(const char* name, AeronThreadFunc function, void
 		Aeron_LogError("aeron.sync", "could not allocate thread '%s'", name);
 		return NULL;
 	}
+	Aeron_LogGetThreadSink(&thread->log_sink, &thread->log_sink_user);
 	thread->handle   = NULL;
 	thread->function = function;
 	thread->user     = user;
