@@ -15,6 +15,7 @@ typedef struct AeronAudioDebugInfo {
 	int   out_channels;
 	int   device_channels;
 	int   headphones;
+	float air_absorption;
 	int   hrtf_taps;
 	int   hrtf_responses;
 	int   voices;

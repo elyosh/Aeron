@@ -209,6 +209,11 @@ typedef enum AeronAudioOutputMode {
 
 typedef struct AeronAudioSpatialSettings {
 	AeronAudioOutputMode mode;
+	/* High frequencies fade with distance, as they do through air. 0 turns
+	   it off; 1 is the physical amount, -0.05 dB per metre at 5 kHz beyond
+	   the min distance. It uses the distance factor of
+	   Aeron_AudioSetDistanceModel to turn units into metres. */
+	float air_absorption;
 } AeronAudioSpatialSettings;
 
 /* Applies at the next mixed chunk. Headphones use the HRTF data set loaded

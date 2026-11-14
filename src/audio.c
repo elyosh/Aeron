@@ -53,6 +53,11 @@
  * from the filter, as with a real head. */
 #define AERON_AUDIO_REAR_GAIN 0.7f
 #define AERON_AUDIO_REAR_CUTOFF_HZ 6000.0f
+/* Air absorption, as in OpenAL Soft: each metre beyond the min distance
+ * lowers high frequencies by this factor (-0.05 dB), at a 5 kHz reference
+ * (see Aeron_AudioAirShelf). */
+#define AERON_AUDIO_AIR_GAIN_PER_METRE 0.99426f
+#define AERON_AUDIO_AIR_REFERENCE_HZ 5000.0f
 /* A gain change ramps linearly over this many frames, as in OpenAL Soft, so
  * it doesn't click. */
 #define AERON_AUDIO_RAMP_FRAMES 64
@@ -124,6 +129,7 @@ typedef struct AeronVoiceMixState {
 	int   ramp_frames;
 	int   gains_set;
 	float lowpass_state; /* the rear low-pass of a positional voice, on its mono signal */
+	float shelf_z[2];    /* the air absorption filter's state (transposed direct form II) */
 	/* Set once the voice's HRTF state is in use. It is cleared when the
 	   voice starts, mixes without HRTF, or the data set changes, so that the
 	   HRTF filtering starts again from silence. */
@@ -155,6 +161,17 @@ typedef struct AeronVoiceSlot {
 	int job;
 } AeronVoiceSlot;
 
+/* The filters of a positional voice's mono signal, in the order they run:
+ *   - air absorption, a high shelf at 5 kHz whose coefficients come from
+ *     Aeron_AudioAirShelf, or none when `shelf` is clear;
+ *   - the rear low-pass, a one-pole filter whose coefficient is 1 when it is
+ *     off. */
+typedef struct AeronVoiceFilters {
+	int   shelf;
+	float b0, b1, b2, a1, a2;
+	float lowpass;
+} AeronVoiceFilters;
+
 /* A positional voice being mixed outside the mixer mutex. Under the mutex,
  * the callback fills it from the voice; the job then mixes its copy of the
  * voice's state, and the callback writes that back under the mutex, if the
@@ -164,10 +181,10 @@ typedef struct AeronVoiceJob {
 	int            slot;
 	AeronClipData* clip; /* holds a reference, and counts in job_refs */
 	/* What the job mixes with. They don't change while it runs. */
-	double start_pos;
-	double step;
-	float  lowpass;
-	int    loop;
+	double            start_pos;
+	double            step;
+	AeronVoiceFilters filters;
+	int               loop;
 	int    frames;
 	int    skip_silent;
 	/* With HRTF: the data set (the job counts in hrtf_jobs while it uses
@@ -237,6 +254,7 @@ typedef struct AeronAudioSystem {
 	AeronAudioListener staged_listener;
 	int                listener_staged;
 	float              distance_factor;
+	float              air_absorption; /* 0 = off, 1 = physical */
 	float              rolloff_factor;
 	float              doppler_factor;
 
@@ -426,13 +444,12 @@ static void Aeron_AudioBalanceGains(float gain, float balance, float* out_l, flo
 }
 
 /* What a voice's mix settings head to in the current chunk: the gain of
- * each output channel, and the coefficient of the rear low-pass. A
- * coefficient of 1 turns the filter off. With HRTF, both gains hold the gain
+ * each output channel, and the filters of its mono signal. With HRTF, both gains hold the gain
  * of the mono signal, and the direction is in radians: the azimuth is
  * positive to the right, and the elevation positive upwards. */
 typedef struct AeronVoiceMixTargets {
-	float gain[AERON_AUDIO_MAX_CHANNELS];
-	float lowpass;
+	float             gain[AERON_AUDIO_MAX_CHANNELS];
+	AeronVoiceFilters filters;
 	int   hrtf;
 	float azimuth;
 	float elevation;
@@ -478,6 +495,46 @@ static double Aeron_AudioVoiceStep(const AeronVoiceSlot* voice, const AeronClipD
 		}
 	}
 	return step;
+}
+
+/* Sets up the air absorption filter for a voice `dist` units away, as
+ * OpenAL Soft does. Beyond the min distance, the gain at 5 kHz is
+ * AERON_AUDIO_AIR_GAIN_PER_METRE ^ (metres beyond the min distance × rolloff
+ * × absorption setting), and at least 0.001. The filter is OpenAL Soft's
+ * high shelf with a slope of 1 and A = gain in the Audio EQ Cookbook
+ * formulas, so the gain at 5 kHz is `gain`, and the shelf levels off at gain²
+ * above it. Nearer, or with absorption off, there is no filter. */
+static void Aeron_AudioAirShelf(float dist, float min_dist, AeronVoiceFilters* filters) {
+	filters->shelf = 0;
+	if (g_audio.air_absorption <= 0.0f || dist <= min_dist) {
+		return;
+	}
+	const float metres = (dist - min_dist) * g_audio.rolloff_factor * g_audio.distance_factor;
+	const float absorb = metres * g_audio.air_absorption;
+	if (!(absorb > FLT_EPSILON)) {
+		return;
+	}
+	float gain = powf(AERON_AUDIO_AIR_GAIN_PER_METRE, absorb);
+	gain       = gain > 0.001f ? gain : 0.001f;
+
+	/* A slope of 1 makes 1/Q = sqrt((gain + 1/gain)(1/slope - 1) + 2) = sqrt(2). */
+	const float w0 =
+		2.0f * 3.14159265358979323846f * AERON_AUDIO_AIR_REFERENCE_HZ / (float)AERON_AUDIO_DEVICE_RATE;
+	const float cos_w          = cosf(w0);
+	const float alpha          = sinf(w0) / 2.0f * sqrtf(2.0f);
+	const float two_sqrt_alpha = 2.0f * sqrtf(gain) * alpha;
+	const float b0             = gain * ((gain + 1.0f) + (gain - 1.0f) * cos_w + two_sqrt_alpha);
+	const float b1             = -2.0f * gain * ((gain - 1.0f) + (gain + 1.0f) * cos_w);
+	const float b2             = gain * ((gain + 1.0f) + (gain - 1.0f) * cos_w - two_sqrt_alpha);
+	const float a0             = (gain + 1.0f) - (gain - 1.0f) * cos_w + two_sqrt_alpha;
+	const float a1             = 2.0f * ((gain - 1.0f) - (gain + 1.0f) * cos_w);
+	const float a2             = (gain + 1.0f) - (gain - 1.0f) * cos_w - two_sqrt_alpha;
+	filters->shelf             = 1;
+	filters->b0                = b0 / a0;
+	filters->b1                = b1 / a0;
+	filters->b2                = b2 / a0;
+	filters->a1                = a1 / a0;
+	filters->a2                = a2 / a0;
 }
 
 /* The main speakers of the 5.1 and 7.1 outputs, in order of angle, with
@@ -550,7 +607,8 @@ static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, int hrtf, Ae
 	float dist;
 
 	memset(out->gain, 0, sizeof out->gain);
-	out->lowpass   = 1.0f;
+	memset(&out->filters, 0, sizeof out->filters);
+	out->filters.lowpass = 1.0f;
 	out->hrtf      = 0;
 	out->azimuth   = 0.0f;
 	out->elevation = 0.0f;
@@ -587,6 +645,8 @@ static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, int hrtf, Ae
 			atten *= (source->max_dist - dist) / (source->max_dist - source->fade_start);
 		}
 	}
+
+	Aeron_AudioAirShelf(dist, min_dist, &out->filters);
 
 	/* Azimuth pan from the listener basis (right = front x top). */
 	float front[3] = { g_audio.listener.front[0], g_audio.listener.front[1], g_audio.listener.front[2] };
@@ -644,7 +704,7 @@ static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, int hrtf, Ae
 		   cutoff right behind, so the filter starts without a jump. */
 		float rear   = 1.0f - expf(-2.0f * 3.14159265358979323846f * AERON_AUDIO_REAR_CUTOFF_HZ /
 								   (float)AERON_AUDIO_DEVICE_RATE);
-		out->lowpass = 1.0f - (1.0f - rear) * behind;
+		out->filters.lowpass = 1.0f - (1.0f - rear) * behind;
 	}
 	Aeron_AudioEqualPowerPanGains(voice->gain * atten, pan, &out->gain[0], &out->gain[1]);
 }
@@ -757,9 +817,15 @@ static float Aeron_AudioClipSample(const AeronClipData* clip, const AeronClipTap
  * 2D voices run this under the mixer mutex, jobs without it. It only reads
  * the clip's PCM and format. */
 static int Aeron_AudioRenderVoice(const AeronClipData* clip, AeronVoiceMixState* state, double step,
-								  float lowpass, int loop, int positional, float* mono_out, int channels,
-								  int frames) {
-	int mixed = 0;
+								  const AeronVoiceFilters* filters, int loop, int positional, float* mono_out,
+								  int channels, int frames) {
+	const float lowpass = filters->lowpass;
+	int         mixed   = 0;
+	/* Without the shelf, its state is that of a filter that passes the
+	   signal unchanged: zeros. */
+	if (!filters->shelf) {
+		state->shelf_z[0] = state->shelf_z[1] = 0.0f;
+	}
 	for (; mixed < frames; ++mixed) {
 		if (state->pos >= (double)clip->frames) {
 			if (loop) {
@@ -773,6 +839,12 @@ static int Aeron_AudioRenderVoice(const AeronClipData* clip, AeronVoiceMixState*
 		Aeron_AudioClipTapsAt(clip, state->pos, loop, &taps);
 		if (positional) {
 			float mono = Aeron_AudioClipMono(clip, &taps);
+			if (filters->shelf) {
+				const float x     = mono;
+				mono              = x * filters->b0 + state->shelf_z[0];
+				state->shelf_z[0] = x * filters->b1 - mono * filters->a1 + state->shelf_z[1];
+				state->shelf_z[1] = x * filters->b2 - mono * filters->a2;
+			}
 			/* The rear low-pass works on the mono signal, before panning.
 			   Without the filter, its state follows the signal, so that it
 			   starts from the current sound when the voice moves behind. */
@@ -838,8 +910,9 @@ static int Aeron_AudioVoiceSilent(const AeronVoiceMixState* state, int channels)
 /* Advances a silent voice without mixing it. It uses the same position
  * arithmetic as Aeron_AudioRenderVoice, so the voice wraps or ends on the
  * same frame. For a positional voice, it sets the rear low-pass state to the
- * mono sample of the last frame, which is what Aeron_AudioRenderVoice leaves
- * when the filter is off; callers only skip a positional voice then. Returns
+ * mono sample of the last frame, and clears the air absorption state, which
+ * is what Aeron_AudioRenderVoice leaves when both filters are off; callers
+ * only skip a positional voice then. Returns
  * the number of frames that would have been mixed. */
 static int Aeron_AudioSkipVoice(const AeronClipData* clip, AeronVoiceMixState* state, double step, int loop,
 								int positional, int frames) {
@@ -862,6 +935,7 @@ static int Aeron_AudioSkipVoice(const AeronClipData* clip, AeronVoiceMixState* s
 		Aeron_AudioClipTapsAt(clip, last, loop, &taps);
 		state->lowpass_state = Aeron_AudioClipMono(clip, &taps);
 	}
+	state->shelf_z[0] = state->shelf_z[1] = 0.0f;
 	return mixed;
 }
 
@@ -1083,9 +1157,9 @@ static void Aeron_AudioLimitFrame(AeronAudioLimiter* limiter, float* frame, int 
  * A silent voice skips mixing when that leaves the output exactly the same.
  * Muted voices beyond their max distance keep playing, and in a busy battle
  * they can be half of all positional voices.
- *   - With speakers, a voice skips only while its rear low-pass is off. The
- *     filter state then just follows the signal, and Aeron_AudioSkipVoice
- *     sets it.
+ *   - With speakers, a voice skips only while its rear low-pass and air
+ *     absorption are off. Their state then just follows the signal, and
+ *     Aeron_AudioSkipVoice sets it.
  *   - With HRTF, a voice skips only after AERON_HRTF_MAX_TAPS silent frames,
  *     once its delay history and filter tail hold only zeros. Its filter
  *     still follows the direction (Aeron_HrtfSkipVoice), so a voice that
@@ -1093,19 +1167,28 @@ static void Aeron_AudioLimitFrame(AeronAudioLimiter* limiter, float* frame, int 
  */
 static void Aeron_AudioRunJob(AeronVoiceJob* job, int channels) {
 	const int silent = Aeron_AudioVoiceSilent(&job->state, channels);
+	const int filtered = job->filters.shelf || job->filters.lowpass != 1.0f;
 	if (!job->hrtf) {
-		if (silent && job->skip_silent && job->lowpass == 1.0f) {
+		if (silent && job->skip_silent && !filtered) {
 			job->mixed = Aeron_AudioSkipVoice(job->clip, &job->state, job->step, job->loop, 1, job->frames);
 			++g_audio.silent_skips;
 		} else {
-			job->mixed = Aeron_AudioRenderVoice(job->clip, &job->state, job->step, job->lowpass, job->loop, 1,
-												NULL, channels, job->frames);
+			job->mixed = Aeron_AudioRenderVoice(job->clip, &job->state, job->step, &job->filters, job->loop,
+												1, NULL, channels, job->frames);
 		}
 		Aeron_AudioCountSilence(&job->state, silent, job->frames);
 		return;
 	}
 	if (silent && job->skip_silent && job->state.silent_frames >= AERON_HRTF_MAX_TAPS) {
-		job->mixed = Aeron_AudioSkipVoice(job->clip, &job->state, job->step, job->loop, 1, job->frames);
+		/* With air absorption, the filter state follows the signal, so the
+		   voice still renders its mono signal; only the HRTF is skipped. */
+		if (filtered) {
+			job->mixed =
+				Aeron_AudioRenderVoice(job->clip, &job->state, job->step, &job->filters, job->loop, 1,
+									   g_audio.hrtf_input + AERON_HRTF_HISTORY, channels, job->frames);
+		} else {
+			job->mixed = Aeron_AudioSkipVoice(job->clip, &job->state, job->step, job->loop, 1, job->frames);
+		}
 		Aeron_HrtfSkipVoice(job->hrtf, &g_audio.hrtf_voices[job->slot], job->hrtf_start, job->azimuth,
 							job->elevation, job->frames);
 		++g_audio.silent_skips;
@@ -1114,8 +1197,8 @@ static void Aeron_AudioRunJob(AeronVoiceJob* job, int channels) {
 	}
 	float* input = g_audio.hrtf_input;
 	float* mono  = input + AERON_HRTF_HISTORY;
-	job->mixed   = Aeron_AudioRenderVoice(job->clip, &job->state, job->step, job->lowpass, job->loop, 1, mono,
-										  channels, job->frames);
+	job->mixed = Aeron_AudioRenderVoice(job->clip, &job->state, job->step, &job->filters, job->loop, 1, mono,
+										channels, job->frames);
 	/* After the end of a clip, the filter keeps ringing to the end of the
 	   chunk. */
 	memset(mono + job->mixed, 0, (size_t)(job->frames - job->mixed) * sizeof(float));
@@ -1179,7 +1262,7 @@ static void Aeron_AudioMixChunk(int frames) {
 				mixed = Aeron_AudioSkipVoice(clip, &voice->state, step, voice->loop, 0, frames);
 				++g_audio.silent_skips;
 			} else {
-				mixed = Aeron_AudioRenderVoice(clip, &voice->state, step, targets.lowpass, voice->loop, 0,
+				mixed = Aeron_AudioRenderVoice(clip, &voice->state, step, &targets.filters, voice->loop, 0,
 											   NULL, channels, frames);
 			}
 			Aeron_AudioVoiceMixedLocked(voice, clip, chunk_start, mixed);
@@ -1190,7 +1273,7 @@ static void Aeron_AudioMixChunk(int frames) {
 		job->clip          = clip;
 		job->start_pos     = voice->state.pos;
 		job->step          = step;
-		job->lowpass       = targets.lowpass;
+		job->filters        = targets.filters;
 		job->loop          = voice->loop;
 		job->frames        = frames;
 		job->skip_silent    = !g_audio.silent_skip_off;
@@ -1312,6 +1395,7 @@ void Aeron_AudioGetDebugInfo(AeronAudioDebugInfo* info) {
 	info->out_channels    = g_audio.out_channels;
 	info->device_channels = g_audio.device_channels;
 	info->headphones      = g_audio.output_mode == AERON_AUDIO_OUTPUT_HEADPHONES;
+	info->air_absorption  = g_audio.air_absorption;
 	if (g_audio.hrtf) {
 		info->hrtf_taps      = Aeron_HrtfTaps(g_audio.hrtf);
 		info->hrtf_responses = Aeron_HrtfResponses(g_audio.hrtf);
@@ -2191,6 +2275,9 @@ void Aeron_AudioSetSpatialSettings(const AeronAudioSpatialSettings* settings) {
 	const AeronAudioOutputMode mode = settings->mode == AERON_AUDIO_OUTPUT_HEADPHONES
 										  ? AERON_AUDIO_OUTPUT_HEADPHONES
 										  : AERON_AUDIO_OUTPUT_SPEAKERS;
+	const float                air  = settings->air_absorption > 0.0f && settings->air_absorption < 100.0f
+										  ? settings->air_absorption
+										  : 0.0f;
 	SDL_LockMutex(g_audio.lock);
 	const int need_hrtf = mode == AERON_AUDIO_OUTPUT_HEADPHONES && !g_audio.hrtf;
 	SDL_UnlockMutex(g_audio.lock);
@@ -2201,7 +2288,8 @@ void Aeron_AudioSetSpatialSettings(const AeronAudioSpatialSettings* settings) {
 		}
 	}
 	SDL_LockMutex(g_audio.lock);
-	g_audio.output_mode = mode;
+	g_audio.output_mode    = mode;
+	g_audio.air_absorption = air;
 	SDL_UnlockMutex(g_audio.lock);
 }
 

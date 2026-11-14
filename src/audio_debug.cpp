@@ -25,16 +25,19 @@ void draw_tool(int* open, void* user) {
 			ImGui::Text("Device: %d channels", info.device_channels);
 		else
 			ImGui::TextDisabled("Device: channel count unknown");
-		/* The game has no setting for this yet, so the tool can switch it. */
+		/* The game has no setting for these yet, so the tool can switch them. */
 		int headphones = info.headphones;
 		ImGui::TextUnformatted("Positional voices:");
 		ImGui::SameLine();
 		ImGui::RadioButton("Speakers", &headphones, 0);
 		ImGui::SameLine();
 		ImGui::RadioButton("Headphones (HRTF)", &headphones, 1);
-		if (headphones != info.headphones) {
+		bool air = info.air_absorption > 0.0f;
+		ImGui::Checkbox("Air absorption", &air);
+		if (headphones != info.headphones || air != (info.air_absorption > 0.0f)) {
 			AeronAudioSpatialSettings settings = {};
 			settings.mode = headphones ? AERON_AUDIO_OUTPUT_HEADPHONES : AERON_AUDIO_OUTPUT_SPEAKERS;
+			settings.air_absorption = air ? 1.0f : 0.0f;
 			Aeron_AudioSetSpatialSettings(&settings);
 		}
 		if (info.hrtf_responses > 0)

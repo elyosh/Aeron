@@ -12,7 +12,7 @@
  * mutex.
  *
  * With --bench, it measures the cost of mixing 32 positional voices instead,
- * with stereo panning, HRTF and 5.1 panning, as a percentage of real time on
+ * with stereo panning, HRTF, air absorption and 5.1 panning, as a percentage of real time on
  * one core, and how long a call from another thread waits while they mix.
  *
  * Built with the tools as aeron_audio_test. It prints each check and exits
@@ -1523,12 +1523,32 @@ static void test_silent_skip(void) {
 	free(pcm);
 
 	set_mixer_listener();
-	static const char* const names[3] = { "speakers", "HRTF", "5.1 speakers" };
-	for (int mode = 0; mode < 3; ++mode) {
-		const char* name = names[mode];
+
+	static const struct {
+		const char*          name;
+		AeronAudioOutputMode mode;
+		int                  channels;
+		float                air;
+	} modes[5] = {
+		{ "speakers", AERON_AUDIO_OUTPUT_SPEAKERS, 2, 0.0f },
+		{ "HRTF", AERON_AUDIO_OUTPUT_HEADPHONES, 2, 0.0f },
+		{ "5.1 speakers", AERON_AUDIO_OUTPUT_SPEAKERS, 6, 0.0f },
+		{ "speakers with air absorption", AERON_AUDIO_OUTPUT_SPEAKERS, 2, 1.0f },
+		{ "HRTF with air absorption", AERON_AUDIO_OUTPUT_HEADPHONES, 2, 1.0f },
+	};
+
+	/* One metre per unit, so that air absorption is strong at these
+	   distances. */
+	Aeron_AudioSetDistanceModel(1.0f, 1.0f, 0.0f);
+	for (int m = 0; m < 5; ++m) {
+		const char*               name = modes[m].name;
 		size_t      at_with[4], at_without[4];
-		set_output_mode(mode == 1 ? AERON_AUDIO_OUTPUT_HEADPHONES : AERON_AUDIO_OUTPUT_SPEAKERS);
-		if (!Aeron_AudioSetOutputChannels(mode == 2 ? 6 : 2)) {
+		AeronAudioSpatialSettings settings;
+		memset(&settings, 0, sizeof settings);
+		settings.mode           = modes[m].mode;
+		settings.air_absorption = modes[m].air;
+		Aeron_AudioSetSpatialSettings(&settings);
+		if (!Aeron_AudioSetOutputChannels(modes[m].channels)) {
 			check(0, "the output channel count can be set");
 			continue;
 		}
@@ -1542,14 +1562,182 @@ static void test_silent_skip(void) {
 		snprintf(what, sizeof what,
 				 "%s: skipping %llu silent voice chunks gives the same output and positions as mixing them",
 				 name, (unsigned long long)skipped);
-		check(skipped > 20 && memcmp(with_skip, without, bytes) == 0 &&
+		/* With speakers, a voice with air absorption doesn't skip. */
+		const uint64_t least = modes[m].air > 0.0f && modes[m].mode == AERON_AUDIO_OUTPUT_SPEAKERS ? 0 : 20;
+		check(skipped >= least && memcmp(with_skip, without, bytes) == 0 &&
 				  memcmp(at_with, at_without, sizeof at_with) == 0,
 			  what);
 	}
 	set_output_mode(AERON_AUDIO_OUTPUT_SPEAKERS);
 	Aeron_AudioSetOutputChannels(2);
+	Aeron_AudioSetDistanceModel(1.0f, 1.0f, 1.0f);
 	Aeron_AudioClipDestroy(looping);
 	Aeron_AudioClipDestroy(once);
+}
+
+/* --- air absorption and doppler ----------------------------------------------- */
+
+static void set_air_absorption(float air) {
+	AeronAudioSpatialSettings settings;
+	memset(&settings, 0, sizeof settings);
+	settings.mode           = AERON_AUDIO_OUTPUT_SPEAKERS;
+	settings.air_absorption = air;
+	Aeron_AudioSetSpatialSettings(&settings);
+}
+
+/* A looping sine clip at the mixer's rate. 4800 frames hold a whole number
+ * of periods at 200 Hz, 5 kHz and 15 kHz. */
+static AeronClip make_sine_clip(float hz) {
+	int16_t pcm[4800];
+	for (int i = 0; i < 4800; ++i) {
+		pcm[i] = (int16_t)lrint(0.25 * 32767.0 * sin(2.0 * 3.14159265358979323846 * hz * i / RATE));
+	}
+	return Aeron_AudioClipCreate(pcm, 4800, RATE, 1, AERON_PCM_S16);
+}
+
+/* The RMS of the left channel of a positional voice at `pos`, once it has
+ * settled. */
+static double positional_rms(AeronClip clip, const float pos[3]) {
+	render_positional(clip, pos, g_out, MAX_FRAMES, 1024);
+	return sqrt(channel_energy(g_out, 0, 1024, MAX_FRAMES) / (MAX_FRAMES - 1024));
+}
+
+/* Air absorption, with half a metre per unit and a source 200 units (100 m)
+ * beyond its min distance: the gain at 5 kHz is 0.99426^100 = 0.5623, the shelf levels off
+ * near its square above, and low frequencies keep their level. Inside the
+ * min distance nothing changes. A moving source gives the same output in any
+ * chunk size: the filter state carries over. */
+static void test_air_absorption(void) {
+	static const float hz[3] = { 200.0f, 5000.0f, 15000.0f };
+	/* The shelf's response at those frequencies, from the Audio EQ Cookbook
+	   formulas: 1.0000, the gain, and 1.0038 times its square. */
+	const double gain        = pow(0.99426, 100.0);
+	const double expected[3] = { 1.0, gain, 1.0038 * gain * gain };
+	const float  far[3]      = { 0.0f, 0.0f, -300.0f };
+	const float  near[3]     = { 0.0f, 0.0f, -50.0f };
+	char         what[192];
+
+	set_mixer_listener();
+	Aeron_AudioSetDistanceModel(0.5f, 1.0f, 0.0f);
+	for (int i = 0; i < 3; ++i) {
+		AeronClip clip = make_sine_clip(hz[i]);
+		set_air_absorption(0.0f);
+		const double off = positional_rms(clip, far);
+		set_air_absorption(1.0f);
+		const double on    = positional_rms(clip, far);
+		const double ratio = on / off;
+		snprintf(what, sizeof what, "air absorption 100 m out: %.0f Hz at %.4f of its level (expected %.4f)",
+				 hz[i], ratio, expected[i]);
+		check(fabs(ratio - expected[i]) <= 0.01 * expected[i], what);
+		Aeron_AudioClipDestroy(clip);
+	}
+
+	static float off_out[MAX_FRAMES * 2];
+	AeronClip    noise = make_noise_clip(RATE, 21, 4);
+	set_air_absorption(0.0f);
+	render_positional(noise, near, off_out, MAX_FRAMES, 1024);
+	set_air_absorption(1.0f);
+	render_positional(noise, near, g_out, MAX_FRAMES, 1024);
+	check(memcmp(off_out, g_out, sizeof off_out) == 0,
+		  "air absorption changes nothing inside the min distance");
+
+	/* From 150 to 950 units away, in steps of 50 every 200 frames. */
+	enum { STEPS = 16, STEP_FRAMES = 200 };
+
+	static float     reference[STEPS * STEP_FRAMES * 2];
+	static float     chunked[STEPS * STEP_FRAMES * 2];
+	static const int sizes[2] = { 1024, 7 };
+	for (int i = 0; i < 2; ++i) {
+		float*             target = i == 0 ? reference : chunked;
+		AeronAudioSource3D source = make_source(far, 100.0f, 131072.0f);
+		flush_delay();
+		AeronVoice voice = play_source(noise, 1.0f, &source);
+		for (int step = 0; step < STEPS; ++step) {
+			source.pos[2] = -150.0f - 50.0f * (float)step;
+			Aeron_AudioVoiceSet3DSource(voice, &source);
+			render_into(target + step * STEP_FRAMES * 2, STEP_FRAMES, sizes[i]);
+		}
+		Aeron_AudioVoiceStop(voice);
+	}
+	check(memcmp(reference, chunked, sizeof chunked) == 0,
+		  "with air absorption, chunks of 7 frames give the same output as chunks of 1024");
+
+	set_air_absorption(0.0f);
+	Aeron_AudioSetDistanceModel(1.0f, 1.0f, 1.0f);
+	Aeron_AudioClipDestroy(noise);
+}
+
+/* Doppler: a source that closes in at 100 m/s plays faster by
+ * 343 / (343 - 100), the speed of sound over the closing speed. With a
+ * doppler factor of 0, as in the stock game, the pitch doesn't change. */
+static void test_doppler(void) {
+	enum { FRAMES = 24000 };
+
+	AeronClip   clip   = make_constant_clip(96000);
+	const float pos[3] = { 0.0f, 0.0f, -500.0f };
+	char        what[160];
+
+	set_mixer_listener();
+	for (int on = 0; on < 2; ++on) {
+		/* One metre per unit: a velocity of 100 units per second is 100 m/s. */
+		Aeron_AudioSetDistanceModel(1.0f, 1.0f, on ? 1.0f : 0.0f);
+		AeronAudioSource3D source = make_source(pos, 100.0f, 131072.0f);
+		source.vel[2]             = 100.0f;
+		flush_delay();
+		AeronVoice voice = play_source(clip, 1.0f, &source);
+		for (int done = 0; done < FRAMES; done += 1000) {
+			render(1000, 1000);
+		}
+		const double played   = (double)Aeron_AudioVoiceStopAndGetPosition(voice);
+		const double expected = on ? FRAMES * 343.0 / 243.0 : FRAMES;
+		snprintf(what, sizeof what, "doppler %s: %d frames play %.0f frames of the clip (expected %.0f)",
+				 on ? "on, closing at 100 m/s" : "off", FRAMES, played, expected);
+		check(fabs(played - expected) <= 2.0, what);
+	}
+	Aeron_AudioSetDistanceModel(1.0f, 1.0f, 1.0f);
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* The same through the DirectSound shim, with the game's distance factor of
+ * 0.0244144 metres per unit: a source in front that closes in at 4096 units
+ * per second, 100 m/s, plays faster by 343 / 243. */
+static void test_shim_doppler(void) {
+	enum { FRAMES = 24000 };
+
+	IDirectSound*       device = create_ds_device();
+	IDirectSoundBuffer* primary;
+	TestDs3dListener*   listener = open_ds_listener(device, &primary);
+	char                what[160];
+
+	listener->lpVtbl->SetDistanceFactor(listener, 0.0244144f, DS3D_IMMEDIATE);
+	listener->lpVtbl->SetDopplerFactor(listener, 1.0f, DS3D_IMMEDIATE);
+	IDirectSoundBuffer* buffer = make_ds_buffer(
+		device, DSBCAPS_STATIC | DSBCAPS_CTRL3D | DSBCAPS_CTRLFREQUENCY | DSBCAPS_CTRLVOLUME, 96000);
+	TestDs3dBuffer* buffer3d = get_ds3d_buffer(buffer);
+	buffer3d->lpVtbl->SetMinDistance(buffer3d, 100.0f, DS3D_IMMEDIATE);
+	buffer3d->lpVtbl->SetPosition(buffer3d, 0.0f, 0.0f, 5000.0f, DS3D_IMMEDIATE);
+	buffer3d->lpVtbl->SetVelocity(buffer3d, 0.0f, 0.0f, -4096.0f, DS3D_IMMEDIATE);
+	flush_delay();
+	buffer->lpVtbl->Play(buffer, 0, 0, DSBPLAY_LOOPING);
+	for (int done = 0; done < FRAMES; done += 1000) {
+		render(1000, 1000);
+	}
+	buffer->lpVtbl->Stop(buffer);
+	uint32_t play_cursor = 0;
+	buffer->lpVtbl->GetCurrentPosition(buffer, &play_cursor, NULL);
+	const double played   = (double)(play_cursor / 2);
+	const double expected = FRAMES * 343.0 / 243.0;
+	snprintf(what, sizeof what,
+			 "DirectSound doppler at 100 m/s: %d frames play %.0f frames of the buffer (expected %.0f)",
+			 FRAMES, played, expected);
+	check(fabs(played - expected) <= 2.0, what);
+
+	buffer3d->lpVtbl->Release(buffer3d);
+	buffer->lpVtbl->Release(buffer);
+	listener->lpVtbl->Release(listener);
+	primary->lpVtbl->Release(primary);
+	device->lpVtbl->Release(device);
+	Aeron_AudioSetDistanceModel(1.0f, 1.0f, 1.0f);
 }
 
 /* --- 5.1 and 7.1 ------------------------------------------------------------- */
@@ -1888,14 +2076,32 @@ static int run_bench(void) {
 #else
 	const char* build = "debug";
 #endif
-	static const char* const mode_names[4] = { "stereo panning", "HRTF", "stereo panning, half of them muted",
-											   "HRTF, half of them muted" };
-	chunks                                 = (WARMUP_SECONDS + SECONDS) * RATE / CHUNK;
-	for (int mode = 0; mode < 4; ++mode) {
-		set_output_mode(mode % 2 ? AERON_AUDIO_OUTPUT_HEADPHONES : AERON_AUDIO_OUTPUT_SPEAKERS);
+	/* The voices are 50 to 670 units away, with one metre per unit: air
+	   absorption filters most of them. */
+	static const struct {
+		const char* name;
+		int         headphones;
+		int         half_muted;
+		float       air;
+	} modes[6] = {
+		{ "stereo panning", 0, 0, 0.0f },
+		{ "HRTF", 1, 0, 0.0f },
+		{ "stereo panning, half of them muted", 0, 1, 0.0f },
+		{ "HRTF, half of them muted", 1, 1, 0.0f },
+		{ "stereo panning, air absorption", 0, 0, 1.0f },
+		{ "HRTF, air absorption", 1, 0, 1.0f },
+	};
+
+	chunks = (WARMUP_SECONDS + SECONDS) * RATE / CHUNK;
+	for (int mode = 0; mode < 6; ++mode) {
+		AeronAudioSpatialSettings settings;
+		memset(&settings, 0, sizeof settings);
+		settings.mode = modes[mode].headphones ? AERON_AUDIO_OUTPUT_HEADPHONES : AERON_AUDIO_OUTPUT_SPEAKERS;
+		settings.air_absorption = modes[mode].air;
+		Aeron_AudioSetSpatialSettings(&settings);
 		uint64_t ticks = 0;
 		for (int c = 0; c < chunks; ++c) {
-			bench_move_voices(voices, radius, angle, VOICES, mode >= 2);
+			bench_move_voices(voices, radius, angle, VOICES, modes[mode].half_muted);
 			const uint64_t start = SDL_GetPerformanceCounter();
 			render(CHUNK, CHUNK);
 			if (c >= WARMUP_SECONDS * RATE / CHUNK) {
@@ -1906,7 +2112,7 @@ static int run_bench(void) {
 		const double mix_seconds     = (double)ticks / (double)SDL_GetPerformanceFrequency();
 		const double audio_seconds   = (double)measured_chunks * CHUNK / RATE;
 		printf("bench: %d positional voices, %s: %.2f%% of one core, %.3f ms per %d-frame chunk (%s build)\n",
-			   VOICES, mode_names[mode], 100.0 * mix_seconds / audio_seconds,
+			   VOICES, modes[mode].name, 100.0 * mix_seconds / audio_seconds,
 			   1000.0 * mix_seconds / measured_chunks, CHUNK, build);
 	}
 
@@ -2021,6 +2227,9 @@ int main(int argc, char** argv) {
 	test_hrtf_loudness();
 	test_silent_skip();
 	test_surround();
+	test_air_absorption();
+	test_doppler();
+	test_shim_doppler();
 	test_output_channels();
 	test_limiter_delay();
 	test_limiter_peak();
