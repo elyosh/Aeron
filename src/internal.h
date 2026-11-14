@@ -384,9 +384,9 @@ void Aeron_ApplyPendingOutputHdr(void);
 
 int  Aeron_AudioInit(void);
 void Aeron_AudioShutdown(void);
-/* SDL_EVENT_AUDIO_DEVICE_FORMAT_CHANGED: rereads the device's format when
- * `device_id` is the mixer's device. SDL keeps converting the mixer's
- * stream, so only the cursors' latency and the reported channel count change. */
+/* SDL_EVENT_AUDIO_DEVICE_FORMAT_CHANGED: rereads the device's buffer length
+ * when `device_id` is the mixer's device. SDL keeps converting the mixer's
+ * stream, so only the cursors' latency changes. */
 void Aeron_AudioHandleDeviceFormatChanged(uint32_t device_id);
 /* The frames by which the output limiter delays everything mixed. */
 int Aeron_AudioOutputDelayFrames(void);

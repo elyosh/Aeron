@@ -191,9 +191,11 @@ void Aeron_AudioSetMasterGain(float gain);
  * voice or stream exists. */
 int Aeron_AudioSetOutputChannels(int channels);
 int Aeron_AudioOutputChannels(void);
-/* The channel count of the device itself, which can differ from the output's
- * when SDL converts. 0 when unknown. It follows the device when the system
- * changes it. */
+/* The channel count of the device itself, as the system reports it when the
+ * output opens. It can differ from the output's: SDL converts. 0 when
+ * unknown, as with the DirectSound, ALSA and sndio drivers, which don't
+ * report it. When the system switches to another device while the output is
+ * open, it is read again only when the output reopens. */
 int Aeron_AudioDeviceChannels(void);
 
 /* Spatial output --------------------------------------------------------- */

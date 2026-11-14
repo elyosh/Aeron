@@ -259,7 +259,9 @@ typedef struct AeronAudioSystem {
 	float              doppler_factor;
 
 	int               out_channels;    /* of the device stream */
-	int               device_channels; /* of the device itself, 0 if unknown */
+	/* The channel count of the device itself, read before the output opened
+	   it, or 0 if unknown. See Aeron_AudioOpenDevice. */
+	int               device_channels;
 	AeronAudioLimiter limiter;
 
 	AeronVoiceJob     jobs[AERON_AUDIO_MAX_VOICES];
@@ -1526,18 +1528,16 @@ int Aeron_AudioInitHeadless(void) {
 	return 1;
 }
 
-/* Reads the device's own format: its channel count, and its buffer length in
- * mixer frames, which the play cursors count as not heard yet. SDL converts
- * the stream to that format, so the stream's own format doesn't change. The
- * caller holds the mixer lock, or the stream isn't running. */
+/* Reads the device's buffer length in mixer frames, which the play cursors
+ * count as not heard yet. SDL converts the stream to the device's format, so
+ * the stream's own format doesn't change. The caller holds the mixer lock, or
+ * the stream isn't running. */
 static void Aeron_AudioReadDeviceFormatLocked(void) {
 	SDL_AudioSpec actual;
 	int           sample_frames = 0;
 
-	g_audio.device_channels            = 0;
 	g_audio.device_buffer_input_frames = 0;
 	if (g_audio.device_id && SDL_GetAudioDeviceFormat(g_audio.device_id, &actual, &sample_frames)) {
-		g_audio.device_channels = actual.channels;
 		if (actual.freq > 0 && sample_frames > 0) {
 			g_audio.device_buffer_input_frames =
 				(int)(((int64_t)sample_frames * AERON_AUDIO_DEVICE_RATE + actual.freq - 1) / actual.freq);
@@ -1555,13 +1555,44 @@ static void Aeron_AudioLogDevice(const char* what) {
 				  g_audio.device_buffer_input_frames);
 }
 
+/* Whether the current SDL driver reports a device's own channel count. These
+ * add their devices without a format, so SDL gives them its default of 2
+ * channels, whatever the device has (SDL 3.4: SDL_AddAudioDevice with no
+ * spec). */
+static int Aeron_AudioDriverKnowsChannels(void) {
+	static const char* const unknown[] = { "directsound", "alsa", "sndio", "disk", "dummy" };
+	const char*              driver    = SDL_GetCurrentAudioDriver();
+	if (!driver) {
+		return 0;
+	}
+	for (size_t i = 0; i < sizeof unknown / sizeof unknown[0]; ++i) {
+		if (strcmp(driver, unknown[i]) == 0) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
 /* Opens the default playback device as an F32 stream of `channels` channels
- * at the mixer's rate. The stream starts paused. */
+ * at the mixer's rate. The stream starts paused.
+ *
+ * SDL opens the device itself with the format of its first stream, and then
+ * reports that format. Only before that does it report the device's own, as
+ * the system describes it (SDL 3.4: default_spec, which SDL_AddAudioDevice
+ * sets and closing the device restores). So the device's channel count is
+ * read first, when the driver reports it. */
 static int Aeron_AudioOpenDevice(int channels) {
 	SDL_AudioSpec spec;
+	SDL_AudioSpec native;
 	spec.format   = SDL_AUDIO_F32;
 	spec.channels = channels;
 	spec.freq     = AERON_AUDIO_DEVICE_RATE;
+
+	g_audio.device_channels = 0;
+	if (Aeron_AudioDriverKnowsChannels() &&
+		SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &native, NULL) && native.channels > 0) {
+		g_audio.device_channels = native.channels;
+	}
 
 	SDL_AudioStream* device =
 		SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, Aeron_AudioCallback, NULL);
