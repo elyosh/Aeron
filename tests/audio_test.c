@@ -37,6 +37,9 @@ enum { RATE = 48000, MAX_FRAMES = 4096 };
 
 static int   g_failures;
 static float g_out[MAX_FRAMES * 2];
+/* The output limiter delays everything by this many frames: a sound mixed
+ * from the start of a render is heard from this frame of it on. */
+static int g_delay;
 
 static void check(int ok, const char* what) {
 	printf("%s %s\n", ok ? "ok" : "FAILED", what);
@@ -55,6 +58,10 @@ static void render(int frames, int chunk_frames) {
 static float left_at(int frame) { return g_out[frame * 2]; }
 
 static float right_at(int frame) { return g_out[frame * 2 + 1]; }
+
+/* Plays out what is still in the limiter's delay. With nothing playing, the
+ * next render then starts from silence. */
+static void flush_delay(void) { render(g_delay, g_delay); }
 
 /* A listener at the origin, looking down -z with +y up, so its right is +x
  * (the mixer is right-handed). */
@@ -381,26 +388,29 @@ static void check_status(IDirectSoundBuffer* buffer, uint32_t expected, const ch
 /* A 2D looping buffer at the mixer's rate, so one source frame is mixed per
  * output frame and the cursors are exact. The cursors are in bytes: two per
  * frame. While the buffer plays, the write cursor is 3 frames (6 bytes) past
- * the play cursor, since the resampler reads two frames ahead. */
+ * the position being mixed, since the resampler reads two frames ahead. The
+ * play cursor counts what has been heard, so it is the limiter's delay
+ * (`lag` bytes) behind that position. */
 static void test_shim_cursors(void) {
 	enum { FRAMES = 48000, BYTES = FRAMES * 2 };
 
 	IDirectSound*       device = create_ds_device();
 	IDirectSoundBuffer* buffer =
 		make_ds_buffer(device, DSBCAPS_STATIC | DSBCAPS_CTRLPAN | DSBCAPS_CTRLVOLUME, FRAMES);
-	char what[160];
+	const uint32_t lag = (uint32_t)g_delay * 2;
+	char           what[160];
 
 	check_cursors(buffer, 0, 0, "new buffer");
 	buffer->lpVtbl->Play(buffer, 0, 0, DSBPLAY_LOOPING);
 	check_cursors(buffer, 0, 6, "after Play");
 	check_status(buffer, DSBSTATUS_PLAYING | DSBSTATUS_LOOPING, "after Play");
 	render(1000, 1000);
-	check_cursors(buffer, 2000, 2006, "after 1000 frames");
+	check_cursors(buffer, 2000 - lag, 2006, "after 1000 frames");
 
 	buffer->lpVtbl->SetCurrentPosition(buffer, 4000);
 	check_cursors(buffer, 4000, 4006, "after SetCurrentPosition(4000)");
 	render(500, 128);
-	check_cursors(buffer, 5000, 5006, "500 more frames, mixed in chunks of 128");
+	check_cursors(buffer, 5000 - lag, 5006, "500 more frames, mixed in chunks of 128");
 
 	buffer->lpVtbl->Stop(buffer);
 	check_cursors(buffer, 5000, 5000, "after Stop");
@@ -410,23 +420,24 @@ static void test_shim_cursors(void) {
 
 	buffer->lpVtbl->Play(buffer, 0, 0, DSBPLAY_LOOPING);
 	render(100, 100);
-	check_cursors(buffer, 5200, 5206, "100 frames after resuming");
+	check_cursors(buffer, 5200 - lag, 5206, "100 frames after resuming");
 
 	buffer->lpVtbl->SetCurrentPosition(buffer, BYTES - 400);
 	render(300, 300);
-	check_cursors(buffer, 200, 206, "300 frames from 200 frames before the end: wrapped");
+	check_cursors(buffer, 200 - lag, 206, "300 frames from 200 frames before the end: wrapped");
 	buffer->lpVtbl->SetCurrentPosition(buffer, BYTES - 2);
 	check_cursors(buffer, BYTES - 2, 4, "at the last frame: the write cursor wraps to frame 2");
 
-	/* Not looping: the voice ends 200 frames before the end of the render. */
+	/* Not looping: the voice ends after 200 frames, which are heard from the
+	   limiter's delay on. */
 	buffer->lpVtbl->Stop(buffer);
 	buffer->lpVtbl->SetCurrentPosition(buffer, BYTES - 400);
 	buffer->lpVtbl->Play(buffer, 0, 0, 0);
 	check_status(buffer, DSBSTATUS_PLAYING, "after Play without looping");
 	render(400, 400);
-	snprintf(what, sizeof what, "the last frame plays and the next is silent (got %.4f, %.4f)", left_at(199),
-			 left_at(200));
-	check(close_to(left_at(199), CLIP_LEVEL) && close_to(left_at(200), 0.0f), what);
+	snprintf(what, sizeof what, "the last frame plays and the next is silent (got %.4f, %.4f)",
+			 left_at(g_delay + 199), left_at(g_delay + 200));
+	check(close_to(left_at(g_delay + 199), CLIP_LEVEL) && close_to(left_at(g_delay + 200), 0.0f), what);
 	check_status(buffer, 0, "after the end without looping");
 	check_cursors(buffer, 0, 0, "after the end without looping");
 
@@ -668,8 +679,8 @@ static void test_shim_deferred(void) {
 
 enum { RAMP_FRAMES = 64 };
 
-/* Each output sample is rounded to S16, so the difference between two
- * neighbours can be off by up to two steps of 1/32768. */
+/* A margin of two steps of 1/32768 between neighbouring samples, for the
+ * float rounding of the gains. */
 #define STEP_TOLERANCE (2.0f / 32768.0f)
 
 static void render_into(float* out, int frames, int chunk_frames) {
@@ -702,10 +713,14 @@ static void test_ramp_jump(void) {
 	AeronAudioSource3D source       = make_source(left_pos, 100.0f, 1000.0f);
 	char               what[192];
 
+	/* The ramp starts with the second render's first mixed frame, which is
+	   heard g_delay frames into it. */
+	const int start = g_delay;
+
 	set_mixer_listener();
 	AeronVoice voice = play_source(clip, 1.0f, &source);
 	render(256, 256);
-	check(close_to(left_at(0), level) && close_to(right_at(0), 0.0f),
+	check(close_to(left_at(start), level) && close_to(right_at(start), 0.0f),
 		  "a new voice starts at its level, without a ramp");
 
 	/* The step into the first new frame counts too. */
@@ -721,12 +736,14 @@ static void test_ramp_jump(void) {
 			 level / RAMP_FRAMES, largest);
 	check(largest <= level / RAMP_FRAMES + STEP_TOLERANCE, what);
 	snprintf(what, sizeof what, "halfway through the ramp, both channels at %.4f (got %.4f, %.4f)", level / 2,
-			 left_at(RAMP_FRAMES / 2), right_at(RAMP_FRAMES / 2));
-	check(close_to(left_at(RAMP_FRAMES / 2), level / 2) && close_to(right_at(RAMP_FRAMES / 2), level / 2),
+			 left_at(start + RAMP_FRAMES / 2), right_at(start + RAMP_FRAMES / 2));
+	check(close_to(left_at(start + RAMP_FRAMES / 2), level / 2) &&
+			  close_to(right_at(start + RAMP_FRAMES / 2), level / 2),
 		  what);
-	snprintf(what, sizeof what, "after 64 frames, right only (got %.4f, %.4f)", left_at(RAMP_FRAMES),
-			 right_at(RAMP_FRAMES));
-	check(close_to(left_at(RAMP_FRAMES), 0.0f) && close_to(right_at(RAMP_FRAMES), level), what);
+	snprintf(what, sizeof what, "after 64 frames, right only (got %.4f, %.4f)", left_at(start + RAMP_FRAMES),
+			 right_at(start + RAMP_FRAMES));
+	check(close_to(left_at(start + RAMP_FRAMES), 0.0f) && close_to(right_at(start + RAMP_FRAMES), level),
+		  what);
 
 	Aeron_AudioVoiceStop(voice);
 	Aeron_AudioClipDestroy(clip);
@@ -772,7 +789,9 @@ static void test_ramp_range_fade(void) {
 		render_into(out + i * RAMP_FRAMES * 2, RAMP_FRAMES, RAMP_FRAMES);
 	}
 	bound /= RAMP_FRAMES;
-	const float largest = max_sample_step(out, 0, COUNT * RAMP_FRAMES);
+	/* From the voice's first heard frame: before it, the limiter's delay
+	   still holds the previous test's sound. */
+	const float largest = max_sample_step(out + g_delay * 2, 0, COUNT * RAMP_FRAMES - g_delay);
 	snprintf(what, sizeof what, "moving out through the fade and past max: no step above %.6f (largest %.6f)",
 			 bound, largest);
 	check(largest <= bound + STEP_TOLERANCE, what);
@@ -812,7 +831,9 @@ static void test_chunk_independence(void) {
 		const float        behind[3] = { -200.0f, 50.0f, 400.0f };
 		float*             target    = i == 0 ? reference : out;
 		AeronAudioSource3D source    = make_source(front, 100.0f, 1000.0f);
-		AeronVoice         voice     = play_source(clip, 1.0f, &source);
+		/* Every run starts from silence in the limiter's delay. */
+		flush_delay();
+		AeronVoice voice = play_source(clip, 1.0f, &source);
 		render_into(target, FIRST, chunk);
 		memcpy(source.pos, behind, sizeof source.pos);
 		Aeron_AudioVoiceSet3DSource(voice, &source);
@@ -828,8 +849,9 @@ static void test_chunk_independence(void) {
 
 /* --- resampler ------------------------------------------------------------ */
 
-/* The S16 output is truncated, so a sample can be off by one step, plus the
- * rounding of the interpolation. */
+/* The clip stores p(n) truncated to S16, so each frame is off by up to one
+ * step of 1/32768. The interpolation weights add up to at most 1.25 in size,
+ * so the output can be off by up to 1.25 steps. */
 #define SAMPLE_TOLERANCE (1.5f / 32768.0f)
 
 /* The cubic interpolation reproduces a cubic polynomial exactly. A 30-frame
@@ -852,7 +874,7 @@ static void test_resampler_cubic_exact(void) {
 	}
 	AeronClip  clip  = Aeron_AudioClipCreate(pcm, FRAMES, CLIP_RATE, 1, AERON_PCM_S16);
 	AeronVoice voice = Aeron_AudioVoicePlay(clip, 1.0f, 0.0f, 1.0f, 0);
-	render(OUT, OUT);
+	render(OUT + g_delay, OUT + g_delay);
 	for (int k = 0; k < OUT; ++k) {
 		const double t = (double)k * step;
 		if (t < 1.0 || t > (double)(FRAMES - 3)) {
@@ -860,7 +882,7 @@ static void test_resampler_cubic_exact(void) {
 		}
 		const double x     = t - 15.0;
 		const float  ideal = (float)((100.0 * x * x + 2.0 * x * x * x) / 32768.0);
-		const float  error = fmaxf(fabsf(left_at(k) - ideal), fabsf(right_at(k) - ideal));
+		const float  error = fmaxf(fabsf(left_at(g_delay + k) - ideal), fabsf(right_at(g_delay + k) - ideal));
 		largest            = fmaxf(largest, error);
 		++measured;
 	}
@@ -892,7 +914,7 @@ static void test_resampler_sine(void) {
 	}
 	AeronClip  clip  = Aeron_AudioClipCreate(pcm, CLIP_RATE, CLIP_RATE, 1, AERON_PCM_S16);
 	AeronVoice voice = Aeron_AudioVoicePlayFrom(clip, 1.0f, 0.0f, 1.0f, 1, START);
-	render(OUT, 1024);
+	render(OUT + g_delay, 1024);
 
 	const int wrap = (int)((CLIP_RATE - START) / step);
 	for (int k = 0; k < OUT; ++k) {
@@ -902,8 +924,9 @@ static void test_resampler_sine(void) {
 		const size_t n      = (size_t)t % CLIP_RATE;
 		const double mu     = t - floor(t);
 		const double linear = (pcm[n] + (pcm[(n + 1) % CLIP_RATE] - pcm[n]) * mu) / 32768.0;
-		const float  error  = (float)fabs(left_at(k) - ideal);
-		cubic_sum += (left_at(k) - ideal) * (left_at(k) - ideal);
+		const double heard  = left_at(g_delay + k);
+		const float  error  = (float)fabs(heard - ideal);
+		cubic_sum += (heard - ideal) * (heard - ideal);
 		linear_sum += (linear - ideal) * (linear - ideal);
 		if (k >= wrap - 4 && k <= wrap + 4) {
 			largest_at_wrap = fmaxf(largest_at_wrap, error);
@@ -920,6 +943,116 @@ static void test_resampler_sine(void) {
 			 largest_at_wrap, largest);
 	check(largest_at_wrap <= largest, what);
 
+	Aeron_AudioVoiceStop(voice);
+	Aeron_AudioClipDestroy(clip);
+	free(pcm);
+}
+
+/* --- output and limiter --------------------------------------------------- */
+
+/* The output can have 6 channels. A 2D voice plays on the first two, front
+ * left and front right. The count can't change while a voice exists. */
+static void test_output_channels(void) {
+	static float out[256 * 8];
+	AeronClip    clip = make_constant_clip(4800);
+	char         what[192];
+
+	check(Aeron_AudioOutputChannels() == 2, "the output starts with 2 channels");
+	check(!Aeron_AudioSetOutputChannels(4) && Aeron_AudioOutputChannels() == 2, "4 channels are refused");
+	check(Aeron_AudioSetOutputChannels(6) && Aeron_AudioOutputChannels() == 6,
+		  "the output switches to 6 channels while nothing plays");
+
+	AeronVoice voice = Aeron_AudioVoicePlay(clip, 1.0f, 0.0f, 1.0f, 1);
+	render_into(out, 256, 256);
+	const float* frame  = out + 200 * 6;
+	int          others = 1;
+	for (int c = 2; c < 6; ++c) {
+		others = others && frame[c] == 0.0f;
+	}
+	snprintf(what, sizeof what,
+			 "a 2D voice plays on front left and right only (got %.4f %.4f %.4f %.4f %.4f %.4f)", frame[0],
+			 frame[1], frame[2], frame[3], frame[4], frame[5]);
+	check(close_to(frame[0], CLIP_LEVEL) && close_to(frame[1], CLIP_LEVEL) && others, what);
+	check(!Aeron_AudioSetOutputChannels(8) && Aeron_AudioOutputChannels() == 6,
+		  "the count can't change while a voice exists");
+
+	Aeron_AudioVoiceStop(voice);
+	check(Aeron_AudioSetOutputChannels(2) && Aeron_AudioOutputChannels() == 2,
+		  "back to 2 channels once the voice is stopped");
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* An impulse comes out exactly the limiter's lookahead later, unchanged:
+ * below full scale, the limiter only delays. */
+static void test_limiter_delay(void) {
+	int16_t pcm[100];
+	int     first = -1;
+	char    what[160];
+
+	memset(pcm, 0, sizeof pcm);
+	pcm[0]         = (int16_t)(CLIP_LEVEL * 32768.0f);
+	AeronClip clip = Aeron_AudioClipCreate(pcm, 100, RATE, 1, AERON_PCM_S16);
+	flush_delay();
+	AeronVoice voice = Aeron_AudioVoicePlay(clip, 1.0f, 0.0f, 1.0f, 0);
+	render(2 * g_delay, 2 * g_delay);
+	for (int k = 0; k < 2 * g_delay && first < 0; ++k) {
+		if (fabsf(left_at(k)) > 1e-6f) {
+			first = k;
+		}
+	}
+	check(g_delay == 48, "the limiter delays the output by 48 frames (1 ms)");
+	snprintf(what, sizeof what, "an impulse comes out at frame %d, unchanged (got frame %d, %.4f)", g_delay,
+			 first, first >= 0 ? left_at(first) : 0.0f);
+	check(first == g_delay && close_to(left_at(first), CLIP_LEVEL), what);
+	Aeron_AudioVoiceStop(voice);
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* A full-scale 1 kHz sine played at twice its gain (+6 dB) for 2 seconds.
+ * No sample leaves [-1, 1]. Once the limiter has settled, it holds a gain of
+ * 1/2, so the second second is the clean sine at full scale, delayed, and
+ * not a clipped one with flat tops. The final clamp alone would keep the
+ * samples in range, but it would clip.
+ * This runs last: the limiter then takes about a second to recover. */
+static void test_limiter_peak(void) {
+	enum { SECONDS = 2, PIECE = 4000 };
+
+	int16_t* pcm        = (int16_t*)malloc(RATE * sizeof(int16_t));
+	float    largest    = 0.0f;
+	float    late_error = 0.0f;
+	char     what[160];
+
+	for (int n = 0; n < RATE; ++n) {
+		pcm[n] = (int16_t)lrint(32767.0 * sin(2.0 * 3.14159265358979323846 * 1000.0 * n / RATE));
+	}
+	/* Two neighbouring samples at full scale are a flat top: clipping. The
+	   samples next to a peak of a clean 1 kHz sine are at 0.991. */
+	int   flat_tops = 0;
+	float previous  = 0.0f;
+
+	AeronClip  clip  = Aeron_AudioClipCreate(pcm, RATE, RATE, 1, AERON_PCM_S16);
+	AeronVoice voice = Aeron_AudioVoicePlay(clip, 2.0f, 0.0f, 1.0f, 1);
+	for (int done = 0; done < SECONDS * RATE; done += PIECE) {
+		render(PIECE, 1024);
+		for (int k = 0; k < PIECE; ++k) {
+			largest = fmaxf(largest, fmaxf(fabsf(left_at(k)), fabsf(right_at(k))));
+			flat_tops += fabsf(left_at(k)) >= 0.9999f && fabsf(previous) >= 0.9999f;
+			previous = left_at(k);
+			if (done >= (SECONDS * RATE) / 2) {
+				/* Output frame done + k was mixed g_delay frames earlier, from
+				   the clip frame of the same number, at a step of 1. */
+				const float clean = (float)pcm[(done + k - g_delay) % RATE] / 32768.0f;
+				late_error        = fmaxf(late_error, fabsf(left_at(k) - clean));
+			}
+		}
+	}
+	snprintf(what, sizeof what, "a +6 dB sine never leaves [-1, 1] (largest %.6f)", largest);
+	check(largest <= 1.0f, what);
+	snprintf(what, sizeof what, "no flat tops from the first peak on: not clipped (%d found)", flat_tops);
+	check(flat_tops == 0, what);
+	snprintf(what, sizeof what,
+			 "in the second second, it is the clean sine at a gain of 1/2 (largest error %.5f)", late_error);
+	check(late_error <= 0.01f, what);
 	Aeron_AudioVoiceStop(voice);
 	Aeron_AudioClipDestroy(clip);
 	free(pcm);
@@ -1007,6 +1140,7 @@ int main(int argc, char** argv) {
 		printf("FAILED could not set up the headless mixer\n");
 		return 1;
 	}
+	g_delay = Aeron_AudioOutputDelayFrames();
 	if (bench) {
 		result = run_bench();
 		Aeron_AudioShutdown();
@@ -1026,6 +1160,9 @@ int main(int argc, char** argv) {
 	test_chunk_independence();
 	test_resampler_cubic_exact();
 	test_resampler_sine();
+	test_output_channels();
+	test_limiter_delay();
+	test_limiter_peak();
 	Aeron_AudioShutdown();
 
 	if (g_failures) {

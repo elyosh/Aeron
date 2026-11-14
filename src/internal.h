@@ -384,16 +384,25 @@ void Aeron_ApplyPendingOutputHdr(void);
 
 int  Aeron_AudioInit(void);
 void Aeron_AudioShutdown(void);
+/* SDL_EVENT_AUDIO_DEVICE_FORMAT_CHANGED: rereads the device's format when
+ * `device_id` is the mixer's device. SDL keeps converting the mixer's
+ * stream, so only the cursors' latency and the reported channel count change. */
+void Aeron_AudioHandleDeviceFormatChanged(uint32_t device_id);
+/* The frames by which the output limiter delays everything mixed. */
+int Aeron_AudioOutputDelayFrames(void);
 
 /* The mixer without an output device, for tests and benchmarks.
  * Aeron_AudioInitHeadless sets up the mixer as Aeron_AudioInit does, but
- * opens no device. Every mixed frame then counts as played at once. Shut it
- * down with Aeron_AudioShutdown. Fails if audio is already initialized. */
+ * opens no device. Every mixed frame then counts as played as soon as it
+ * leaves the limiter's delay. Shut it down with Aeron_AudioShutdown. Fails if
+ * audio is already initialized. */
 int Aeron_AudioInitHeadless(void);
-/* Mixes `frames` frames into `out` as interleaved stereo, in steps of
- * `chunk_frames` (at most the mixer's own chunk size), as the device callback
- * does. The samples are the ones a device would receive, scaled to [-1, 1).
- * Returns 0 unless the mixer was set up by Aeron_AudioInitHeadless. */
+/* Mixes `frames` frames into `out`, interleaved with Aeron_AudioOutputChannels
+ * channels, in steps of `chunk_frames` (at most the mixer's own chunk size),
+ * as the device callback does. The samples are the F32 ones a device would
+ * receive, after the limiter, so they come out Aeron_AudioOutputDelayFrames
+ * frames after they are mixed. Returns 0 unless the mixer was set up by
+ * Aeron_AudioInitHeadless. */
 int Aeron_AudioRenderHeadless(float* out, int frames, int chunk_frames);
 
 void Aeron_BeginInputFrame(AeronInputSnapshot* input);

@@ -19,6 +19,12 @@ extern "C" {
  * pan [-1..1], pitch ratios and a standard inverse-distance positional model.
  * No DirectSound, millibel, or game-specific concepts cross this boundary.
  *
+ * The output is F32 at 48 kHz, with 2 channels by default (see
+ * Aeron_AudioSetOutputChannels); SDL converts it to the device's format. A
+ * limiter keeps every sample within [-1, 1]. It looks 1 ms ahead, so
+ * everything is heard 1 ms after it is mixed, and the cursors and stream
+ * clocks count that delay.
+ *
  * Handles are generation-tagged ids; voices use 64 bits, other handles 32 bits.
  * The value 0 is always invalid.
  * Operations on a stale handle (whose slot has since been reused) are safe
@@ -167,6 +173,18 @@ void     Aeron_AudioStreamClose(AeronAudioStream stream);
 /* Master ------------------------------------------------------------------ */
 
 void Aeron_AudioSetMasterGain(float gain);
+
+/* Sets the number of channels of the output: 2, 6 (5.1) or 8 (7.1), in SDL's
+ * order. Voices and streams play on the first two, front left and front
+ * right. Reopens the device, so call it from the control thread while no
+ * other thread uses audio. Fails, and keeps the current count, while any
+ * voice or stream exists. */
+int Aeron_AudioSetOutputChannels(int channels);
+int Aeron_AudioOutputChannels(void);
+/* The channel count of the device itself, which can differ from the output's
+ * when SDL converts. 0 when unknown. It follows the device when the system
+ * changes it. */
+int Aeron_AudioDeviceChannels(void);
 
 /* Pauses / resumes the output device. The mixer callback stops, freezing
  * voices, queued-stream consumption, and queued-stream

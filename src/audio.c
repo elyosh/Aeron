@@ -14,11 +14,15 @@
  *
  * Tests and benchmarks can run the mixer without a device: see
  * Aeron_AudioInitHeadless. There is then no SDL stream lock, and every mixed
- * frame counts as played as soon as it is mixed.
+ * frame counts as played as soon as it leaves the limiter's delay.
  */
 
 #define AERON_AUDIO_DEVICE_RATE 48000
-#define AERON_AUDIO_DEVICE_CHANNELS 2
+/* The output has 2 channels by default; Aeron_AudioSetOutputChannels can
+ * choose 6 or 8. Voices and streams mix into the first two, front left and
+ * front right. */
+#define AERON_AUDIO_DEFAULT_CHANNELS 2
+#define AERON_AUDIO_MAX_CHANNELS 8
 #define AERON_AUDIO_MAX_CLIPS 2048
 #define AERON_AUDIO_MAX_VOICES 96
 #define AERON_AUDIO_MAX_STREAMS 8
@@ -32,6 +36,39 @@
 /* A gain change ramps linearly over this many frames, as in OpenAL Soft, so
  * it doesn't click. */
 #define AERON_AUDIO_RAMP_FRAMES 64
+
+/* The output limiter keeps every sample within [-1, 1] (see
+ * Aeron_AudioLimitFrame). It looks 1 ms ahead, which delays the output by
+ * that much, holds a reduction for 2 ms, and recovers with a 200 ms time
+ * constant, as OpenAL Soft's limiter does. */
+#define AERON_AUDIO_LIMITER_LOOKAHEAD 48
+#define AERON_AUDIO_LIMITER_HOLD 96
+#define AERON_AUDIO_LIMITER_RELEASE_SECONDS 0.2
+#define AERON_AUDIO_LIMITER_WINDOW (AERON_AUDIO_LIMITER_LOOKAHEAD + 1 + AERON_AUDIO_LIMITER_HOLD)
+#define AERON_AUDIO_LIMITER_BOX (AERON_AUDIO_LIMITER_LOOKAHEAD + 1)
+
+typedef struct AeronAudioLimiterEntry {
+	uint64_t frame;
+	float    gain;
+} AeronAudioLimiterEntry;
+
+/* The state of the limiter. Only the code that mixes and stages chunks uses
+ * it: the device callback, or a headless render. */
+typedef struct AeronAudioLimiter {
+	uint64_t frames; /* input frames so far */
+	/* The input frames still to come out: frame f is at f % LOOKAHEAD. */
+	float delay[AERON_AUDIO_LIMITER_LOOKAHEAD * AERON_AUDIO_MAX_CHANNELS];
+	/* The smallest gain needed over the window, as a queue of increasing
+	   gains: a ring of `count` entries from `head`. */
+	AeronAudioLimiterEntry window[AERON_AUDIO_LIMITER_WINDOW];
+	int                    head;
+	int                    count;
+	/* The last AERON_AUDIO_LIMITER_BOX window minimums, and their sum. */
+	float  box[AERON_AUDIO_LIMITER_BOX];
+	double box_sum;
+	float  gain;    /* after the release */
+	float  release; /* per-frame recovery toward the averaged gain */
+} AeronAudioLimiter;
 
 typedef struct AeronClipData {
 	int16_t*       pcm; /* interleaved S16, channels = channels */
@@ -121,8 +158,12 @@ typedef struct AeronAudioSystem {
 	float              rolloff_factor;
 	float              doppler_factor;
 
-	float   mix[AERON_AUDIO_MIX_CHUNK * 2];
-	int16_t stage[AERON_AUDIO_MIX_CHUNK * 2];
+	int               out_channels;    /* of the device stream */
+	int               device_channels; /* of the device itself, 0 if unknown */
+	AeronAudioLimiter limiter;
+
+	float mix[AERON_AUDIO_MIX_CHUNK * AERON_AUDIO_MAX_CHANNELS];   /* S16 scale */
+	float stage[AERON_AUDIO_MIX_CHUNK * AERON_AUDIO_MAX_CHANNELS]; /* F32, [-1, 1] */
 } AeronAudioSystem;
 
 static AeronAudioSystem g_audio;
@@ -144,14 +185,18 @@ static void Aeron_AudioUnlockOutput(void) {
 	}
 }
 
+/* The output frames heard so far. The limiter's lookahead delays every mixed
+ * frame by AERON_AUDIO_LIMITER_LOOKAHEAD frames before it is submitted, on top
+ * of the SDL queue and the device buffer. Without a device, there is only the
+ * limiter. */
 static uint64_t Aeron_AudioPlayedOutputFramesLocked(void) {
-	if (!g_audio.device) {
-		return g_audio.submitted_frames;
-	}
-	int      queued  = SDL_GetAudioStreamQueued(g_audio.device);
-	uint64_t pending = (uint64_t)g_audio.device_buffer_input_frames;
-	if (queued > 0) {
-		pending += (unsigned int)queued / (AERON_AUDIO_DEVICE_CHANNELS * sizeof(int16_t));
+	uint64_t pending = AERON_AUDIO_LIMITER_LOOKAHEAD;
+	if (g_audio.device) {
+		int queued = SDL_GetAudioStreamQueued(g_audio.device);
+		pending += (uint64_t)g_audio.device_buffer_input_frames;
+		if (queued > 0) {
+			pending += (unsigned int)queued / ((unsigned int)g_audio.out_channels * sizeof(float));
+		}
 	}
 	return g_audio.submitted_frames > pending ? g_audio.submitted_frames - pending : 0;
 }
@@ -533,8 +578,8 @@ static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 				voice->gain_now[1] += voice->gain_step[1];
 			}
 		}
-		g_audio.mix[mixed * 2] += left;
-		g_audio.mix[mixed * 2 + 1] += right;
+		g_audio.mix[mixed * g_audio.out_channels] += left;
+		g_audio.mix[mixed * g_audio.out_channels + 1] += right;
 		voice->pos += step;
 		voice->advanced += step;
 	}
@@ -627,8 +672,8 @@ static void Aeron_AudioMixStream(AeronAudioStreamSlot* stream, int frames) {
 			const float s1 = Aeron_AudioSampleStream(stream, i1, 0);
 			left = right = s0 + (s1 - s0) * fraction;
 		}
-		g_audio.mix[i * 2] += left * stream->gain;
-		g_audio.mix[i * 2 + 1] += right * stream->gain;
+		g_audio.mix[i * g_audio.out_channels] += left * stream->gain;
+		g_audio.mix[i * g_audio.out_channels + 1] += right * stream->gain;
 		stream->read_position += step;
 		if (stream->read_position > (double)stream->write_frame) {
 			stream->read_position = (double)stream->write_frame;
@@ -645,11 +690,91 @@ static void Aeron_AudioMixStream(AeronAudioStreamSlot* stream, int frames) {
 	}
 }
 
-/* Mixes one chunk under the lock and stages it as S16. */
+/* --- output limiter ------------------------------------------------------- */
+
+static void Aeron_AudioLimiterReset(AeronAudioLimiter* limiter) {
+	memset(limiter, 0, sizeof(*limiter));
+	for (int i = 0; i < AERON_AUDIO_LIMITER_BOX; ++i) {
+		limiter->box[i] = 1.0f;
+	}
+	limiter->box_sum = AERON_AUDIO_LIMITER_BOX;
+	limiter->gain    = 1.0f;
+	limiter->release =
+		(float)(1.0 - exp(-1.0 / (AERON_AUDIO_LIMITER_RELEASE_SECONDS * (double)AERON_AUDIO_DEVICE_RATE)));
+}
+
+/* Limits one frame of `channels` samples in place, so no sample leaves
+ * [-1, 1]. The frame that comes out is the one that went in
+ * AERON_AUDIO_LIMITER_LOOKAHEAD frames earlier.
+ *
+ * Each input frame needs a gain of 1, or of 1 / its peak when its peak is
+ * above 1. Frame o comes out with gain g(o):
+ *   - m(j) is the smallest gain needed by the frames from j - HOLD to
+ *     j + LOOKAHEAD;
+ *   - g(o) is the average of m(o - LOOKAHEAD) to m(o), so it falls linearly
+ *     over LOOKAHEAD + 1 frames before a peak, which is the attack. Each of
+ *     those m includes frame o's own gain, so g(o) is never above it;
+ *   - a rise of g is slowed by the release, while a fall passes at once, so
+ *     the result stays at or below g(o).
+ * With every gain at 1, the output is the input delayed, unchanged. */
+static void Aeron_AudioLimitFrame(AeronAudioLimiter* limiter, float* frame, int channels) {
+	const uint64_t t = limiter->frames++;
+
+	float peak = 0.0f;
+	for (int c = 0; c < channels; ++c) {
+		peak = fmaxf(peak, fabsf(frame[c]));
+	}
+	const float needed = peak > 1.0f ? 1.0f / peak : 1.0f;
+
+	/* The queue keeps the frames of the window whose gain no later frame
+	   undercuts, so its front is the window's smallest gain. Frames that left
+	   the window go first, so the new one always has room. */
+	while (limiter->count > 0 && limiter->window[limiter->head].frame + AERON_AUDIO_LIMITER_WINDOW <= t) {
+		limiter->head = (limiter->head + 1) % AERON_AUDIO_LIMITER_WINDOW;
+		--limiter->count;
+	}
+	while (limiter->count > 0) {
+		const int back = (limiter->head + limiter->count - 1) % AERON_AUDIO_LIMITER_WINDOW;
+		if (limiter->window[back].gain < needed) {
+			break;
+		}
+		--limiter->count;
+	}
+	{
+		const int back              = (limiter->head + limiter->count) % AERON_AUDIO_LIMITER_WINDOW;
+		limiter->window[back].frame = t;
+		limiter->window[back].gain  = needed;
+		++limiter->count;
+	}
+	const float smallest = limiter->window[limiter->head].gain;
+
+	float* box_slot = &limiter->box[t % AERON_AUDIO_LIMITER_BOX];
+	limiter->box_sum += (double)smallest - (double)*box_slot;
+	*box_slot            = smallest;
+	const float averaged = (float)(limiter->box_sum / AERON_AUDIO_LIMITER_BOX);
+	if (averaged < limiter->gain) {
+		limiter->gain = averaged;
+	} else {
+		limiter->gain += (averaged - limiter->gain) * limiter->release;
+	}
+
+	/* Swaps the new frame into the delay line, and the oldest one out. The
+	   clamp only catches rounding. */
+	float* delayed = &limiter->delay[(t % AERON_AUDIO_LIMITER_LOOKAHEAD) * AERON_AUDIO_MAX_CHANNELS];
+	for (int c = 0; c < channels; ++c) {
+		const float in  = frame[c];
+		float       out = delayed[c] * limiter->gain;
+		frame[c]        = out > 1.0f ? 1.0f : out < -1.0f ? -1.0f : out;
+		delayed[c]      = in;
+	}
+}
+
+/* Mixes one chunk under the lock, then stages it as F32 through the
+ * limiter. */
 static void Aeron_AudioMixChunk(int frames) {
 	SDL_LockMutex(g_audio.lock);
 
-	memset(g_audio.mix, 0, (size_t)frames * 2 * sizeof(float));
+	memset(g_audio.mix, 0, (size_t)frames * (size_t)g_audio.out_channels * sizeof(float));
 
 	uint64_t played = Aeron_AudioPlayedOutputFramesLocked();
 	for (int v = 0; v < AERON_AUDIO_MAX_VOICES; ++v) {
@@ -671,18 +796,16 @@ static void Aeron_AudioMixChunk(int frames) {
 		}
 	}
 
-	float master = g_audio.master_gain;
+	const float scale    = g_audio.master_gain / 32768.0f;
+	const int   channels = g_audio.out_channels;
 	SDL_UnlockMutex(g_audio.lock);
 
-	for (int i = 0; i < frames * 2; ++i) {
-		float sample = g_audio.mix[i] * master;
-		if (sample > 32767.0f) {
-			sample = 32767.0f;
+	for (int i = 0; i < frames; ++i) {
+		float* frame = &g_audio.stage[i * channels];
+		for (int c = 0; c < channels; ++c) {
+			frame[c] = g_audio.mix[i * channels + c] * scale;
 		}
-		if (sample < -32768.0f) {
-			sample = -32768.0f;
-		}
-		g_audio.stage[i] = (int16_t)sample;
+		Aeron_AudioLimitFrame(&g_audio.limiter, frame, channels);
 	}
 }
 
@@ -691,12 +814,12 @@ static void SDLCALL Aeron_AudioCallback(void* userdata, SDL_AudioStream* stream,
 	(void)userdata;
 	(void)total_amount;
 
-	int frames_remaining = additional_amount / (AERON_AUDIO_DEVICE_CHANNELS * (int)sizeof(int16_t));
+	const int frame_bytes      = g_audio.out_channels * (int)sizeof(float);
+	int       frames_remaining = additional_amount / frame_bytes;
 	while (frames_remaining > 0) {
 		int chunk = frames_remaining < AERON_AUDIO_MIX_CHUNK ? frames_remaining : AERON_AUDIO_MIX_CHUNK;
 		Aeron_AudioMixChunk(chunk);
-		SDL_PutAudioStreamData(stream, g_audio.stage,
-							   chunk * AERON_AUDIO_DEVICE_CHANNELS * (int)sizeof(int16_t));
+		SDL_PutAudioStreamData(stream, g_audio.stage, chunk * frame_bytes);
 		SDL_LockMutex(g_audio.lock);
 		g_audio.submitted_frames += (uint64_t)chunk;
 		SDL_UnlockMutex(g_audio.lock);
@@ -714,10 +837,8 @@ int Aeron_AudioRenderHeadless(float* out, int frames, int chunk_frames) {
 	while (frames > 0) {
 		int chunk = frames < chunk_frames ? frames : chunk_frames;
 		Aeron_AudioMixChunk(chunk);
-		for (int i = 0; i < chunk * AERON_AUDIO_DEVICE_CHANNELS; ++i) {
-			out[i] = (float)g_audio.stage[i] / 32768.0f;
-		}
-		out += chunk * AERON_AUDIO_DEVICE_CHANNELS;
+		memcpy(out, g_audio.stage, (size_t)chunk * (size_t)g_audio.out_channels * sizeof(float));
+		out += chunk * g_audio.out_channels;
 		SDL_LockMutex(g_audio.lock);
 		g_audio.submitted_frames += (uint64_t)chunk;
 		SDL_UnlockMutex(g_audio.lock);
@@ -736,6 +857,8 @@ static int Aeron_AudioInitMixer(void) {
 	g_audio.distance_factor = 1.0f;
 	g_audio.rolloff_factor  = 1.0f;
 	g_audio.doppler_factor  = 1.0f;
+	g_audio.out_channels    = AERON_AUDIO_DEFAULT_CHANNELS;
+	Aeron_AudioLimiterReset(&g_audio.limiter);
 
 	g_audio.lock = SDL_CreateMutex();
 	if (!g_audio.lock) {
@@ -760,48 +883,138 @@ int Aeron_AudioInitHeadless(void) {
 	return 1;
 }
 
+/* Reads the device's own format: its channel count, and its buffer length in
+ * mixer frames, which the play cursors count as not heard yet. SDL converts
+ * the stream to that format, so the stream's own format doesn't change. The
+ * caller holds the mixer lock, or the stream isn't running. */
+static void Aeron_AudioReadDeviceFormatLocked(void) {
+	SDL_AudioSpec actual;
+	int           sample_frames = 0;
+
+	g_audio.device_channels            = 0;
+	g_audio.device_buffer_input_frames = 0;
+	if (g_audio.device_id && SDL_GetAudioDeviceFormat(g_audio.device_id, &actual, &sample_frames)) {
+		g_audio.device_channels = actual.channels;
+		if (actual.freq > 0 && sample_frames > 0) {
+			g_audio.device_buffer_input_frames =
+				(int)(((int64_t)sample_frames * AERON_AUDIO_DEVICE_RATE + actual.freq - 1) / actual.freq);
+		}
+	}
+}
+
+static void Aeron_AudioLogDevice(const char* what) {
+	const char* device_name = g_audio.device_id ? SDL_GetAudioDeviceName(g_audio.device_id) : NULL;
+	const char* driver      = SDL_GetCurrentAudioDriver();
+	Aeron_LogInfo("aeron.audio",
+				  "audio device '%s' %s with %s: %d Hz, %d ch F32 (the device has %d ch), buffer=%d frames",
+				  device_name ? device_name : "unknown", what, driver ? driver : "unknown",
+				  AERON_AUDIO_DEVICE_RATE, g_audio.out_channels, g_audio.device_channels,
+				  g_audio.device_buffer_input_frames);
+}
+
+/* Opens the default playback device as an F32 stream of `channels` channels
+ * at the mixer's rate. The stream starts paused. */
+static int Aeron_AudioOpenDevice(int channels) {
+	SDL_AudioSpec spec;
+	spec.format   = SDL_AUDIO_F32;
+	spec.channels = channels;
+	spec.freq     = AERON_AUDIO_DEVICE_RATE;
+
+	SDL_AudioStream* device =
+		SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, Aeron_AudioCallback, NULL);
+	if (!device) {
+		Aeron_LogError("aeron.audio", "SDL_OpenAudioDeviceStream failed for %d channels: %s", channels,
+					   SDL_GetError());
+		return 0;
+	}
+	g_audio.device       = device;
+	g_audio.device_id    = SDL_GetAudioStreamDevice(device);
+	g_audio.out_channels = channels;
+	Aeron_AudioLimiterReset(&g_audio.limiter);
+	Aeron_AudioReadDeviceFormatLocked();
+	return 1;
+}
+
 int Aeron_AudioInit(void) {
 	if (!Aeron_AudioInitMixer()) {
 		return 0;
 	}
-
-	SDL_AudioSpec spec;
-	spec.format   = SDL_AUDIO_S16;
-	spec.channels = AERON_AUDIO_DEVICE_CHANNELS;
-	spec.freq     = AERON_AUDIO_DEVICE_RATE;
-
-	g_audio.device =
-		SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, Aeron_AudioCallback, NULL);
-	if (!g_audio.device) {
-		Aeron_LogError("aeron.audio", "SDL_OpenAudioDeviceStream failed: %s", SDL_GetError());
+	if (!Aeron_AudioOpenDevice(AERON_AUDIO_DEFAULT_CHANNELS)) {
 		SDL_DestroyCondition(g_audio.stream_space_available);
 		g_audio.stream_space_available = NULL;
 		SDL_DestroyMutex(g_audio.lock);
 		g_audio.lock = NULL;
 		return 0;
 	}
-	g_audio.device_id = SDL_GetAudioStreamDevice(g_audio.device);
-	if (g_audio.device_id) {
-		SDL_AudioSpec actual;
-		int           sample_frames = 0;
-		if (SDL_GetAudioDeviceFormat(g_audio.device_id, &actual, &sample_frames) && actual.freq > 0 &&
-			sample_frames > 0) {
-			g_audio.device_buffer_input_frames =
-				(int)(((int64_t)sample_frames * AERON_AUDIO_DEVICE_RATE + actual.freq - 1) / actual.freq);
-		}
-	}
-
 	if (!SDL_ResumeAudioStreamDevice(g_audio.device)) {
 		Aeron_LogError("aeron.audio", "SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
 	}
-
 	g_audio.initialized = 1;
-	const char* device_name = g_audio.device_id ? SDL_GetAudioDeviceName(g_audio.device_id) : NULL;
-	const char* driver      = SDL_GetCurrentAudioDriver();
-	Aeron_LogInfo("aeron.audio", "audio device '%s' opened with %s: %d Hz, %d ch, S16 buffer=%d frames",
-				  device_name ? device_name : "unknown", driver ? driver : "unknown", AERON_AUDIO_DEVICE_RATE,
-				  AERON_AUDIO_DEVICE_CHANNELS, g_audio.device_buffer_input_frames);
+	Aeron_AudioLogDevice("opened");
 	return 1;
+}
+
+int Aeron_AudioSetOutputChannels(int channels) {
+	if (!g_audio.initialized || (channels != 2 && channels != 6 && channels != 8)) {
+		return 0;
+	}
+	if (channels == g_audio.out_channels) {
+		return 1;
+	}
+
+	int busy = 0;
+	SDL_LockMutex(g_audio.lock);
+	for (int i = 0; i < AERON_AUDIO_MAX_VOICES && !busy; ++i) {
+		busy = g_audio.voices[i].in_use;
+	}
+	for (int i = 0; i < AERON_AUDIO_MAX_STREAMS && !busy; ++i) {
+		busy = g_audio.streams[i].in_use;
+	}
+	SDL_UnlockMutex(g_audio.lock);
+	if (busy) {
+		Aeron_LogWarn("aeron.audio", "the output stays at %d channels: sounds are playing",
+					  g_audio.out_channels);
+		return 0;
+	}
+
+	if (!g_audio.device) {
+		g_audio.out_channels = channels;
+		Aeron_AudioLimiterReset(&g_audio.limiter);
+		return 1;
+	}
+
+	const int previous = g_audio.out_channels;
+	SDL_DestroyAudioStream(g_audio.device);
+	g_audio.device    = NULL;
+	g_audio.device_id = 0;
+	int opened        = Aeron_AudioOpenDevice(channels);
+	if (!opened && !Aeron_AudioOpenDevice(previous)) {
+		/* Without a device, the mixer would act as a headless one. */
+		Aeron_LogError("aeron.audio", "the audio device could not be opened again; continuing without sound");
+		g_audio.initialized = 0;
+		return 0;
+	}
+	if (!g_audio.device_paused && !SDL_ResumeAudioStreamDevice(g_audio.device)) {
+		Aeron_LogError("aeron.audio", "SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
+	}
+	Aeron_AudioLogDevice("reopened");
+	return opened;
+}
+
+int Aeron_AudioOutputChannels(void) { return g_audio.initialized ? g_audio.out_channels : 0; }
+
+int Aeron_AudioDeviceChannels(void) { return g_audio.initialized ? g_audio.device_channels : 0; }
+
+int Aeron_AudioOutputDelayFrames(void) { return AERON_AUDIO_LIMITER_LOOKAHEAD; }
+
+void Aeron_AudioHandleDeviceFormatChanged(uint32_t device_id) {
+	if (!g_audio.initialized || !g_audio.device || device_id != g_audio.device_id) {
+		return;
+	}
+	SDL_LockMutex(g_audio.lock);
+	Aeron_AudioReadDeviceFormatLocked();
+	SDL_UnlockMutex(g_audio.lock);
+	Aeron_AudioLogDevice("changed format");
 }
 
 void Aeron_AudioSetPaused(int paused) {
@@ -1579,8 +1792,10 @@ void Aeron_AudioStreamPlay(AeronAudioStream stream) {
 	AeronAudioStreamSlot* slot = Aeron_AudioResolveStream(stream);
 	if (slot) {
 		if (!slot->playing) {
+			/* The device buffer, and the limiter's lookahead. */
 			const uint64_t latency_ns =
-				(uint64_t)g_audio.device_buffer_input_frames * 1000000000u / AERON_AUDIO_DEVICE_RATE;
+				((uint64_t)g_audio.device_buffer_input_frames + AERON_AUDIO_LIMITER_LOOKAHEAD) * 1000000000u /
+				AERON_AUDIO_DEVICE_RATE;
 			const uint64_t baseline_ns = g_audio.device_paused ? g_audio.device_paused_ns : SDL_GetTicksNS();
 			slot->playing              = 1;
 			slot->audible_updated_ns   = baseline_ns + latency_ns;

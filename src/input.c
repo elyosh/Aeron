@@ -238,6 +238,9 @@ void Aeron_HandleEvent(const SDL_Event* event) {
 		case SDL_EVENT_JOYSTICK_REMOVED:
 			Aeron_HandleControllerEvent(event);
 			break;
+		case SDL_EVENT_AUDIO_DEVICE_FORMAT_CHANGED:
+			Aeron_AudioHandleDeviceFormatChanged(event->adevice.which);
+			break;
 		default:
 			break;
 	}
