@@ -107,17 +107,47 @@ void AeronUi_EndWindow(AeronUiContext* ctx) {
 
 /* ============================ static widgets ============================ */
 
+/* A label is one form row, like the controls beside it. A label too wide for
+ * its row or column goes on over more lines, at the same size, so that its end
+ * isn't lost. */
 void AeronUi_Label(AeronUiContext* ctx, const char* text) {
-	UiRect      rect;
-	const float text_px = ctx ? ui_ref(ctx, ctx->theme.text_px) : 0.0f;
-	if (!ctx || !ctx->frame_active ||
-		!ui_layout_row(ctx, fmaxf(ui_ref(ctx, ctx->theme.row_height), text_px), &rect)) {
+	UiRect rect;
+	if (!ctx || !ctx->frame_active) {
 		return;
 	}
-	const UiLayout*   top  = ui_layout_top(ctx);
+	const UiLayout*       top     = ui_layout_top(ctx);
+	const AeronFontAtlas* font    = ui_font_regular(ctx);
+	const float           text_px = ui_ref(ctx, ctx->theme.text_px);
+	const float           row_h   = fmaxf(ui_ref(ctx, ctx->theme.row_height), text_px);
+	const char*           label   = ui_label_text(text);
+	const int             length  = ui_label_text_len(text);
+	const float           width   = !top ? 0.0f : top->columns > 0 ? top->col_w[top->col_index] : top->w;
+	AeronTextLine         lines[16];
+	int                   count  = 0;
+	float                 line_h = 0.0f;
+	if (font && font->cell_h > 0 && width > 0.0f &&
+		ui_text_width(ctx, font, text_px, label, length) > width) {
+		AeronTextStyle style = { 0 };
+		style.font           = font;
+		style.scale          = text_px / (float)font->cell_h;
+		style.tracking_px    = ui_font_tracking_atlas(ctx, font) * style.scale;
+		count                = AeronText_Wrap(&style, label, length, width, lines, 16);
+		line_h               = AeronText_LineHeight(&style);
+	}
+	if (!ui_layout_row(ctx, count > 1 ? row_h + line_h * (float)(count - 1) : row_h, &rect)) {
+		return;
+	}
 	const AeronRectI* clip = (top && top->clip.width > 0) ? &top->clip : NULL;
-	ui_draw_text(ctx, ui_font_regular(ctx), rect.x, rect.y + (rect.h - text_px) * 0.5f, AERON_TEXT_LEFT,
-				 text_px, ctx->theme.text, ui_label_text(text), ui_label_text_len(text), clip);
+	/* The first line sits where a one-row label would. */
+	const float y = rect.y + (row_h - text_px) * 0.5f;
+	if (count <= 1) {
+		ui_draw_text(ctx, font, rect.x, y, AERON_TEXT_LEFT, text_px, ctx->theme.text, label, length, clip);
+		return;
+	}
+	for (int i = 0; i < count; i++) {
+		ui_draw_text(ctx, font, rect.x, y + line_h * (float)i, AERON_TEXT_LEFT, text_px, ctx->theme.text,
+					 label + lines[i].start, lines[i].length, clip);
+	}
 }
 
 void AeronUi_Header(AeronUiContext* ctx, const char* text) {
