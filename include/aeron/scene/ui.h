@@ -298,6 +298,9 @@ typedef enum AeronUiListItemFlags {
 	AERON_UI_LIST_ITEM_DIRECTORY = 1u << 1,
 	/* Drawn dim like a disabled item, but it can still be selected. */
 	AERON_UI_LIST_ITEM_DIMMED = 1u << 2,
+	/* Drawn in the accent color, with its detail, to mark one item, such as
+	   the one in use. Dimmed and disabled take precedence. */
+	AERON_UI_LIST_ITEM_ACCENT = 1u << 3,
 } AeronUiListItemFlags;
 
 typedef struct AeronUiListItem {

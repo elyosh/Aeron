@@ -211,10 +211,15 @@ uint32_t AeronUi_ListBoxEx(AeronUiContext* ctx, const char* label, const AeronUi
 		const float           text_y = row.y + (row.h - text_px) * 0.5f;
 		const float           x      = row.x + pad;
 		float                 right  = row.x + row.w - pad;
+		/* An accent item, unless it is dimmed, has its label and detail in
+		   the accent color. */
+		const bool accent = (items[i].flags & AERON_UI_LIST_ITEM_ACCENT) && !(items[i].flags & dimmed);
+		if (accent)
+			color = ctx->theme.accent;
 		ui_draw_text(ctx, font, x, text_y, AERON_TEXT_LEFT, text_px, color, prefix, -1, &clip);
 		if (items[i].detail && items[i].detail[0]) {
-			ui_draw_text(ctx, font, right, text_y, AERON_TEXT_RIGHT, text_px, ctx->theme.text_dim,
-						 items[i].detail, -1, &clip);
+			ui_draw_text(ctx, font, right, text_y, AERON_TEXT_RIGHT, text_px,
+						 accent ? ctx->theme.accent : ctx->theme.text_dim, items[i].detail, -1, &clip);
 			right -= ui_text_width(ctx, font, text_px, items[i].detail, -1) + ui_ref(ctx, 16.0f);
 		}
 		const float prefix_w = ui_text_width(ctx, font, text_px, prefix, -1);
