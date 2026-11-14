@@ -7,10 +7,13 @@
  * inverse-distance curve, the direction of positional panning, the
  * conversion of DirectSound's coordinates, the DirectSound buffer cursors,
  * the fade before the max distance, 3D batches and deferred settings, the
- * gain ramps, and output that doesn't depend on the chunk size.
+ * gain ramps, output that doesn't depend on the chunk size, the resampler,
+ * the limiter, and voices that change while they mix outside the mixer
+ * mutex.
  *
  * With --bench, it measures the cost of mixing 32 positional voices instead,
- * as a percentage of real time on one core.
+ * as a percentage of real time on one core, and how long a call from another
+ * thread waits while they mix.
  *
  * Built with the tools as aeron_audio_test. It prints each check and exits
  * with a non-zero status when a check fails.
@@ -948,6 +951,206 @@ static void test_resampler_sine(void) {
 	free(pcm);
 }
 
+/* --- positional voices mixed outside the mixer mutex --------------------- */
+
+/* A clip of `frames` frames at `rate`, at the constant test level. */
+static AeronClip make_rate_clip(int frames, int rate) {
+	int16_t* pcm = (int16_t*)malloc((size_t)frames * sizeof(int16_t));
+	for (int i = 0; i < frames; ++i) {
+		pcm[i] = (int16_t)(CLIP_LEVEL * 32768.0f);
+	}
+	AeronClip clip = Aeron_AudioClipCreate(pcm, (size_t)frames, rate, 1, AERON_PCM_S16);
+	free(pcm);
+	return clip;
+}
+
+/* Straight ahead of the listener, closer than the min distance: full gain,
+ * the same on both channels. */
+static AeronAudioSource3D make_front_source(void) {
+	const float pos[3] = { 0.0f, 0.0f, -10.0f };
+	return make_source(pos, 100.0f, 131072.0f);
+}
+
+typedef struct JobStopTest {
+	int        done;
+	AeronVoice stopped;
+	AeronVoice sought;
+	AeronVoice started;
+	AeronClip  stopped_clip;
+	AeronClip  started_clip;
+	AeronClip  probe;
+	size_t     stopped_at;
+	int        sought_ok;
+} JobStopTest;
+
+/* Runs once, after the jobs of the first chunk have mixed and before their
+ * results go back to the voices. */
+static void job_stop_hook(int stage, void* user) {
+	JobStopTest* t = (JobStopTest*)user;
+	if (stage != AERON_AUDIO_JOB_HOOK_AFTER || t->done) {
+		return;
+	}
+	t->done                         = 1;
+	t->stopped_at                   = Aeron_AudioVoiceStopAndGetPosition(t->stopped);
+	t->sought_ok                    = Aeron_AudioVoiceSetPosition(t->sought, 100);
+	const AeronAudioSource3D source = make_front_source();
+	t->started = Aeron_AudioVoicePlay3DSource(t->started_clip, 0.5f, 1.0f, 1, &source, 50);
+	Aeron_AudioClipDestroy(t->stopped_clip);
+	t->probe = make_constant_clip(100);
+}
+
+/* While the jobs of a chunk mix, a voice is stopped, a second one is sought,
+ * and a third one starts in the stopped one's slot. None of them gets the
+ * state of another job, and the stopped voice's clip stays allocated until
+ * its job ends. */
+static void test_job_stop(void) {
+	JobStopTest t;
+	char        what[192];
+
+	memset(&t, 0, sizeof t);
+	set_mixer_listener();
+	/* 300 frames at 22,050 Hz: the job's position wraps around, at a step
+	   that isn't a whole number. */
+	t.stopped_clip                  = make_rate_clip(300, 22050);
+	AeronClip twin                  = make_rate_clip(300, 22050);
+	AeronClip sought                = make_constant_clip(4800);
+	t.started_clip                  = make_constant_clip(4800);
+	const AeronAudioSource3D source = make_front_source();
+	/* Low gains keep the sum below full scale, so the limiter doesn't act
+	   on the next tests. */
+	t.stopped             = play_source(t.stopped_clip, 0.25f, &source);
+	t.sought              = play_source(sought, 0.25f, &source);
+	AeronVoice twin_voice = play_source(twin, 0.25f, &source);
+
+	Aeron_AudioSetJobHook(job_stop_hook, &t);
+	render(1024, 1024);
+	Aeron_AudioSetJobHook(NULL, NULL);
+
+	const size_t twin_at = Aeron_AudioVoiceStopAndGetPosition(twin_voice);
+	snprintf(what, sizeof what,
+			 "stopping a voice during its job returns the position the job reaches (%zu, its twin %zu)",
+			 t.stopped_at, twin_at);
+	check(t.done && t.stopped_at == twin_at && twin_at != 0, what);
+	const size_t sought_at = Aeron_AudioVoiceStopAndGetPosition(t.sought);
+	snprintf(what, sizeof what, "a seek during the job wins over the job's position (%zu, expected 100)",
+			 sought_at);
+	check(t.sought_ok && sought_at == 100, what);
+	check(t.started && (uint16_t)t.started == (uint16_t)t.stopped,
+		  "the voice started during the job takes the stopped voice's slot");
+	check(t.probe && (uint16_t)t.probe != (uint16_t)t.stopped_clip,
+		  "the stopped voice's clip stays allocated until its job ends");
+
+	/* Only the new voice plays now. Its first frame comes out after the
+	   limiter's delay, at its own level: a new voice starts without a ramp.
+	   With the stopped voice's ramps, it would start at that one's level. */
+	render(1024, 1024);
+	const size_t started_at = Aeron_AudioVoiceStopAndGetPosition(t.started);
+	const float  expected   = CLIP_LEVEL * 0.5f * 0.70710678f;
+	snprintf(what, sizeof what,
+			 "the new voice in that slot keeps its own state: it starts at its level (%.4f, expected %.4f) "
+			 "from frame 50 (at %zu, expected 1074)",
+			 left_at(g_delay), expected, started_at);
+	check(close_to(left_at(g_delay), expected) && started_at == 1074, what);
+
+	Aeron_AudioClipDestroy(t.probe);
+	Aeron_AudioClipDestroy(twin);
+	Aeron_AudioClipDestroy(sought);
+	Aeron_AudioClipDestroy(t.started_clip);
+	flush_delay();
+}
+
+typedef struct JobWriteTest {
+	AeronClip     clip;
+	int16_t*      pcm; /* the new PCM */
+	size_t        bytes;
+	SDL_Thread*   writer;
+	SDL_AtomicInt returned;
+	int           write_ok;
+	int           waited;
+	int           returned_before_end;
+	int           stage_done[2];
+} JobWriteTest;
+
+static int SDLCALL job_writer(void* user) {
+	JobWriteTest*       t     = (JobWriteTest*)user;
+	const AeronPcmWrite write = { 0, t->pcm, t->bytes };
+	t->write_ok               = Aeron_AudioClipWrite(t->clip, &write, 1);
+	SDL_SetAtomicInt(&t->returned, 1);
+	return 0;
+}
+
+/* Before the jobs of the first chunk mix, a second thread writes to the
+ * clip. The hook returns once the write is waiting. After the jobs, it
+ * records whether the write has returned yet. */
+static void job_write_hook(int stage, void* user) {
+	JobWriteTest* t = (JobWriteTest*)user;
+	if (t->stage_done[stage]) {
+		return;
+	}
+	t->stage_done[stage] = 1;
+	if (stage == AERON_AUDIO_JOB_HOOK_BEFORE) {
+		t->writer = SDL_CreateThread(job_writer, "clip writer", t);
+		for (int ms = 0; t->writer && ms < 2000 && !t->waited; ++ms) {
+			t->waited = Aeron_AudioClipWritersWaiting() == 1;
+			if (!t->waited) {
+				SDL_Delay(1);
+			}
+		}
+	} else {
+		t->returned_before_end = SDL_GetAtomicInt(&t->returned);
+	}
+}
+
+/* A clip write that starts while a job mixes the clip waits until the job
+ * has ended. The chunk being mixed reads only the old PCM, and the next one
+ * the new PCM. */
+static void test_job_clip_write(void) {
+	enum { FRAMES = 4800 };
+
+	JobWriteTest t;
+	char         what[192];
+
+	memset(&t, 0, sizeof t);
+	set_mixer_listener();
+	int16_t* old_pcm = (int16_t*)malloc(FRAMES * sizeof(int16_t));
+	t.pcm            = (int16_t*)malloc(FRAMES * sizeof(int16_t));
+	t.bytes          = FRAMES * sizeof(int16_t);
+	for (int i = 0; i < FRAMES; ++i) {
+		old_pcm[i] = (int16_t)(0.25f * 32768.0f);
+		t.pcm[i]   = (int16_t)(0.5f * 32768.0f);
+	}
+	t.clip                                 = Aeron_AudioClipCreateMutable(FRAMES, RATE, 1, AERON_PCM_S16);
+	const AeronPcmWrite      first_write   = { 0, old_pcm, t.bytes };
+	const int                first_written = Aeron_AudioClipWrite(t.clip, &first_write, 1);
+	const AeronAudioSource3D source        = make_front_source();
+	AeronVoice               voice         = play_source(t.clip, 1.0f, &source);
+	/* Straight ahead, equal-power panning gives each channel cos(45°). */
+	const float side = 0.70710678f;
+
+	Aeron_AudioSetJobHook(job_write_hook, &t);
+	render(1024, 1024);
+	Aeron_AudioSetJobHook(NULL, NULL);
+	if (t.writer) {
+		SDL_WaitThread(t.writer, NULL);
+	}
+
+	check(first_written && t.waited, "a clip write that starts during a job waits for it");
+	check(t.stage_done[1] && !t.returned_before_end, "the write returns only after the job has ended");
+	snprintf(what, sizeof what, "the chunk being mixed reads only the old PCM (%.4f, expected %.4f)",
+			 left_at(600), 0.25f * side);
+	check(close_to(left_at(600), 0.25f * side), what);
+	render(1024, 1024);
+	snprintf(what, sizeof what, "the next chunk reads the new PCM (%.4f, expected %.4f)", left_at(600),
+			 0.5f * side);
+	check(t.write_ok && close_to(left_at(600), 0.5f * side), what);
+
+	Aeron_AudioVoiceStop(voice);
+	Aeron_AudioClipDestroy(t.clip);
+	free(old_pcm);
+	free(t.pcm);
+	flush_delay();
+}
+
 /* --- output and limiter --------------------------------------------------- */
 
 /* The output can have 6 channels. A 2D voice plays on the first two, front
@@ -1060,12 +1263,61 @@ static void test_limiter_peak(void) {
 
 /* --- benchmark ----------------------------------------------------------- */
 
+/* A second thread that calls Aeron_AudioVoiceIsPlaying over and over, as the
+ * game thread calls GetStatus, and records how long each call takes, in
+ * microseconds. The last bucket counts the calls of 1 ms or more. */
+enum { PROBE_BUCKETS = 1001 };
+
+typedef struct WaitProbe {
+	SDL_AtomicInt stop;
+	AeronVoice    voice;
+	uint64_t      calls;
+	uint64_t      total_ticks;
+	uint64_t      max_ticks;
+	uint64_t      buckets[PROBE_BUCKETS];
+} WaitProbe;
+
+static int SDLCALL wait_probe(void* user) {
+	WaitProbe* p = (WaitProbe*)user;
+	while (!SDL_GetAtomicInt(&p->stop)) {
+		const uint64_t start = SDL_GetPerformanceCounter();
+		(void)Aeron_AudioVoiceIsPlaying(p->voice);
+		const uint64_t ticks = SDL_GetPerformanceCounter() - start;
+		p->total_ticks += ticks;
+		p->max_ticks      = ticks > p->max_ticks ? ticks : p->max_ticks;
+		const uint64_t us = ticks * 1000000u / SDL_GetPerformanceFrequency();
+		++p->buckets[us < PROBE_BUCKETS - 1 ? us : PROBE_BUCKETS - 1];
+		++p->calls;
+	}
+	return 0;
+}
+
 /* 32 positional voices of a 22,050 Hz noise clip, circling the listener at
  * different distances. The time spent mixing is compared with the duration of
  * the audio. Positions change once per chunk, as they would with per-frame
  * updates from the game. */
+/* Moves the voices a little along their circles, in one batch, as the game
+ * commits its updates once per frame. */
+static void bench_move_voices(const AeronVoice* voices, const float* radius, float* angle, int count) {
+	Aeron_Audio3DBeginBatch();
+	for (int v = 0; v < count; ++v) {
+		angle[v] += 0.02f;
+		const float              pos[3] = { radius[v] * sinf(angle[v]), 0.0f, -radius[v] * cosf(angle[v]) };
+		const AeronAudioSource3D source = make_source(pos, 100.0f, 131072.0f);
+		Aeron_AudioVoiceSet3DSource(voices[v], &source);
+	}
+	Aeron_Audio3DEndBatch();
+}
+
 static int run_bench(void) {
-	enum { VOICES = 32, CLIP_RATE = 22050, CHUNK = 1024, WARMUP_SECONDS = 1, SECONDS = 10 };
+	enum {
+		VOICES         = 32,
+		CLIP_RATE      = 22050,
+		CHUNK          = 1024,
+		WARMUP_SECONDS = 1,
+		SECONDS        = 10,
+		PROBE_SECONDS  = 10
+	};
 
 	int16_t*   pcm  = (int16_t*)malloc(CLIP_RATE * sizeof(int16_t));
 	uint32_t   seed = 1;
@@ -1093,15 +1345,7 @@ static int run_bench(void) {
 
 	chunks = (WARMUP_SECONDS + SECONDS) * RATE / CHUNK;
 	for (int c = 0; c < chunks; ++c) {
-		/* One batch per chunk, as the game commits its updates. */
-		Aeron_Audio3DBeginBatch();
-		for (int v = 0; v < VOICES; ++v) {
-			angle[v] += 0.02f;
-			const float pos[3] = { radius[v] * sinf(angle[v]), 0.0f, -radius[v] * cosf(angle[v]) };
-			const AeronAudioSource3D source = make_source(pos, 100.0f, 131072.0f);
-			Aeron_AudioVoiceSet3DSource(voices[v], &source);
-		}
-		Aeron_Audio3DEndBatch();
+		bench_move_voices(voices, radius, angle, VOICES);
 		const uint64_t start = SDL_GetPerformanceCounter();
 		render(CHUNK, CHUNK);
 		if (c >= WARMUP_SECONDS * RATE / CHUNK) {
@@ -1120,6 +1364,36 @@ static int run_bench(void) {
 	printf("bench: %d positional voices, stereo panning: %.2f%% of one core, %.3f ms per %d-frame chunk (%s "
 		   "build)\n",
 		   VOICES, 100.0 * mix_seconds / audio_seconds, 1000.0 * mix_seconds / measured_chunks, CHUNK, build);
+
+	/* The same mix, while a second thread checks a voice as fast as it can.
+	   A check waits while the mixer holds its mutex, but not while the
+	   positional voices mix. */
+	WaitProbe probe;
+	memset(&probe, 0, sizeof probe);
+	probe.voice        = voices[0];
+	SDL_Thread* thread = SDL_CreateThread(wait_probe, "wait probe", &probe);
+	const int   probed = PROBE_SECONDS * RATE / CHUNK;
+	for (int c = 0; thread && c < probed; ++c) {
+		bench_move_voices(voices, radius, angle, VOICES);
+		render(CHUNK, CHUNK);
+	}
+	SDL_SetAtomicInt(&probe.stop, 1);
+	if (thread) {
+		SDL_WaitThread(thread, NULL);
+		/* The largest wait includes the times the system pauses one of
+		   the threads, so the 99.9th percentile is printed too. */
+		const double us_per_tick = 1e6 / (double)SDL_GetPerformanceFrequency();
+		uint64_t     below       = 0;
+		int          p999        = 0;
+		while (p999 < PROBE_BUCKETS - 1 &&
+			   (below += probe.buckets[p999]) < probe.calls - probe.calls / 1000) {
+			++p999;
+		}
+		printf("bench: a voice status check from another thread, while mixing: mean %.3f us, 99.9%% under "
+			   "%d us, at most %.1f us (%llu checks)\n",
+			   probe.calls ? (double)probe.total_ticks * us_per_tick / (double)probe.calls : 0.0, p999 + 1,
+			   (double)probe.max_ticks * us_per_tick, (unsigned long long)probe.calls);
+	}
 
 	for (int v = 0; v < VOICES; ++v) {
 		Aeron_AudioVoiceStop(voices[v]);
@@ -1160,6 +1434,8 @@ int main(int argc, char** argv) {
 	test_chunk_independence();
 	test_resampler_cubic_exact();
 	test_resampler_sine();
+	test_job_stop();
+	test_job_clip_write();
 	test_output_channels();
 	test_limiter_delay();
 	test_limiter_peak();

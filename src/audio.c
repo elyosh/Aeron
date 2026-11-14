@@ -6,11 +6,25 @@
 
 /* Generic SDL3 software mixer. See include/aeron/audio.h for the model.
  *
- * The mixer mutex guards samples, voices, queued streams and controls. Cursor
- * snapshots and playback transitions take the SDL stream lock first, then the
- * mixer mutex, matching the SDL callback's lock order. The SDL stream lock
- * covers mixing and submission so a snapshot observes complete output chunks.
- * Device initialization/shutdown run on the control thread with producers stopped.
+ * Threads and locks:
+ *   - SDL calls Aeron_AudioCallback on its audio thread, and holds the device
+ *     stream's lock for the whole callback.
+ *   - The mixer mutex guards clips, voices, queued streams and controls. The
+ *     callback takes it twice per chunk: to free finished voices, mix 2D
+ *     voices and streams, and copy each positional voice into a job; then to
+ *     write the jobs' results back. The jobs mix in between, without the
+ *     mutex, so that a game-thread call waits at most for the short locked
+ *     parts. The mix and stage buffers, the jobs and the limiter belong to
+ *     the code that mixes, and need no lock.
+ *   - While its job runs, a voice's clip holds an extra reference and counts
+ *     the job in job_refs. Aeron_AudioClipWrite waits until job_refs is 0, so
+ *     a job never reads PCM that is being written.
+ *   - Only Aeron_AudioVoiceGetCursors takes the SDL stream lock, then the
+ *     mixer mutex, as the callback does: a DirectSound play cursor needs the
+ *     exact count of frames heard, which depends on SDL's queue. The other
+ *     voice calls use played_snapshot, which the callback updates at its end.
+ *   - Device initialization and shutdown run on the control thread with
+ *     producers stopped.
  *
  * Tests and benchmarks can run the mixer without a device: see
  * Aeron_AudioInitHeadless. There is then no SDL stream lock, and every mixed
@@ -75,7 +89,8 @@ typedef struct AeronClipData {
 	size_t         frames;
 	int            rate;
 	int            channels;
-	int            refcount;        /* voices currently referencing the clip */
+	int            refcount;        /* voices and jobs currently referencing the clip */
+	int            job_refs;        /* jobs mixing the clip now, outside the mixer mutex */
 	int            pending_destroy; /* destroy requested while still referenced */
 	int            mutable_pcm;
 	AeronPcmFormat format;
@@ -83,12 +98,28 @@ typedef struct AeronClipData {
 	uint16_t       gen;
 } AeronClipData;
 
+/* What mixing changes in a voice: its position, its gain ramps and its filter
+ * state. A positional voice is mixed as a copy of it (see AeronVoiceJob). */
+typedef struct AeronVoiceMixState {
+	double pos;      /* fractional frame position within the clip */
+	double advanced; /* source frames mixed since the last seek */
+	/* Gain ramps, for each output channel: the gain in use, the target the
+	   ramp heads to, the change per frame, and the frames left in the ramp.
+	   gains_set is clear until the first mixed chunk, which starts at its
+	   target. */
+	float gain_now[2];
+	float gain_target[2];
+	float gain_step[2];
+	int   ramp_frames;
+	int   gains_set;
+	float lowpass_state; /* the rear low-pass of a positional voice, on its mono signal */
+} AeronVoiceMixState;
+
 typedef struct AeronVoiceSlot {
 	int                in_use;
 	uint64_t           gen;
 	AeronClip          clip;
-	double             pos;      /* fractional frame position within the clip */
-	double             advanced; /* source frames mixed since the last seek */
+	AeronVoiceMixState state;
 	size_t             start_frame;
 	uint64_t           mixed_until; /* output frame immediately after this voice's last sample */
 	int                draining;
@@ -101,17 +132,28 @@ typedef struct AeronVoiceSlot {
 	/* A source change made inside a 3D batch, applied at its end. */
 	AeronAudioSource3D staged_source;
 	int                staged;
-	/* Gain ramps, for each output channel: the gain in use, the target the
-	   ramp heads to, the change per frame, and the frames left in the ramp.
-	   gains_set is clear until the first mixed chunk, which starts at its
-	   target. */
-	float gain_now[2];
-	float gain_target[2];
-	float gain_step[2];
-	int   ramp_frames;
-	int   gains_set;
-	float lowpass_state; /* the rear low-pass of a positional voice, on its mono signal */
+	/* 1 + the index of the job mixing this voice now, or 0. A seek during the
+	   job clears it, so the job's position isn't written back. */
+	int job;
 } AeronVoiceSlot;
+
+/* A positional voice being mixed outside the mixer mutex. Under the mutex,
+ * the callback fills it from the voice; the job then mixes its copy of the
+ * voice's state, and the callback writes that back under the mutex, if the
+ * voice still exists. */
+typedef struct AeronVoiceJob {
+	AeronVoice     voice;
+	AeronClipData* clip; /* holds a reference, and counts in job_refs */
+	/* What the job mixes with. They don't change while it runs. */
+	double start_pos;
+	double step;
+	float  lowpass;
+	int    loop;
+	int    frames;
+	/* The voice's state, which the job changes, and the frames it mixed. */
+	AeronVoiceMixState state;
+	int                mixed;
+} AeronVoiceJob;
 
 typedef struct AeronAudioStreamSlot {
 	int      in_use;
@@ -141,7 +183,12 @@ typedef struct AeronAudioSystem {
 	uint64_t          device_paused_ns;
 	SDL_Mutex*        lock;
 	SDL_Condition*    stream_space_available;
+	SDL_Condition*    clip_jobs_done; /* signalled when jobs release their clips */
+	int               clip_writers_waiting;
 	uint64_t          submitted_frames; /* includes silence mixed after a voice ends */
+	/* The output frames heard, as of the end of the last callback. Calls that
+	   don't take the SDL stream lock use it. */
+	uint64_t played_snapshot;
 
 	AeronClipData        clips[AERON_AUDIO_MAX_CLIPS];
 	AeronVoiceSlot       voices[AERON_AUDIO_MAX_VOICES];
@@ -161,6 +208,10 @@ typedef struct AeronAudioSystem {
 	int               out_channels;    /* of the device stream */
 	int               device_channels; /* of the device itself, 0 if unknown */
 	AeronAudioLimiter limiter;
+
+	AeronVoiceJob     jobs[AERON_AUDIO_MAX_VOICES];
+	AeronAudioJobHook job_hook;
+	void*             job_hook_user;
 
 	float mix[AERON_AUDIO_MIX_CHUNK * AERON_AUDIO_MAX_CHANNELS];   /* S16 scale */
 	float stage[AERON_AUDIO_MIX_CHUNK * AERON_AUDIO_MAX_CHANNELS]; /* F32, [-1, 1] */
@@ -248,6 +299,18 @@ static void Aeron_AudioClipRelease(AeronClipData* data) {
 	if (--data->refcount <= 0 && data->pending_destroy) {
 		Aeron_AudioFreeClipData(data);
 	}
+}
+
+static AeronVoiceSlot* Aeron_AudioResolveVoice(AeronVoice voice) {
+	uint16_t index = (uint16_t)voice;
+	if (voice == 0 || index >= AERON_AUDIO_MAX_VOICES) {
+		return NULL;
+	}
+	AeronVoiceSlot* slot = &g_audio.voices[index];
+	if (!slot->in_use || slot->gen != (voice >> 16)) {
+		return NULL;
+	}
+	return slot;
 }
 
 static void Aeron_AudioFreeVoiceLocked(AeronVoiceSlot* voice) {
@@ -440,7 +503,7 @@ static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, AeronVoiceMi
  * from the current one starts a ramp of AERON_AUDIO_RAMP_FRAMES from the
  * gains in use. A change too small to ramp, and a voice's first chunk, jump
  * to the target: a new sound starts at its level, so its attack is kept. */
-static void Aeron_AudioVoiceSetGainTargets(AeronVoiceSlot* voice, const float target[2]) {
+static void Aeron_AudioVoiceSetGainTargets(AeronVoiceMixState* voice, const float target[2]) {
 	if (!voice->gains_set) {
 		for (int c = 0; c < 2; ++c) {
 			voice->gain_now[c]    = target[c];
@@ -518,32 +581,25 @@ static float Aeron_AudioClipSample(const AeronClipData* clip, const AeronClipTap
 		   taps->weight[3] * (float)p[taps->frame[3] * c + (size_t)channel];
 }
 
-/* The SDL callback holds its stream lock while this voice is mixed. */
-static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
-	AeronClipData* clip = Aeron_AudioResolveClip(voice->clip);
-	if (!clip || !clip->frames) {
-		Aeron_AudioFreeVoiceLocked(voice);
-		return;
-	}
-	AeronVoiceMixTargets targets;
-	Aeron_AudioVoiceMixTargets(voice, &targets);
-	Aeron_AudioVoiceSetGainTargets(voice, targets.gain);
-	const double step    = Aeron_AudioVoiceStep(voice, clip);
-	const float  lowpass = targets.lowpass;
-
+/* Mixes up to `frames` frames of a voice into the mix bus from its state, and
+ * returns the number mixed: fewer when a voice that doesn't loop reaches the
+ * end of its clip. 2D voices run this under the mixer mutex, jobs without it.
+ * It only reads the clip's PCM and format. */
+static int Aeron_AudioRenderVoice(const AeronClipData* clip, AeronVoiceMixState* state, double step,
+								  float lowpass, int loop, int positional, int channels, int frames) {
 	int mixed = 0;
 	for (; mixed < frames; ++mixed) {
-		if (voice->pos >= (double)clip->frames) {
-			if (voice->loop) {
-				voice->pos = fmod(voice->pos, (double)clip->frames);
+		if (state->pos >= (double)clip->frames) {
+			if (loop) {
+				state->pos = fmod(state->pos, (double)clip->frames);
 			} else {
 				break;
 			}
 		}
 		float         left, right;
 		AeronClipTaps taps;
-		Aeron_AudioClipTapsAt(clip, voice->pos, voice->loop, &taps);
-		if (voice->is3d) {
+		Aeron_AudioClipTapsAt(clip, state->pos, loop, &taps);
+		if (positional) {
 			/* A positional sound comes from one point, so a stereo clip is
 			   mixed down to mono before it is panned. Panning each channel
 			   on its own would drop one of them at the side. */
@@ -555,36 +611,56 @@ static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 			   Without the filter, its state follows the signal, so that it
 			   starts from the current sound when the voice moves behind. */
 			if (lowpass < 1.0f) {
-				mono = voice->lowpass_state + lowpass * (mono - voice->lowpass_state);
+				mono = state->lowpass_state + lowpass * (mono - state->lowpass_state);
 			}
-			voice->lowpass_state = mono;
-			left                 = mono * voice->gain_now[0];
-			right                = mono * voice->gain_now[1];
+			state->lowpass_state = mono;
+			left                 = mono * state->gain_now[0];
+			right                = mono * state->gain_now[1];
 		} else if (clip->channels >= 2) {
-			left  = Aeron_AudioClipSample(clip, &taps, 0) * voice->gain_now[0];
-			right = Aeron_AudioClipSample(clip, &taps, 1) * voice->gain_now[1];
+			left  = Aeron_AudioClipSample(clip, &taps, 0) * state->gain_now[0];
+			right = Aeron_AudioClipSample(clip, &taps, 1) * state->gain_now[1];
 		} else {
 			float mono = Aeron_AudioClipSample(clip, &taps, 0);
-			left       = mono * voice->gain_now[0];
-			right      = mono * voice->gain_now[1];
+			left       = mono * state->gain_now[0];
+			right      = mono * state->gain_now[1];
 		}
 		/* The ramp ends exactly on its target. */
-		if (voice->ramp_frames > 0) {
-			if (--voice->ramp_frames == 0) {
-				voice->gain_now[0] = voice->gain_target[0];
-				voice->gain_now[1] = voice->gain_target[1];
+		if (state->ramp_frames > 0) {
+			if (--state->ramp_frames == 0) {
+				state->gain_now[0] = state->gain_target[0];
+				state->gain_now[1] = state->gain_target[1];
 			} else {
-				voice->gain_now[0] += voice->gain_step[0];
-				voice->gain_now[1] += voice->gain_step[1];
+				state->gain_now[0] += state->gain_step[0];
+				state->gain_now[1] += state->gain_step[1];
 			}
 		}
-		g_audio.mix[mixed * g_audio.out_channels] += left;
-		g_audio.mix[mixed * g_audio.out_channels + 1] += right;
-		voice->pos += step;
-		voice->advanced += step;
+		g_audio.mix[mixed * channels] += left;
+		g_audio.mix[mixed * channels + 1] += right;
+		state->pos += step;
+		state->advanced += step;
 	}
-	voice->mixed_until = g_audio.submitted_frames + (uint64_t)mixed;
-	voice->draining    = !voice->loop && voice->pos >= (double)clip->frames;
+	return mixed;
+}
+
+/* The clip position a job will reach, as Aeron_AudioVoiceStopAndGetPosition
+ * returns it: it repeats the job's position arithmetic, without mixing. 0 for
+ * a voice that doesn't loop and reaches the end of its clip. */
+static size_t Aeron_AudioJobEndPosition(const AeronVoiceJob* job) {
+	const double frames = (double)job->clip->frames;
+	double       pos    = job->start_pos;
+	for (int i = 0; i < job->frames; ++i) {
+		if (pos >= frames) {
+			if (!job->loop) {
+				return 0;
+			}
+			pos = fmod(pos, frames);
+		}
+		pos += job->step;
+	}
+	if (!job->loop && pos >= frames) {
+		return 0;
+	}
+	return (size_t)fmod(pos, frames);
 }
 
 static AeronAudioStreamSlot* Aeron_AudioResolveStream(AeronAudioStream stream) {
@@ -769,14 +845,33 @@ static void Aeron_AudioLimitFrame(AeronAudioLimiter* limiter, float* frame, int 
 	}
 }
 
-/* Mixes one chunk under the lock, then stages it as F32 through the
- * limiter. */
+/* Sets a voice's position after `mixed` frames of the chunk that starts at
+ * output frame `chunk_start`. */
+static void Aeron_AudioVoiceMixedLocked(AeronVoiceSlot* voice, const AeronClipData* clip,
+										uint64_t chunk_start, int mixed) {
+	voice->mixed_until = chunk_start + (uint64_t)mixed;
+	voice->draining    = !voice->loop && voice->state.pos >= (double)clip->frames;
+}
+
+/* Mixes one chunk, then stages it as F32 through the limiter.
+ *   1. Under the mixer mutex: frees finished voices, mixes 2D voices and
+ *      streams, and copies each positional voice into a job.
+ *   2. Without it: runs the jobs.
+ *   3. Under it again: writes the jobs' results back to the voices that still
+ *      exist, and releases their clips.
+ * The submitted count covers the chunk from step 1 on, so a voice started or
+ * sought during step 2 begins at the next chunk. */
 static void Aeron_AudioMixChunk(int frames) {
 	SDL_LockMutex(g_audio.lock);
 
-	memset(g_audio.mix, 0, (size_t)frames * (size_t)g_audio.out_channels * sizeof(float));
+	const int channels = g_audio.out_channels;
+	memset(g_audio.mix, 0, (size_t)frames * (size_t)channels * sizeof(float));
 
-	uint64_t played = Aeron_AudioPlayedOutputFramesLocked();
+	const uint64_t played      = Aeron_AudioPlayedOutputFramesLocked();
+	const uint64_t chunk_start = g_audio.submitted_frames;
+	g_audio.submitted_frames += (uint64_t)frames;
+
+	int jobs = 0;
 	for (int v = 0; v < AERON_AUDIO_MAX_VOICES; ++v) {
 		AeronVoiceSlot* voice = &g_audio.voices[v];
 		if (!voice->in_use) {
@@ -784,9 +879,39 @@ static void Aeron_AudioMixChunk(int frames) {
 		}
 		if (Aeron_AudioVoiceFinished(voice, played)) {
 			Aeron_AudioFreeVoiceLocked(voice);
-		} else if (!voice->draining) {
-			Aeron_AudioMixVoice(voice, frames);
+			continue;
 		}
+		if (voice->draining) {
+			continue;
+		}
+		AeronClipData* clip = Aeron_AudioResolveClip(voice->clip);
+		if (!clip || !clip->frames) {
+			Aeron_AudioFreeVoiceLocked(voice);
+			continue;
+		}
+		AeronVoiceMixTargets targets;
+		Aeron_AudioVoiceMixTargets(voice, &targets);
+		Aeron_AudioVoiceSetGainTargets(&voice->state, targets.gain);
+		const double step = Aeron_AudioVoiceStep(voice, clip);
+		if (!voice->is3d) {
+			const int mixed = Aeron_AudioRenderVoice(clip, &voice->state, step, targets.lowpass, voice->loop,
+													 0, channels, frames);
+			Aeron_AudioVoiceMixedLocked(voice, clip, chunk_start, mixed);
+			continue;
+		}
+		AeronVoiceJob* job = &g_audio.jobs[jobs++];
+		job->voice         = (voice->gen << 16) | (uint16_t)v;
+		job->clip          = clip;
+		job->start_pos     = voice->state.pos;
+		job->step          = step;
+		job->lowpass       = targets.lowpass;
+		job->loop          = voice->loop;
+		job->frames        = frames;
+		job->state         = voice->state;
+		job->mixed         = 0;
+		voice->job         = jobs;
+		Aeron_AudioClipAddRef(clip);
+		++clip->job_refs;
 	}
 
 	for (int s = 0; s < AERON_AUDIO_MAX_STREAMS; ++s) {
@@ -796,9 +921,53 @@ static void Aeron_AudioMixChunk(int frames) {
 		}
 	}
 
-	const float scale    = g_audio.master_gain / 32768.0f;
-	const int   channels = g_audio.out_channels;
+	const float             scale     = g_audio.master_gain / 32768.0f;
+	const AeronAudioJobHook hook      = g_audio.job_hook;
+	void* const             hook_user = g_audio.job_hook_user;
 	SDL_UnlockMutex(g_audio.lock);
+
+	if (hook) {
+		hook(AERON_AUDIO_JOB_HOOK_BEFORE, hook_user);
+	}
+	for (int j = 0; j < jobs; ++j) {
+		AeronVoiceJob* job = &g_audio.jobs[j];
+		job->mixed = Aeron_AudioRenderVoice(job->clip, &job->state, job->step, job->lowpass, job->loop, 1,
+											channels, job->frames);
+	}
+	if (hook) {
+		hook(AERON_AUDIO_JOB_HOOK_AFTER, hook_user);
+	}
+
+	if (jobs > 0) {
+		SDL_LockMutex(g_audio.lock);
+		for (int j = 0; j < jobs; ++j) {
+			AeronVoiceJob*  job   = &g_audio.jobs[j];
+			AeronVoiceSlot* voice = Aeron_AudioResolveVoice(job->voice);
+			/* A voice stopped during the job is gone, and its slot may hold a
+			   new voice: the handle tells them apart. After a seek, the
+			   voice keeps its new position, and only the ramps and filter
+			   state carry on. */
+			if (voice) {
+				if (voice->job == j + 1) {
+					voice->state = job->state;
+					Aeron_AudioVoiceMixedLocked(voice, job->clip, chunk_start, job->mixed);
+				} else {
+					const double pos      = voice->state.pos;
+					const double advanced = voice->state.advanced;
+					voice->state          = job->state;
+					voice->state.pos      = pos;
+					voice->state.advanced = advanced;
+				}
+				voice->job = 0;
+			}
+			--job->clip->job_refs;
+			Aeron_AudioClipRelease(job->clip);
+		}
+		if (g_audio.clip_writers_waiting > 0) {
+			SDL_BroadcastCondition(g_audio.clip_jobs_done);
+		}
+		SDL_UnlockMutex(g_audio.lock);
+	}
 
 	for (int i = 0; i < frames; ++i) {
 		float* frame = &g_audio.stage[i * channels];
@@ -807,6 +976,15 @@ static void Aeron_AudioMixChunk(int frames) {
 		}
 		Aeron_AudioLimitFrame(&g_audio.limiter, frame, channels);
 	}
+}
+
+/* Records the frames heard so far for the calls that don't take the SDL
+ * stream lock. In the callback, SDL holds that lock, so the count includes
+ * every chunk submitted. */
+static void Aeron_AudioUpdatePlayedSnapshot(void) {
+	SDL_LockMutex(g_audio.lock);
+	g_audio.played_snapshot = Aeron_AudioPlayedOutputFramesLocked();
+	SDL_UnlockMutex(g_audio.lock);
 }
 
 static void SDLCALL Aeron_AudioCallback(void* userdata, SDL_AudioStream* stream, int additional_amount,
@@ -820,11 +998,9 @@ static void SDLCALL Aeron_AudioCallback(void* userdata, SDL_AudioStream* stream,
 		int chunk = frames_remaining < AERON_AUDIO_MIX_CHUNK ? frames_remaining : AERON_AUDIO_MIX_CHUNK;
 		Aeron_AudioMixChunk(chunk);
 		SDL_PutAudioStreamData(stream, g_audio.stage, chunk * frame_bytes);
-		SDL_LockMutex(g_audio.lock);
-		g_audio.submitted_frames += (uint64_t)chunk;
-		SDL_UnlockMutex(g_audio.lock);
 		frames_remaining -= chunk;
 	}
+	Aeron_AudioUpdatePlayedSnapshot();
 }
 
 int Aeron_AudioRenderHeadless(float* out, int frames, int chunk_frames) {
@@ -839,12 +1015,30 @@ int Aeron_AudioRenderHeadless(float* out, int frames, int chunk_frames) {
 		Aeron_AudioMixChunk(chunk);
 		memcpy(out, g_audio.stage, (size_t)chunk * (size_t)g_audio.out_channels * sizeof(float));
 		out += chunk * g_audio.out_channels;
-		SDL_LockMutex(g_audio.lock);
-		g_audio.submitted_frames += (uint64_t)chunk;
-		SDL_UnlockMutex(g_audio.lock);
+		Aeron_AudioUpdatePlayedSnapshot();
 		frames -= chunk;
 	}
 	return 1;
+}
+
+void Aeron_AudioSetJobHook(AeronAudioJobHook hook, void* user) {
+	if (!g_audio.initialized) {
+		return;
+	}
+	SDL_LockMutex(g_audio.lock);
+	g_audio.job_hook      = hook;
+	g_audio.job_hook_user = user;
+	SDL_UnlockMutex(g_audio.lock);
+}
+
+int Aeron_AudioClipWritersWaiting(void) {
+	if (!g_audio.initialized) {
+		return 0;
+	}
+	SDL_LockMutex(g_audio.lock);
+	const int waiting = g_audio.clip_writers_waiting;
+	SDL_UnlockMutex(g_audio.lock);
+	return waiting;
 }
 
 /* --- lifecycle ----------------------------------------------------------- */
@@ -866,8 +1060,13 @@ static int Aeron_AudioInitMixer(void) {
 		return 0;
 	}
 	g_audio.stream_space_available = SDL_CreateCondition();
-	if (!g_audio.stream_space_available) {
+	g_audio.clip_jobs_done         = SDL_CreateCondition();
+	if (!g_audio.stream_space_available || !g_audio.clip_jobs_done) {
 		Aeron_LogError("aeron.audio", "SDL_CreateCondition failed: %s", SDL_GetError());
+		SDL_DestroyCondition(g_audio.stream_space_available);
+		SDL_DestroyCondition(g_audio.clip_jobs_done);
+		g_audio.stream_space_available = NULL;
+		g_audio.clip_jobs_done         = NULL;
 		SDL_DestroyMutex(g_audio.lock);
 		g_audio.lock = NULL;
 		return 0;
@@ -941,7 +1140,9 @@ int Aeron_AudioInit(void) {
 	}
 	if (!Aeron_AudioOpenDevice(AERON_AUDIO_DEFAULT_CHANNELS)) {
 		SDL_DestroyCondition(g_audio.stream_space_available);
+		SDL_DestroyCondition(g_audio.clip_jobs_done);
 		g_audio.stream_space_available = NULL;
+		g_audio.clip_jobs_done         = NULL;
 		SDL_DestroyMutex(g_audio.lock);
 		g_audio.lock = NULL;
 		return 0;
@@ -1116,6 +1317,8 @@ void Aeron_AudioShutdown(void) {
 	SDL_BroadcastCondition(g_audio.stream_space_available);
 	SDL_DestroyCondition(g_audio.stream_space_available);
 	g_audio.stream_space_available = NULL;
+	SDL_DestroyCondition(g_audio.clip_jobs_done);
+	g_audio.clip_jobs_done = NULL;
 	SDL_DestroyMutex(g_audio.lock);
 	g_audio.lock        = NULL;
 	g_audio.initialized = 0;
@@ -1193,6 +1396,14 @@ int Aeron_AudioClipWrite(AeronClip clip, const AeronPcmWrite* writes, size_t cou
 	}
 	SDL_LockMutex(g_audio.lock);
 	AeronClipData* data = Aeron_AudioResolveClip(clip);
+	/* A job may be reading the PCM. It holds a reference, so the clip can only
+	   go away once the job has ended. */
+	while (data && data->job_refs > 0) {
+		++g_audio.clip_writers_waiting;
+		SDL_WaitCondition(g_audio.clip_jobs_done, g_audio.lock);
+		--g_audio.clip_writers_waiting;
+		data = Aeron_AudioResolveClip(clip);
+	}
 	if (!data || !data->mutable_pcm || data->pending_destroy) {
 		SDL_UnlockMutex(g_audio.lock);
 		return 0;
@@ -1244,11 +1455,12 @@ void Aeron_AudioClipDestroy(AeronClip clip) {
 /* A positional voice passes its source; a 2D voice passes NULL. */
 static AeronVoice Aeron_AudioStartVoice(AeronClip clip, float gain, float pan, float pitch, int loop,
 										const AeronAudioSource3D* source, size_t frame) {
-	if (clip == 0 || !Aeron_AudioLockOutput()) {
+	if (clip == 0 || !g_audio.initialized) {
 		return 0;
 	}
+	SDL_LockMutex(g_audio.lock);
 
-	uint64_t       played = Aeron_AudioPlayedOutputFramesLocked();
+	uint64_t       played = g_audio.played_snapshot;
 	AeronVoice     result = 0;
 	AeronClipData* data   = Aeron_AudioResolveClip(clip);
 	if (data && !data->pending_destroy && frame < data->frames) {
@@ -1260,9 +1472,8 @@ static AeronVoice Aeron_AudioStartVoice(AeronClip clip, float gain, float pan, f
 			if (!voice->in_use) {
 				voice->in_use      = 1;
 				voice->clip        = clip;
-				voice->pos         = (double)frame;
+				voice->state.pos   = (double)frame;
 				voice->start_frame = frame;
-				voice->advanced    = 0.0;
 				voice->mixed_until = g_audio.submitted_frames;
 				voice->draining    = 0;
 				voice->gain        = gain;
@@ -1282,7 +1493,7 @@ static AeronVoice Aeron_AudioStartVoice(AeronClip clip, float gain, float pan, f
 			}
 		}
 	}
-	Aeron_AudioUnlockOutput();
+	SDL_UnlockMutex(g_audio.lock);
 	return result;
 }
 
@@ -1303,19 +1514,8 @@ AeronVoice Aeron_AudioVoicePlay3DSource(AeronClip clip, float gain, float pitch,
 	return Aeron_AudioStartVoice(clip, gain, 0.0f, pitch, loop, source, frame);
 }
 
-static AeronVoiceSlot* Aeron_AudioResolveVoice(AeronVoice voice) {
-	uint16_t index = (uint16_t)voice;
-	if (voice == 0 || index >= AERON_AUDIO_MAX_VOICES) {
-		return NULL;
-	}
-	AeronVoiceSlot* slot = &g_audio.voices[index];
-	if (!slot->in_use || slot->gen != (voice >> 16)) {
-		return NULL;
-	}
-	return slot;
-}
-
-/* The output snapshot keeps completed voices valid until their tail has played. */
+/* A voice that has mixed its whole clip stays valid until `played` shows that
+ * its last frame was heard. */
 static AeronVoiceSlot* Aeron_AudioResolvePlayingVoiceLocked(AeronVoice voice, uint64_t played) {
 	AeronVoiceSlot* slot = Aeron_AudioResolveVoice(voice);
 	if (slot && Aeron_AudioVoiceFinished(slot, played)) {
@@ -1329,7 +1529,7 @@ static size_t Aeron_AudioVoiceCursorLocked(const AeronVoiceSlot* voice, const Ae
 										   uint64_t played) {
 	const double step    = Aeron_AudioVoiceStep(voice, clip);
 	uint64_t     pending = voice->mixed_until > played ? voice->mixed_until - played : 0;
-	double       heard   = voice->advanced - (double)pending * step;
+	double       heard   = voice->state.advanced - (double)pending * step;
 	double       frame   = (double)voice->start_frame + (heard > 0.0 ? heard : 0.0);
 	if (voice->loop) {
 		return (size_t)fmod(frame, (double)clip->frames);
@@ -1355,42 +1555,49 @@ int Aeron_AudioVoiceGetCursors(AeronVoice voice, size_t* play, size_t* write) {
 		   first frame it hasn't read is three past it. DirectSound callers
 		   don't write between the play and write cursors. */
 		if (write)
-			*write = ((size_t)fmod(slot->pos, (double)clip->frames) + 3) % clip->frames;
+			*write = ((size_t)fmod(slot->state.pos, (double)clip->frames) + 3) % clip->frames;
 	}
 	Aeron_AudioUnlockOutput();
 	return clip != NULL;
 }
 
+/* During a job, the seek wins over the position the job reaches: the voice
+ * plays from `frame` at the next chunk. */
 int Aeron_AudioVoiceSetPosition(AeronVoice voice, size_t frame) {
-	if (!Aeron_AudioLockOutput()) {
+	if (!g_audio.initialized) {
 		return 0;
 	}
-	AeronVoiceSlot* slot = Aeron_AudioResolvePlayingVoiceLocked(voice, Aeron_AudioPlayedOutputFramesLocked());
-	AeronClipData*  clip = slot ? Aeron_AudioResolveClip(slot->clip) : NULL;
+	SDL_LockMutex(g_audio.lock);
+	AeronVoiceSlot* slot  = Aeron_AudioResolvePlayingVoiceLocked(voice, g_audio.played_snapshot);
+	AeronClipData*  clip  = slot ? Aeron_AudioResolveClip(slot->clip) : NULL;
 	int             valid = clip && frame < clip->frames;
 	if (valid) {
-		slot->pos         = (double)frame;
-		slot->start_frame = frame;
-		slot->advanced    = 0.0;
-		slot->mixed_until = g_audio.submitted_frames;
-		slot->draining    = 0;
+		slot->state.pos      = (double)frame;
+		slot->state.advanced = 0.0;
+		slot->start_frame    = frame;
+		slot->mixed_until    = g_audio.submitted_frames;
+		slot->draining       = 0;
+		slot->job            = 0;
 	}
-	Aeron_AudioUnlockOutput();
+	SDL_UnlockMutex(g_audio.lock);
 	return valid;
 }
 
+/* During a job, the job mixes with the old setting, and whether the voice has
+ * reached its end follows the new one. */
 int Aeron_AudioVoiceSetLooping(AeronVoice voice, int loop) {
-	if (!Aeron_AudioLockOutput()) {
+	if (!g_audio.initialized) {
 		return 0;
 	}
-	AeronVoiceSlot* slot = Aeron_AudioResolvePlayingVoiceLocked(voice, Aeron_AudioPlayedOutputFramesLocked());
+	SDL_LockMutex(g_audio.lock);
+	AeronVoiceSlot* slot = Aeron_AudioResolvePlayingVoiceLocked(voice, g_audio.played_snapshot);
 	if (slot) {
 		slot->loop = loop != 0;
 		if (slot->loop)
 			slot->draining = 0;
 	}
 	int valid = slot != NULL;
-	Aeron_AudioUnlockOutput();
+	SDL_UnlockMutex(g_audio.lock);
 	return valid;
 }
 
@@ -1448,31 +1655,37 @@ void Aeron_AudioVoiceSet3DSource(AeronVoice voice, const AeronAudioSource3D* sou
 	SDL_UnlockMutex(g_audio.lock);
 }
 
+/* During a job, the chunk the job mixes still plays, so the position is the
+ * one the job reaches. */
 size_t Aeron_AudioVoiceStopAndGetPosition(AeronVoice voice) {
 	size_t cursor = 0;
-	if (!Aeron_AudioLockOutput()) {
+	if (!g_audio.initialized) {
 		return 0;
 	}
+	SDL_LockMutex(g_audio.lock);
 	AeronVoiceSlot* slot = Aeron_AudioResolveVoice(voice);
 	if (slot) {
 		AeronClipData* clip = Aeron_AudioResolveClip(slot->clip);
-		if (clip && !slot->draining) {
-			cursor = (size_t)fmod(slot->pos, (double)clip->frames);
+		if (slot->job) {
+			cursor = Aeron_AudioJobEndPosition(&g_audio.jobs[slot->job - 1]);
+		} else if (clip && !slot->draining) {
+			cursor = (size_t)fmod(slot->state.pos, (double)clip->frames);
 		}
 		Aeron_AudioFreeVoiceLocked(slot);
 	}
-	Aeron_AudioUnlockOutput();
+	SDL_UnlockMutex(g_audio.lock);
 	return cursor;
 }
 
 void Aeron_AudioVoiceStop(AeronVoice voice) { (void)Aeron_AudioVoiceStopAndGetPosition(voice); }
 
 int Aeron_AudioVoiceIsPlaying(AeronVoice voice) {
-	if (!Aeron_AudioLockOutput()) {
+	if (!g_audio.initialized) {
 		return 0;
 	}
-	int playing = Aeron_AudioResolvePlayingVoiceLocked(voice, Aeron_AudioPlayedOutputFramesLocked()) != NULL;
-	Aeron_AudioUnlockOutput();
+	SDL_LockMutex(g_audio.lock);
+	int playing = Aeron_AudioResolvePlayingVoiceLocked(voice, g_audio.played_snapshot) != NULL;
+	SDL_UnlockMutex(g_audio.lock);
 	return playing;
 }
 

@@ -85,7 +85,9 @@ typedef struct AeronPcmWrite {
 	size_t      bytes;
 } AeronPcmWrite;
 
-/* Validates every region before committing them together under the mixer lock. */
+/* Validates every region before committing them together under the mixer lock.
+ * While the mixer is mixing a positional voice of the clip, the write waits
+ * until that chunk is mixed, so the chunk reads only the old or the new PCM. */
 int Aeron_AudioClipWrite(AeronClip clip, const AeronPcmWrite* writes, size_t count);
 
 /* Releases the clip. Memory is retained until any voices still referencing it
@@ -123,7 +125,9 @@ void Aeron_AudioVoiceSetPitch(AeronVoice voice, float pitch);
 /* Inside a 3D batch, the change waits for Aeron_Audio3DEndBatch. */
 void Aeron_AudioVoiceSet3DSource(AeronVoice voice, const AeronAudioSource3D* source);
 void Aeron_AudioVoiceStop(AeronVoice voice);
-/* Remains true while the voice's final output is queued for playback. */
+/* Remains true while the voice's final output is queued for playback. It
+ * uses the count of frames heard as of the last device callback, so it can
+ * stay true up to one device buffer longer. */
 int Aeron_AudioVoiceIsPlaying(AeronVoice voice);
 
 /* Positional model (shared listener + global tuning factors). Inside a 3D

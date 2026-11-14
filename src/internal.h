@@ -405,6 +405,19 @@ int Aeron_AudioInitHeadless(void);
  * Aeron_AudioInitHeadless. */
 int Aeron_AudioRenderHeadless(float* out, int frames, int chunk_frames);
 
+/* For tests: the mixer mixes positional voices as jobs, outside its mutex.
+ * In each chunk, `hook` runs just before the jobs mix (stage
+ * AERON_AUDIO_JOB_HOOK_BEFORE) and just after, before their results go back
+ * to the voices (AERON_AUDIO_JOB_HOOK_AFTER). It runs on the thread that
+ * mixes, without the mutex, so it can call the audio API. NULL removes it. */
+enum { AERON_AUDIO_JOB_HOOK_BEFORE = 0, AERON_AUDIO_JOB_HOOK_AFTER = 1 };
+
+typedef void (*AeronAudioJobHook)(int stage, void* user);
+void Aeron_AudioSetJobHook(AeronAudioJobHook hook, void* user);
+/* For tests: how many Aeron_AudioClipWrite calls are waiting for a job to
+ * end. */
+int Aeron_AudioClipWritersWaiting(void);
+
 void Aeron_BeginInputFrame(AeronInputSnapshot* input);
 void Aeron_HandleEvent(const SDL_Event* event);
 void Aeron_ControllersInit(void);
