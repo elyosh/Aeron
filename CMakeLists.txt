@@ -1116,6 +1116,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_missions.c
         tools/xwau/xwau_names.c
         tools/xwau/xwau_model.c
+        tools/xwau/xwau_hangar_crafts.c
         tools/xwau/xwau_object_limits.c
         tools/xwau/xwau_original_films.c
         tools/xwau/xwau_skins.c

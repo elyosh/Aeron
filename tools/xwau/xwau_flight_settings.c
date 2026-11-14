@@ -12,6 +12,7 @@
 #include "xwau_config.h"
 #include "xwau_craft.h"
 #include "xwau_mission_settings.h"
+#include "xwau_hangar_crafts.h"
 #include "xwau_object_limits.h"
 #include "xwau_original_films.h"
 #include "xwau_weapon_lock.h"
@@ -544,6 +545,7 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	const bool shields    = write_shield_recharge(f, game);
 	const bool docking    = write_docking(f, game);
 	const bool limits     = XwauObjectLimits_Write(f, game);
+	const bool hangar     = XwauHangarCrafts_Write(f, game, names);
 	const bool films      = XwauOriginalFilms_Write(f, game);
 	const bool camera     = write_camera(f, game);
 	const bool suns       = write_suns(f, game);
@@ -554,7 +556,7 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 		XwauWeaponLock_WriteFlightSettings(f, game, names, &ai_attack, &mag_pulse, &warhead_lock);
 	XwauSettingsConfig_Free(&config);
 	const bool        ok        = !ferror(f) && fclose(f) == 0 && weapon_lock_ok;
-	char              what[300] = "";
+	char              what[512] = "";
 	const char* const parts[]   = { extra_planets ? "backdrop ids 104 to 255 are planets" : NULL,
 									settings ? "the mission rules and defaults" : NULL,
 									headlights ? "the headlights" : NULL,
@@ -563,6 +565,7 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 									shields ? "the shield recharge rules" : NULL,
 									docking ? "the docking rules" : NULL,
 									limits ? "the object counts" : NULL,
+									hangar ? "the hangar craft lists" : NULL,
 									films ? "the craft records of its films" : NULL,
 									ai_attack ? "the AI attack ranges" : NULL,
 									mag_pulse ? "the mag pulse hits" : NULL,

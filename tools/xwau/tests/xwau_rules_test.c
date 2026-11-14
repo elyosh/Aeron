@@ -2532,6 +2532,35 @@ static char* flight_settings_text(const char* game, const char* settings) {
 																		: NULL;
 }
 
+/* ---- hook_hangars craft selection --------------------------------------------- */
+
+static void test_hangar_crafts(const char* scratch) {
+	char game[1024], path[1300], settings[1300];
+	snprintf(game, sizeof game, "%s/hangar_crafts_game", scratch);
+	MakeDirs(game);
+	snprintf(settings, sizeof settings, "%s/hangar_crafts.yaml", scratch);
+	snprintf(path, sizeof path, "%s/CraftSelectionFighters.txt", game);
+	write_file(path, "; ModelIndex_005_0_4_TIEFIGHTER\n5\n\n  6  \nwing\n0\n9999\n6\n28 ; x1\n");
+	snprintf(path, sizeof path, "%s/craftselectiontransports.txt", game);
+	write_file(path, "; nothing\n");
+	char* text = flight_settings_text(game, settings);
+	check(text && !strstr(text, "hangar_crafts"), "hangar crafts: nothing without hook_hangars.dll");
+	free(text);
+	snprintf(path, sizeof path, "%s/hook_hangars.dll", game);
+	write_file(path, "MZ");
+	const char* renames[XWAU_GAME_OBJECT_TYPES] = { 0 };
+	renames[28]                                 = "tie_advanced_x1";
+	g_names.object_type_renames                 = renames;
+	text                                        = flight_settings_text(game, settings);
+	g_names.object_type_renames                 = NULL;
+	check(text && strstr(text, "\nhangar_crafts:\n  fighters: [type_5, type_6, tie_advanced_x1]\n"
+								"  transports: []\n") &&
+			  !strstr(text, "  all:"),
+		  "hangar crafts: the files become lists of object types, without bad lines, unknown types and "
+		  "repeats, an empty file gives an empty list, and a missing file gives no key");
+	free(text);
+}
+
 /* ---- hook_weapon_lock --------------------------------------------------------- */
 
 /* Writes `text` into `path` and returns the craft's `ai_attack` group, or
@@ -3589,6 +3618,7 @@ int main(void) {
 	test_mission_files(scratch);
 	test_flight_settings(scratch);
 	test_object_limits(scratch);
+	test_hangar_crafts(scratch);
 	test_weapon_lock(scratch);
 	test_mission_settings(scratch);
 	test_model_swaps(scratch);
