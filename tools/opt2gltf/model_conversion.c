@@ -227,7 +227,6 @@ static void xwau_fill(XwauGltfMaterial* out, const XwauMatParams* p) {
 	out->glossiness       = p->glossiness;
 	out->nm_intensity     = p->nm_intensity;
 	out->specular_val     = p->specular_val;
-	out->ambient          = p->ambient;
 	out->shadeless        = p->shadeless;
 	out->alpha_isnt_glass = p->alpha_isnt_glass;
 	/* NoColorAlpha only has an effect together with AlphaToBloom, and

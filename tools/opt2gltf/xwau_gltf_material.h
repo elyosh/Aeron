@@ -10,12 +10,18 @@
  *
  * The bake reproduces the per-texel logic of that renderer with standard
  * glTF inputs. It covers authored colors, palette or 32bpp illumination,
- * Shadeless/Ambient, glass, the dark-texel reflectance fade (approximated
- * with roughness), Metallic/Glossiness, Intensity as KHR_materials_specular,
- * and the normal map with NMIntensity baked in. That renderer uses the
- * stored normal of each corner, so XWAU models are converted with the
- * stored normals. They are not remapped or repaired, and no smoothing angle
- * is used.
+ * Shadeless, glass, the dark-texel reflectance fade (approximated with
+ * roughness), Metallic/Glossiness, Intensity as KHR_materials_specular, and
+ * the normal map with NMIntensity baked in. That renderer uses the stored
+ * normal of each corner, so XWAU models are converted with the stored
+ * normals. They are not remapped or repaired, and no smoothing angle is
+ * used.
+ *
+ * Ambient is left out. In XWAU it draws part of the surface unlit,
+ * lerp(lit, color, Ambient), so that surfaces don't go black under that
+ * renderer's weak fill light. Baked as emission, that part would ignore the
+ * colour and level of the scene's light, the ambient occlusion and the
+ * light probes, and would add to the fill light our renderer already gives.
  *
  * That renderer draws projectiles unlit, whatever their materials say, so
  * a projectile's textures are baked as emission only (XwauGltfProjectile).
@@ -66,12 +72,11 @@ typedef struct XwauGltfMaterial {
 	float glossiness;   /* Glossiness */
 	float nm_intensity; /* NMIntensity */
 	float specular_val; /* SpecularVal: luma floor of the dark-texel fade */
-	float ambient;      /* Ambient: partial shadeless weight */
 	bool  shadeless;
 	bool  alpha_isnt_glass;
 	bool  alpha_to_bloom;
 	/* Bake as a plain lit surface, with no unlit weight and no glass,
-	 * regardless of Shadeless, Ambient or AlphaToBloom. */
+	 * regardless of Shadeless or AlphaToBloom. */
 	bool lit;
 	/* Bake as a projectile, regardless of the other fields. */
 	XwauGltfProjectile projectile;
@@ -118,11 +123,11 @@ typedef struct XwauGltfAnim {
  * an 8bpp texture with at least one lit texel. */
 bool XwauGltf_TextureHasIllum(const opt_texture_t* t);
 
-/* Returns the unlit weight s of the material, 0..1. It is 1 for a
- * projectile, 0 for a `lit` material, 1 for Shadeless or AlphaToBloom, and
- * Ambient otherwise. The bake stores lerp(lit, color, s) as base color
- * color·(1 − s) plus emission color·s. Colour frames are split the same
- * way. */
+/* Returns the unlit weight s of the material, 0 or 1. It is 1 for a
+ * projectile, and for Shadeless or AlphaToBloom unless the material is
+ * `lit`. Otherwise it is 0. The bake stores lerp(lit, color, s) as base
+ * color color·(1 − s) plus emission color·s. Colour frames are split the
+ * same way. */
 float XwauGltf_Unlit(const XwauGltfMaterial* xm);
 
 /* Returns the emissive strength of the material's baked emissive images.

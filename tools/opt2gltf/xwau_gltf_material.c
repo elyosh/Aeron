@@ -22,8 +22,9 @@
  *     XwaD3dRendererHook.cpp). A 32bpp texture uses its illumination plane.
  *     The illum branch of XwaD3dPixelShader.hlsl draws these texels unlit
  *     at 1.25x their color.
- *   - Shadeless/Ambient: output = lerp(lit, color, s), stored as base color
- *     color * (1 - s) plus emissive color * s.
+ *   - Shadeless: output = lerp(lit, color, s), stored as base color
+ *     color * (1 - s) plus emissive color * s. Ambient isn't baked (see
+ *     xwau_gltf_material.h).
  *   - Glass (transparent, not shadeless, no illumination): a texel with
  *     alpha below 0.95 gets coverage a^2, gloss 0.93 and metallic 0. XWAU
  *     also makes it 0.8 shadeless, so that the player can see into
@@ -152,7 +153,7 @@ float XwauGltf_Unlit(const XwauGltfMaterial* xm) {
 		return 1.0f;
 	if (xm->lit)
 		return 0.0f;
-	return (xm->shadeless || xm->alpha_to_bloom) ? 1.0f : clamp01f(xm->ambient);
+	return (xm->shadeless || xm->alpha_to_bloom) ? 1.0f : 0.0f;
 }
 
 bool XwauGltf_TextureHasIllum(const opt_texture_t* t) {
