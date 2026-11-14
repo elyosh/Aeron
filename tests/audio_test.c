@@ -210,7 +210,12 @@ static void test_mixer_directions(void) {
 typedef struct TestDs3dBufferVtbl {
 	void* unused0[2];
 	int (*Release)(void* self);                                                /* 2 */
-	void* unused3[13];                                                         /* 3..15 */
+	void* unused3[4];                                                          /* 3..6 */
+	int (*GetMaxDistance)(void* self, float* dist);                            /* 7 */
+	int (*GetMinDistance)(void* self, float* dist);                            /* 8 */
+	int (*GetMode)(void* self, uint32_t* mode);                                /* 9 */
+	int (*GetPosition)(void* self, DS3DVector* pos);                           /* 10 */
+	void* unused11[5];                                                         /* 11..15 */
 	int (*SetMaxDistance)(void* self, float dist, uint32_t apply);             /* 16 */
 	int (*SetMinDistance)(void* self, float dist, uint32_t apply);             /* 17 */
 	int (*SetMode)(void* self, uint32_t mode, uint32_t apply);                 /* 18 */
@@ -225,7 +230,9 @@ typedef struct TestDs3dBuffer {
 typedef struct TestDs3dListenerVtbl {
 	void* unused0[2];
 	int (*Release)(void* self);                                        /* 2 */
-	void* unused3[8];                                                  /* 3..10 */
+	void* unused3[4];                                                  /* 3..6 */
+	int (*GetPosition)(void* self, DS3DVector* pos);                   /* 7 */
+	void* unused8[3];                                                  /* 8..10 */
 	int (*SetDistanceFactor)(void* self, float value, uint32_t apply); /* 11 */
 	int (*SetDopplerFactor)(void* self, float value, uint32_t apply);  /* 12 */
 	int (*SetOrientation)(void* self, float fx, float fy, float fz, float tx, float ty, float tz,
@@ -673,6 +680,56 @@ static void test_shim_deferred(void) {
 	check(close_to(left_at(255), level) && close_to(right_at(255), 0.0f), "a second commit with nothing new");
 
 	buffer->lpVtbl->Stop(buffer);
+	buffer3d->lpVtbl->Release(buffer3d);
+	buffer->lpVtbl->Release(buffer);
+	listener->lpVtbl->Release(listener);
+	primary->lpVtbl->Release(primary);
+	device->lpVtbl->Release(device);
+}
+
+/* The getters return the parameters in use, in DirectSound coordinates. */
+static void test_shim_getters(void) {
+	IDirectSound*       device = create_ds_device();
+	IDirectSoundBuffer* primary;
+	TestDs3dListener*   listener = open_ds_listener(device, &primary);
+	IDirectSoundBuffer* buffer   = make_ds_buffer(device, DS_GAME_3D_FLAGS, 4800);
+	TestDs3dBuffer*     buffer3d = get_ds3d_buffer(buffer);
+	DS3DVector          pos;
+	DSBufferCaps        caps;
+	float               dist = 0.0f;
+	uint32_t            mode = 99;
+
+	memset(&caps, 0, sizeof caps);
+	caps.dwSize = sizeof caps;
+	check(buffer->lpVtbl->GetCaps(buffer, &caps) >= 0 && caps.dwFlags == DS_GAME_3D_FLAGS &&
+			  caps.dwBufferBytes == 4800 * 2,
+		  "buffer caps: the flags and size it was created with");
+
+	buffer3d->lpVtbl->SetMinDistance(buffer3d, 100.0f, DS3D_IMMEDIATE);
+	buffer3d->lpVtbl->SetMaxDistance(buffer3d, 1000.0f, DS3D_IMMEDIATE);
+	buffer3d->lpVtbl->SetPosition(buffer3d, 1.0f, 2.0f, 3.0f, DS3D_IMMEDIATE);
+	check(buffer3d->lpVtbl->GetMinDistance(buffer3d, &dist) >= 0 && dist == 100.0f, "min distance");
+	check(buffer3d->lpVtbl->GetMaxDistance(buffer3d, &dist) >= 0 && dist == 1000.0f, "max distance");
+	check(buffer3d->lpVtbl->GetPosition(buffer3d, &pos) >= 0 && pos.x == 1.0f && pos.y == 2.0f &&
+			  pos.z == 3.0f,
+		  "position");
+	check(buffer3d->lpVtbl->GetMode(buffer3d, &mode) >= 0 && mode == 0, "mode normal after a position");
+
+	buffer3d->lpVtbl->SetPosition(buffer3d, 4.0f, 5.0f, 6.0f, DS3D_DEFERRED);
+	listener->lpVtbl->SetPosition(listener, 7.0f, 8.0f, 9.0f, DS3D_DEFERRED);
+	buffer3d->lpVtbl->GetPosition(buffer3d, &pos);
+	check(pos.x == 1.0f && pos.z == 3.0f, "deferred position: not in use before the commit");
+	listener->lpVtbl->GetPosition(listener, &pos);
+	check(pos.x == 0.0f && pos.z == 0.0f, "deferred listener position: not in use before the commit");
+	listener->lpVtbl->CommitDeferredSettings(listener);
+	buffer3d->lpVtbl->GetPosition(buffer3d, &pos);
+	check(pos.x == 4.0f && pos.y == 5.0f && pos.z == 6.0f, "position after the commit");
+	listener->lpVtbl->GetPosition(listener, &pos);
+	check(pos.x == 7.0f && pos.y == 8.0f && pos.z == 9.0f, "listener position after the commit");
+
+	buffer3d->lpVtbl->SetMode(buffer3d, 2, DS3D_IMMEDIATE);
+	check(buffer3d->lpVtbl->GetMode(buffer3d, &mode) >= 0 && mode == 2, "mode disabled");
+
 	buffer3d->lpVtbl->Release(buffer3d);
 	buffer->lpVtbl->Release(buffer);
 	listener->lpVtbl->Release(listener);
@@ -2283,6 +2340,7 @@ int main(int argc, char** argv) {
 	test_batch();
 	test_shim_range_fade();
 	test_shim_deferred();
+	test_shim_getters();
 	test_ramp_jump();
 	test_ramp_range_fade();
 	test_chunk_independence();

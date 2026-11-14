@@ -158,6 +158,7 @@ const DSCompatGuid IID_IDirectSound3DListener = {
 	0x279AFA84, 0x4981, 0x11CE, { 0xA5, 0x21, 0x00, 0x20, 0xAF, 0x0B, 0xE5, 0x60 }
 };
 
+#define DS3DMODE_NORMAL 0u
 #define DS3DMODE_DISABLE 2u
 
 /* DirectSound uses left-handed coordinates, and the Aeron mixer uses
@@ -358,6 +359,58 @@ static int DS3DBuffer_SetVelocity(void* self, float x, float y, float z, uint32_
 	return DS_OK;
 }
 
+/* The getters return the parameters in use. Settings made with DS3D_DEFERRED
+ * only show after CommitDeferredSettings. */
+static int DS3DBuffer_GetMaxDistance(void* self, float* dist) {
+	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
+	if (!dist) {
+		return DS_FAIL;
+	}
+	DSoundBuffer_LockState(owner);
+	*dist = owner->params3d.max_dist;
+	DSoundBuffer_UnlockState(owner);
+	return DS_OK;
+}
+
+static int DS3DBuffer_GetMinDistance(void* self, float* dist) {
+	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
+	if (!dist) {
+		return DS_FAIL;
+	}
+	DSoundBuffer_LockState(owner);
+	*dist = owner->params3d.min_dist;
+	DSoundBuffer_UnlockState(owner);
+	return DS_OK;
+}
+
+static int DS3DBuffer_GetMode(void* self, uint32_t* mode) {
+	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
+	if (!mode) {
+		return DS_FAIL;
+	}
+	DSoundBuffer_LockState(owner);
+	*mode = owner->params3d.is3d ? DS3DMODE_NORMAL : DS3DMODE_DISABLE;
+	DSoundBuffer_UnlockState(owner);
+	return DS_OK;
+}
+
+static int DS3DBuffer_GetPosition(void* self, void* out) {
+	DSBuffer*   owner  = ((DS3DBuffer*)self)->owner;
+	DS3DVector* vector = (DS3DVector*)out;
+	float       pos[3];
+	if (!vector) {
+		return DS_FAIL;
+	}
+	DSoundBuffer_LockState(owner);
+	memcpy(pos, owner->params3d.pos, sizeof pos);
+	DSoundBuffer_UnlockState(owner);
+	/* Back to DirectSound coordinates. */
+	vector->x = pos[0];
+	vector->y = pos[1];
+	vector->z = -pos[2];
+	return DS_OK;
+}
+
 static const DS3DBufferVtbl g_ds3d_buffer_vtbl = {
 	0,
 	DS3DBuffer_AddRef,
@@ -366,10 +419,10 @@ static const DS3DBufferVtbl g_ds3d_buffer_vtbl = {
 	0,
 	0,
 	0,
-	0,
-	0,
-	0,
-	0,
+	DS3DBuffer_GetMaxDistance,
+	DS3DBuffer_GetMinDistance,
+	DS3DBuffer_GetMode,
+	DS3DBuffer_GetPosition,
 	0,
 	0,
 	0,
@@ -472,6 +525,20 @@ static int DS3DListener_SetOrientation(void* self, float fx, float fy, float fz,
 	return DS_OK;
 }
 
+/* The position in use. One set with DS3D_DEFERRED only shows after
+ * CommitDeferredSettings. */
+static int DS3DListener_GetPosition(void* self, void* out) {
+	const DS3DListener* l      = (const DS3DListener*)self;
+	DS3DVector*         vector = (DS3DVector*)out;
+	if (!vector) {
+		return DS_FAIL;
+	}
+	vector->x = l->current.pos[0];
+	vector->y = l->current.pos[1];
+	vector->z = -l->current.pos[2];
+	return DS_OK;
+}
+
 static int DS3DListener_SetPosition(void* self, float x, float y, float z, uint32_t apply) {
 	DS3DListener* l = (DS3DListener*)self;
 	if (apply & DS3D_DEFERRED) {
@@ -548,10 +615,10 @@ static const void* g_ds3d_listener_vtbl[] = {
 	NULL,
 	NULL,
 	NULL,
+	NULL,                                  /* 3..6 */
+	(const void*)DS3DListener_GetPosition, /* 7 */
 	NULL,
-	NULL,
-	NULL,
-	NULL,                                             /* 3..9 getters */
+	NULL,                                             /* 8..9 */
 	NULL,                                             /* 10 SetAllParameters */
 	(const void*)DS3DListener_SetDistanceFactor,      /* 11 */
 	(const void*)DS3DListener_SetDopplerFactor,       /* 12 */
@@ -645,9 +712,17 @@ static int AERON_DXAPI DSoundBuffer_Release(void* self) {
 	return 0;
 }
 
+/* The flags are the ones the buffer was created with. */
 static int AERON_DXAPI DSoundBuffer_GetCaps(void* self, void* caps) {
-	(void)self;
-	(void)caps;
+	const DSBuffer* b   = (const DSBuffer*)self;
+	DSBufferCaps*   out = (DSBufferCaps*)caps;
+	if (!out || out->dwSize < sizeof(DSBufferCaps)) {
+		return DS_FAIL;
+	}
+	out->dwFlags              = b->flags;
+	out->dwBufferBytes        = b->capacity;
+	out->dwUnlockTransferRate = 0;
+	out->dwPlayCpuOverhead    = 0;
 	return DS_OK;
 }
 

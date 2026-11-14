@@ -90,6 +90,13 @@ typedef struct DSoundDeviceCaps {
 	uint32_t dwReserved2;
 } DSoundDeviceCaps;
 
+/* D3DVECTOR-compatible, for the DirectSound3D getters. */
+typedef struct DS3DVector {
+	float x;
+	float y;
+	float z;
+} DS3DVector;
+
 #pragma pack(pop)
 
 /* DirectSound buffer capability/playback flags actually used by recovered code. */
