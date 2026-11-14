@@ -605,10 +605,15 @@ static int scene_grown_capacity(int capacity, int limit) {
 	return grown < limit ? grown : limit;
 }
 
+/* `groups`, limited to the groups of the instance's mesh. */
+static uint32_t scene_mesh_tag_groups(const AeronSceneMeshInstance* instance, uint32_t groups) {
+	const uint32_t count = instance->mesh->tag_groups.count;
+	return count >= 32u ? groups : groups & ((1u << count) - 1u);
+}
+
 /* The groups an instance hides, limited to its mesh's groups. */
 static uint32_t scene_hidden_tag_groups(const AeronSceneMeshInstance* instance) {
-	const uint32_t count = instance->mesh->tag_groups.count;
-	return count >= 32u ? instance->hidden_tag_groups : instance->hidden_tag_groups & ((1u << count) - 1u);
+	return scene_mesh_tag_groups(instance, instance->hidden_tag_groups);
 }
 
 void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* instance) {
@@ -626,8 +631,10 @@ void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* i
 		s->instances_dropped++;
 		return;
 	}
-	s->instances[s->instance_count]                     = *instance;
-	s->instances[s->instance_count++].hidden_tag_groups = scene_hidden_tag_groups(instance);
+	AeronSceneMeshInstance* added = &s->instances[s->instance_count++];
+	*added                        = *instance;
+	added->hidden_tag_groups      = scene_hidden_tag_groups(instance);
+	added->dark_tag_groups        = scene_mesh_tag_groups(instance, instance->dark_tag_groups);
 }
 
 /* A light with a finite, non-zero half axis. */
@@ -2303,6 +2310,7 @@ static void scene_instance_record(const AeronSceneMeshInstance*     instance,
 	out->receive_shadow = (instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 ? 1u : 0u;
 	out->zero_velocity  = moving ? 0u : 1u;
 	out->hidden_tag_groups = instance->hidden_tag_groups;
+	out->dark_tag_groups   = instance->dark_tag_groups;
 }
 
 /* Groups the batchable visible instances into batches and writes their

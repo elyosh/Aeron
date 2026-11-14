@@ -1048,7 +1048,7 @@ static void name_surface(XwauMatFile* file, const char* name, XwauMatParams* m, 
 		else
 			snprintf(candidate, sizeof candidate, "%.58s_%d", own, attempt);
 		const XwauMatParams* named = surface_by_tag(file, candidate);
-		if (named && !same_surface_rules(named, m))
+		if ((named && !same_surface_rules(named, m)) || strcmp(candidate, XWAU_ILLUMINATION_TAG) == 0)
 			continue;
 		snprintf(m->surface_tag, sizeof m->surface_tag, "%s", candidate);
 		if (!named && file->surface_count < XWAU_MAT_SURFACES_MAX)

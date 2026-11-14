@@ -180,6 +180,9 @@ typedef struct OptGltfSkinLayer {
 	float               emissive_strength; /* emissiveStrength when > 0 */
 } OptGltfSkinLayer;
 
+/* The most tags of a material (OptGltfMaterial.tags). */
+#define OPT_GLTF_MATERIAL_TAGS 2
+
 typedef struct OptGltfMaterial {
 	const char* name; /* NULL for the stock name */
 	/* The base color image, with the size of the texture. It uses the stock
@@ -207,7 +210,8 @@ typedef struct OptGltfMaterial {
 	/* Meshes that draw the material get tangents even without a normal map,
 	 * for a detail layer that bends the normal (in `json`). */
 	bool                    tangents;
-	const char*  tag;  /* its AERON_flight_model tag, or NULL */
+	/* Its AERON_flight_model tags. A NULL entry has no tag. */
+	const char*             tags[OPT_GLTF_MATERIAL_TAGS];
 	const OptGltfSkinLayer* skins; /* its skin layers, written as `skins` */
 	size_t                  skin_count;
 } OptGltfMaterial;

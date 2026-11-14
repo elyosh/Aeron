@@ -46,7 +46,7 @@ typedef struct AeronScenePbrVsBlock {
 	uint32_t variant_group_count;
 	uint32_t material_count;
 	uint32_t camera_mb;
-	uint32_t _pad;
+	uint32_t dark_tag_groups;
 	uint32_t receive_shadow;
 	uint32_t screen_shadow;
 	uint32_t current_table_base;
@@ -1127,6 +1127,7 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.previous_table_base   = vel ? prepared->previous_table_base : prepared->current_table_base;
 	vsb.table_component_count = prepared->table_component_count;
 	vsb.hidden_tag_groups     = in->hidden_tag_groups;
+	vsb.dark_tag_groups       = in->dark_tag_groups;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, m->tag_group_buffer);
 

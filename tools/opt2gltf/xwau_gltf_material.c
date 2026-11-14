@@ -9,6 +9,7 @@
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_gltf_skins.h"
+#include "xwau_mat.h"
 #include "xwau_skins.h"
 
 /* ===== XWAU material bake ============================================
@@ -494,7 +495,15 @@ static bool texture_material(struct XwauGltfBakeState* s, const opt_file_t* opt,
 		m->base_color[0] = m->base_color[1] = m->base_color[2] = 0.0f;
 	m->json           = anims ? anims[i].json : NULL;
 	m->tangents       = anims && anims[i].normal_detail;
-	m->tag            = materials[i].surface_tag;
+	m->tags[0]        = materials[i].surface_tag;
+	/* XWAU's hook_d3dinfos_textures drops the light maps of a disabled craft.
+	 * Without Ambient, the emission of a material that isn't unlit comes only
+	 * from its illumination, its illumination frames and its skins'
+	 * illumination. Those materials get the illumination tag, which the
+	 * craft's `surfaces` rule turns dark (xwau_craft.c). A Shadeless material keeps its
+	 * emission, as in XWAU. */
+	if (XwauGltf_Unlit(&materials[i]) == 0.0f && (baked->emissive || (anims && anims[i].anim_base)))
+		m->tags[1] = XWAU_ILLUMINATION_TAG;
 	return ok;
 }
 
@@ -571,7 +580,7 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 	out->untextured.metallic          = untextured->projectile ? 0.0f : xwau_metallic(untextured->metallic);
 	out->untextured.roughness = untextured->projectile ? 1.0f : xwau_roughness(untextured->glossiness);
 	out->untextured.specular          = true;
-	out->untextured.tag               = untextured->surface_tag;
+	out->untextured.tags[0]           = untextured->surface_tag;
 	out->untextured.specular_color =
 		untextured->projectile ? 0.0f : xwau_specular_color(untextured->intensity);
 
@@ -581,8 +590,11 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 		ok       = s->skins != NULL;
 		if (ok)
 			out->variants = *XwauGltfSkins_Variants(s->skins);
-		for (int32_t i = 0; ok && i < opt->texture_count; ++i)
+		for (int32_t i = 0; ok && i < opt->texture_count; ++i) {
 			out->textures[i].skins = XwauGltfSkins_Layers(s->skins, i, &out->textures[i].skin_count);
+			if (out->textures[i].skin_count && XwauGltf_Unlit(&materials[i]) == 0.0f)
+				out->textures[i].tags[1] = XWAU_ILLUMINATION_TAG;
+		}
 	}
 	free(owner);
 	if (!ok)

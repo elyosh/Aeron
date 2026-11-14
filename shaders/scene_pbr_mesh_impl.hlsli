@@ -874,7 +874,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float3 world_pos_dy = ddy(i.world_pos);
     float3 N_face = N_geom;
 #if AERON_PBR_DEBUG_VIEWS
-    if (((i.shadow_flags & PBR_SHADOW_RECEIVE) != 0u && (i.shadow_flags & PBR_SHADOW_SCREEN) == 0u) ||
+    if (((i.surface_flags & PBR_SHADOW_RECEIVE) != 0u && (i.surface_flags & PBR_SHADOW_SCREEN) == 0u) ||
         spec_geom_adapt != 0.0f) {
 #endif
         float3 face_cross = cross(world_pos_dx, world_pos_dy);
@@ -973,9 +973,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     /* The mirrored view has no visibility pass of its own. */
     bool read_visibility = false;
 #elif AERON_PBR_PROBES
-    bool read_visibility = ssao_intensity > 0.0f || (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u || probe_occlusion;
+    bool read_visibility = ssao_intensity > 0.0f || (i.surface_flags & PBR_SHADOW_SCREEN) != 0u || probe_occlusion;
 #else
-    bool read_visibility = ssao_intensity > 0.0f || (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u;
+    bool read_visibility = ssao_intensity > 0.0f || (i.surface_flags & PBR_SHADOW_SCREEN) != 0u;
 #endif
     if (!AERON_PBR_ALPHA_BLEND && read_visibility) {
         float4 visibility = read_screen_visibility(g_ao, i.position.xy, i.position.z, screen_visibility_matched);
@@ -987,8 +987,8 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     }
 
     float shadow_visibility = 1.0f;
-    if ((i.shadow_flags & PBR_SHADOW_RECEIVE) != 0u) {
-        if (!AERON_PBR_ALPHA_BLEND && (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u && screen_visibility_matched) {
+    if ((i.surface_flags & PBR_SHADOW_RECEIVE) != 0u) {
+        if (!AERON_PBR_ALPHA_BLEND && (i.surface_flags & PBR_SHADOW_SCREEN) != 0u && screen_visibility_matched) {
             shadow_visibility = screen_shadow_visibility;
         } else {
             /* The shadow scales only the sun's diffuse and specular terms.
@@ -1055,7 +1055,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     if (key_shadow_in_probes != 0.0f && !probe_occlusion) {
         float key_visibility = shadow_visibility;
         float facing         = saturate(dot(N, L) * 2.5f - 0.75f); /* 0 below N.L 0.3, 1 above 0.7 */
-        if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && (i.shadow_flags & PBR_SHADOW_SCREEN) != 0u &&
+        if (key_shadow_facing == 0.0f && !AERON_PBR_ALPHA_BLEND && (i.surface_flags & PBR_SHADOW_SCREEN) != 0u &&
             screen_visibility_matched) {
             key_visibility = lerp(screen_key_visibility, shadow_visibility, facing);
         }
@@ -1247,7 +1247,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
         _out.color = float4(clustered_light_debug_color(i.position.xy, i.world_pos), 1.0f);
         return _out;
     }
-    if (shadow_params.w != 0.0f && (i.shadow_flags & PBR_SHADOW_RECEIVE) != 0u) {
+    if (shadow_params.w != 0.0f && (i.surface_flags & PBR_SHADOW_RECEIVE) != 0u) {
         const float3 cascade_colors[4] = {
             float3(1.0f, 0.35f, 0.35f),
             float3(0.35f, 1.0f, 0.35f),
@@ -1306,10 +1306,12 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 
     /* ===== Emissive ==============================================
      * The material's emission is added to the lit surface. While an
-     * illumination flipbook frame plays, its emission is used instead. */
+     * illumination flipbook frame plays, its emission is used instead.
+     * A surface that the instance draws dark gives out none. */
+    const float power = (i.surface_flags & PBR_SURFACE_DARK) != 0u ? 0.0f : 1.0f;
 #if AERON_PBR_ANIM
     if (anim_emission) {
-        lit += anim_emissive * (i.emissive_mul * fs_emission.x);
+        lit += anim_emissive * (i.emissive_mul * power * fs_emission.x);
     } else
 #endif
     {
@@ -1318,7 +1320,7 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
             emissive *= pbr_sample_channel(g_emissive, g_em_sampler, g_materials[mat], GLTF_ATLAS_EMISSIVE,
                                            g_materials[mat].emissive_rect, i.uv).rgb;
         }
-        lit += emissive * (g_materials[mat].emissive_packed.a * i.emissive_mul * fs_emission.x);
+        lit += emissive * (g_materials[mat].emissive_packed.a * i.emissive_mul * power * fs_emission.x);
     }
 
 #if AERON_PBR_ANIM

@@ -9,6 +9,7 @@
 #include <strings.h>
 
 #include "aeron/asset/flight_names.h"
+#include "cJSON.h"
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_game_tables.h"
@@ -1273,11 +1274,50 @@ static void write_weapons(FILE* f, const XwauNames* names, const XwauStockValues
 	}
 }
 
+/* Whether a material of the GLB at `path` has the tag `tag`. Only the
+   header and the JSON chunk are read, not the buffers. A missing or
+   malformed file has none. */
+static bool glb_material_has_tag(const char* path, const char* tag) {
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return false;
+	unsigned char header[20];
+	char*         json  = NULL;
+	bool          found = false;
+	if (fread(header, 1, sizeof header, f) == sizeof header && memcmp(header, "glTF", 4) == 0 &&
+		memcmp(header + 16, "JSON", 4) == 0) {
+		const uint32_t length = (uint32_t)header[12] | (uint32_t)header[13] << 8 | (uint32_t)header[14] << 16 |
+								(uint32_t)header[15] << 24;
+		json = length ? (char*)malloc(length) : NULL;
+		if (json && fread(json, 1, length, f) == length) {
+			cJSON*       document  = cJSON_ParseWithLength(json, length);
+			const cJSON* materials = cJSON_GetObjectItemCaseSensitive(document, "materials");
+			const cJSON* material;
+			cJSON_ArrayForEach(material, materials) {
+				const cJSON* own = cJSON_GetObjectItemCaseSensitive(
+					cJSON_GetObjectItemCaseSensitive(material, "extensions"), "AERON_flight_model");
+				const cJSON* name;
+				cJSON_ArrayForEach(name, cJSON_GetObjectItemCaseSensitive(own, "tags")) {
+					found |= cJSON_IsString(name) && strcmp(name->valuestring, tag) == 0;
+				}
+			}
+			cJSON_Delete(document);
+		}
+	}
+	free(json);
+	fclose(f);
+	return found;
+}
+
 /* The `surfaces` group: the rules of each surface tag of the model's
    material file (XwauMat_SurfaceRuleAt), from its conditions on the craft
-   (EffectsRenderer::MainSceneHook). */
-static void write_surfaces(FILE* f, const XwauMatFile* mat) {
+   (EffectsRenderer::MainSceneHook). With `illumination`, the materials lit
+   by their illumination (XWAU_ILLUMINATION_TAG) go dark while the craft is
+   disabled, as XWAU's hook_d3dinfos_textures drops their light maps. */
+static void write_surfaces(FILE* f, const XwauMatFile* mat, bool illumination) {
 	fprintf(f, "surfaces:\n");
+	if (illumination)
+		fprintf(f, "  %s: {dark_when_disabled: true}\n", XWAU_ILLUMINATION_TAG);
 	for (size_t i = 0; i < XwauMat_SurfaceRuleCount(mat); ++i) {
 		const XwauMatParams* m = XwauMat_SurfaceRuleAt(mat, i);
 		/* XWAU hides the surface while throttle / 65535 < DisplayIfThrottleGE
@@ -1315,7 +1355,7 @@ static bool write_craft_file(const char* path, const XwauNames* names, const Xwa
 							 const XwauCraftWarheadLock* lock, const XwauCraftJamming* jamming,
 							 const XwauCraftDock* dock, const XwauCraftHyperspace* hyperspace,
 							 const XwauAiAttack* attack, const XwauMagPulse* pulse, const XwauCockpitFov* fov,
-							 const XwauMatFile* mat, XwauLines* cockpits) {
+							 const XwauMatFile* mat, bool illumination, XwauLines* cockpits) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(path, "can't be written");
@@ -1326,8 +1366,8 @@ static bool write_craft_file(const char* path, const XwauNames* names, const Xwa
 		write_hud(f, names, hud);
 	if (has_engine_glows(glows))
 		write_engine_glows(f, glows);
-	if (XwauMat_SurfaceRuleCount(mat))
-		write_surfaces(f, mat);
+	if (XwauMat_SurfaceRuleCount(mat) || illumination)
+		write_surfaces(f, mat, illumination);
 	if (has_weapons(weapons))
 		write_weapons(f, names, stock, weapons);
 	XwauStatsProfiles_Write(f, stats);
@@ -2104,10 +2144,14 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 			if (XwauMat_SurfaceRuleAt(mat, r)->increase_brightness_with_mission_set_speed)
 				ReportUnsupported("the .mat key IncreaseBrightnessWithMissionSetSpeed");
 		}
+		/* The models are converted before this step. */
+		bool illumination = false;
+		if (PathFormat(path, sizeof path, "%s/%s.glb", craft_dir, key))
+			illumination = glb_material_has_tag(path, XWAU_ILLUMINATION_TAG);
 		if (!has_reticle(&hud) && !has_colors(&hud) && !has_engine_glows(&glows) && !has_weapons(weapons) &&
 			!stats.count && !shield.has && !XwauCraft_HasSound(&sound) && !strengths.has && !gunner.has &&
 			!lock.has && !jamming.has && !dock.has && !XwauHyperspace_HasModel(&hyperspace) && !attack.has &&
-			!pulse.has && !fov.has_large && !XwauMat_SurfaceRuleCount(mat)) {
+			!pulse.has && !fov.has_large && !XwauMat_SurfaceRuleCount(mat) && !illumination) {
 			XwauAiAttack_Free(&attack);
 			XwauMat_Free(mat);
 			XwauStatsProfiles_Free(&stats);
@@ -2115,11 +2159,11 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 			continue;
 		}
 
-		surfaces += XwauMat_SurfaceRuleCount(mat) != 0;
+		surfaces += XwauMat_SurfaceRuleCount(mat) != 0 || illumination;
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
 			!write_craft_file(path, game_names, stock_values, &hud, &glows, weapons, &stats, &shield, &sound,
 							  &strengths, &gunner, &lock, &jamming, &dock, &hyperspace, &attack, &pulse, &fov,
-							  mat, cockpits)) {
+							  mat, illumination, cockpits)) {
 			XwauAiAttack_Free(&attack);
 			XwauMat_Free(mat);
 			XwauStatsProfiles_Free(&stats);

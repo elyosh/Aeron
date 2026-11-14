@@ -3395,6 +3395,56 @@ static void test_sound_banks(const char* scratch) {
 	free(text);
 }
 
+/* Writes a GLB at `path` with `json` as its JSON chunk, and no buffers. */
+static void write_glb(const char* path, const char* json) {
+	FILE* f = fopen(path, "wb");
+	if (!f)
+		return;
+	size_t length = strlen(json);
+	const size_t padded = (length + 3u) & ~(size_t)3u;
+	const uint32_t total = (uint32_t)(20u + padded);
+	const uint32_t values[5] = { 0x46546C67u, 2u, total, (uint32_t)padded, 0x4E4F534Au };
+	for (int i = 0; i < 5; ++i) {
+		const unsigned char bytes[4] = { (unsigned char)values[i], (unsigned char)(values[i] >> 8),
+										 (unsigned char)(values[i] >> 16), (unsigned char)(values[i] >> 24) };
+		fwrite(bytes, 1, 4, f);
+	}
+	fwrite(json, 1, length, f);
+	for (; length < padded; ++length)
+		fputc(' ', f);
+	fclose(f);
+}
+
+/* The craft phase gives the illumination rule to the models whose converted
+   GLB has a material tagged illumination. */
+static void test_illumination_rule(const char* scratch) {
+	char game[1024], flight[1024], path[1300];
+	snprintf(game, sizeof game, "%s/illumination_game", scratch);
+	snprintf(flight, sizeof flight, "%s/illumination_flight", scratch);
+	snprintf(path, sizeof path, "%s/FlightModels", game);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/models", flight);
+	MakeDirs(path);
+	snprintf(path, sizeof path, "%s/FlightModels/Lit.opt", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/FlightModels/Unlit.opt", game);
+	write_file(path, "");
+	snprintf(path, sizeof path, "%s/models/lit.glb", flight);
+	write_glb(path, "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{\"name\":\"Hull\"},{\"name\":\"Windows\","
+					"\"extensions\":{\"AERON_flight_model\":{\"tags\":[\"engine_glow\",\"illumination\"]}}}]}");
+	snprintf(path, sizeof path, "%s/models/unlit.glb", flight);
+	write_glb(path, "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{\"name\":\"Hull\","
+					"\"extensions\":{\"AERON_flight_model\":{\"tags\":[\"engine_glow\"]}}}]}");
+	size_t size = 0;
+	snprintf(path, sizeof path, "%s/models/lit.yaml", flight);
+	char* text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
+	check(text && strstr(text, "surfaces:\n  illumination: {dark_when_disabled: true}\n"),
+		  "craft: a model with illumination materials gets the rule that darkens them");
+	free(text);
+	snprintf(path, sizeof path, "%s/models/unlit.yaml", flight);
+	check(!IsFile(path), "craft: a model without illumination materials gets no file for it");
+}
+
 static void test_hyperspace(const char* scratch) {
 	char game[1024], stock[1024], out[1024], flight[1024], path[1300], settings[1300];
 	snprintf(game, sizeof game, "%s/hs_game", scratch);
@@ -3553,6 +3603,7 @@ int main(void) {
 	test_stats_profiles(scratch);
 	test_sound_banks(scratch);
 	test_hyperspace(scratch);
+	test_illumination_rule(scratch);
 	RemoveTree(scratch);
 	printf("%s\n", g_failures ? "FAILED" : "passed");
 	return g_failures ? 1 : 0;

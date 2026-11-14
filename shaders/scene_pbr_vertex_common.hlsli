@@ -37,7 +37,7 @@ struct PbrInstanceRecord {
 	uint   current_table_base;
 	uint   previous_table_base;
 	uint   table_component_count;
-	uint   _pad;
+	uint   dark_tag_groups;
 	uint   receive_shadow;
 	uint   zero_velocity;
 	uint   hidden_tag_groups;
@@ -55,6 +55,7 @@ static uint     current_table_base;
 static uint     previous_table_base;
 static uint     table_component_count;
 static uint     hidden_tag_groups;
+static uint     dark_tag_groups;
 /* Batches are blended, so they don't take the screen shadow pass or the
  * receiver-local map. */
 static const uint screen_shadow         = 0u;
@@ -81,6 +82,7 @@ void pbr_load_instance(uint instance_id)
 	previous_table_base = instance_records[index].previous_table_base;
 	table_component_count = instance_records[index].table_component_count;
 	hidden_tag_groups = instance_records[index].hidden_tag_groups;
+	dark_tag_groups = instance_records[index].dark_tag_groups;
 }
 #else
 cbuffer GltfMeshVSUniforms : register(b0, space1) {
@@ -97,7 +99,8 @@ cbuffer GltfMeshVSUniforms : register(b0, space1) {
 	uint material_count;
 	/* Selects camera + object velocity or object-only velocity. */
 	uint camera_mb;
-	uint  _pad;
+	/* The mesh's tag groups this instance draws dark. */
+	uint  dark_tag_groups;
 	/* Shadow settings, used only by the forward shaders. */
 	uint  receive_shadow;
 	uint  screen_shadow;
@@ -130,18 +133,30 @@ StructuredBuffer<uint4> prim_tag_groups : register(t2, space0);
 StructuredBuffer<uint4> prim_tag_groups : register(t1, space0);
 #endif
 
-/* Whether the instance hides the material of primitive `prim_id`. An
- * instance that hides nothing doesn't read the buffer. */
-bool pbr_surface_hidden(uint prim_id)
+/* Whether the material of primitive `prim_id` has a tag group in `mask`.
+ * An empty mask doesn't read the buffer. */
+bool pbr_surface_in_groups(uint prim_id, uint mask)
 {
 	uint slot = prim_id >> 2u;
-	if (hidden_tag_groups == 0u || slot >= variant_group_count) {
+	if (mask == 0u || slot >= variant_group_count) {
 		return false;
 	}
 	uint4 packed = prim_tag_groups[variant_row_base + slot];
 	uint comp = prim_id & 3u;
 	uint groups = comp == 0u ? packed.x : comp == 1u ? packed.y : comp == 2u ? packed.z : packed.w;
-	return (groups & hidden_tag_groups) != 0u;
+	return (groups & mask) != 0u;
+}
+
+/* Whether the instance hides the material of primitive `prim_id`. */
+bool pbr_surface_hidden(uint prim_id)
+{
+	return pbr_surface_in_groups(prim_id, hidden_tag_groups);
+}
+
+/* Whether the instance draws the material of primitive `prim_id` dark. */
+bool pbr_surface_dark(uint prim_id)
+{
+	return pbr_surface_in_groups(prim_id, dark_tag_groups);
 }
 
 /* Row r of a component's 3x4 affine. */

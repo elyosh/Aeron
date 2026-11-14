@@ -196,6 +196,12 @@ typedef struct AeronSceneMeshInstance {
 	 * bit g hides the materials and lights tagged with group g. The
 	 * materials' surfaces are not drawn in any pass. */
 	uint32_t hidden_tag_groups;
+	/* The mesh's tag groups this instance draws dark: bit g turns off the
+	 * emission and the illumination frames of the materials tagged with
+	 * group g. Their surfaces are still lit, and energy effects still show.
+	 * Model lights don't read it: pass the groups whose lights are off to
+	 * AeronScene_MeshLight. */
+	uint32_t dark_tag_groups;
 } AeronSceneMeshInstance;
 
 typedef void (*AeronSceneAfterMeshesFn)(AeronCommandBuffer* cmd, AeronRenderPass* pass,
@@ -386,8 +392,9 @@ void AeronScene_LightBounds(const AeronSceneLight* light, float center[3], float
  * its length when it is at least three times longer than wide, else a
  * one-sided sphere of its area. `variant` is the instance's variant index
  * (AeronSceneMeshInstance.variant): a light that names variants shines only
- * with them. `hidden_tag_groups` are the instance's hidden tag groups
- * (AeronSceneMeshInstance.hidden_tag_groups). Returns zero for an invalid
+ * with them. `hidden_tag_groups` are the groups whose lights are off,
+ * usually the instance's hidden and dark tag groups
+ * (AeronSceneMeshInstance.hidden_tag_groups, dark_tag_groups). Returns zero for an invalid
  * index or exposure, a light that emits nothing, a light on a component the
  * table hides, a light that doesn't shine with the variant, or a light in a
  * hidden tag group. */

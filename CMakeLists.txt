@@ -1157,7 +1157,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_text.c
         tools/xwau/xwau_weapon_lock.c
         tools/xwau/xwau_weapon_stats.c)
-    target_link_libraries(xwau_import_lib PUBLIC xwau_files PRIVATE aeron_flight_model imgbake)
+    target_link_libraries(xwau_import_lib PUBLIC xwau_files PRIVATE aeron_flight_model aeron_cjson imgbake)
 
     # Tests the hook file rules, the skin selection, the skybox rotations and
     # the cube faces on fixed texts and images.

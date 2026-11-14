@@ -10,14 +10,15 @@
 #define AERON_PBR_ANIM 0
 #endif
 
-/* The bits of PbrForwardVSOut.shadow_flags: the surface receives the key
- * light's shadow, and it reads that shadow from the screen-space pass. The
- * two share one value because the blended variants never read the second.
- * On its own, the compiler would drop it from their inputs, and Direct3D 12
- * rejects a pipeline whose fragment inputs sit in other registers than the
- * vertex outputs. */
+/* The bits of PbrForwardVSOut.surface_flags: the surface receives the key
+ * light's shadow, it reads that shadow from the screen-space pass, and it
+ * gives out no light (AeronSceneMeshInstance.dark_tag_groups). They share one value because some variants never
+ * read some of them. On its own, such a value would be dropped by the
+ * compiler from their inputs, and Direct3D 12 rejects a pipeline whose
+ * fragment inputs sit in other registers than the vertex outputs. */
 #define PBR_SHADOW_RECEIVE 1u
 #define PBR_SHADOW_SCREEN 2u
+#define PBR_SURFACE_DARK 4u
 
 struct PbrForwardVSOut {
 	float4 position : SV_Position;
@@ -32,7 +33,7 @@ struct PbrForwardVSOut {
 	/* Flat-interpolated material identity for the FS atlas-sample
 	 * resolution. */
 	nointerpolation uint  prim_id : COLOR2;
-	nointerpolation uint  shadow_flags : TEXCOORD5;
+	nointerpolation uint  surface_flags : TEXCOORD5;
 	nointerpolation uint  variant_row_base : TEXCOORD6;
 	nointerpolation uint  variant_group_count : TEXCOORD7;
 	nointerpolation uint  material_count : TEXCOORD8;

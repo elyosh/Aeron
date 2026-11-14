@@ -34,6 +34,14 @@
 #define XWAU_MAT_NAME_MAX 64
 #define XWAU_MAT_PATH_MAX 256
 
+/* The tag that the importer gives to the materials lit by their
+ * illumination, the OPT texels that give out light, such as windows
+ * (xwau_gltf_material.c). XWAU draws them with light maps. Their craft's
+ * `surfaces` rule turns them dark while the craft is disabled, as XWAU's
+ * hook_d3dinfos_textures drops those light maps. No surface tag takes this
+ * name. */
+#define XWAU_ILLUMINATION_TAG "illumination"
+
 /* Greeble blend modes (GreebleBlendMode in Materials.h). 0 turns a greeble
  * off. */
 typedef enum XwauGreebleBlend {

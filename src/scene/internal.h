@@ -196,7 +196,7 @@ typedef struct AeronScenePbrInstanceRecord {
 	uint32_t current_table_base;
 	uint32_t previous_table_base;
 	uint32_t table_component_count;
-	uint32_t _pad;
+	uint32_t dark_tag_groups;
 	uint32_t receive_shadow;
 	uint32_t zero_velocity;
 	uint32_t hidden_tag_groups;

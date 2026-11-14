@@ -22,7 +22,7 @@ PbrForwardVSOut main(VSIn input)
 		output.uv = float2(0.0f, 0.0f);
 		output.emissive_mul = 1.0f;
 		output.prim_id = 0xFFFFFFFFu;
-		output.shadow_flags = 0u;
+		output.surface_flags = 0u;
 		output.variant_row_base = 0u;
 		output.variant_group_count = 0u;
 		output.material_count = 0u;
@@ -59,8 +59,9 @@ PbrForwardVSOut main(VSIn input)
 	output.uv = input.uv;
 	output.emissive_mul = mesh_table_lane(AERON_MESH_LANE_EMISSIVE, component);
 	output.prim_id = input.prim_id;
-	output.shadow_flags = (receive_shadow != 0u ? PBR_SHADOW_RECEIVE : 0u) |
-						  (screen_shadow != 0u ? PBR_SHADOW_SCREEN : 0u);
+	output.surface_flags = (receive_shadow != 0u ? PBR_SHADOW_RECEIVE : 0u) |
+						   (screen_shadow != 0u ? PBR_SHADOW_SCREEN : 0u) |
+						   (pbr_surface_dark(input.prim_id) ? PBR_SURFACE_DARK : 0u);
 	output.variant_row_base = variant_row_base;
 	output.variant_group_count = variant_group_count;
 	output.material_count = material_count;
