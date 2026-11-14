@@ -230,6 +230,19 @@ void Aeron_AudioSetSpatialSettings(const AeronAudioSpatialSettings* settings);
  * set. */
 int Aeron_AudioLoadHrtf(AeronVfsRoot root, const char* path, char* error, size_t error_size);
 
+/* Recording -------------------------------------------------------------- */
+
+/* Records what the mixer sends to the device, after the limiter, to a WAV
+ * file at `path` in `root`: 32-bit float at 48 kHz, with the output's channel count.
+ * Aeron_BeginFrame writes the recorded audio to the file as it comes, so the
+ * control thread must keep running frames: the mixer keeps 8 seconds. Fails
+ * when a recording is already running. */
+int Aeron_AudioRecordStart(AeronVfs* vfs, AeronVfsRoot root, const char* path);
+/* Stops the recording and finishes the file. Returns 0 when the file
+ * couldn't be written, or frames were lost. Aeron_AudioShutdown stops a
+ * recording that is still running. */
+int Aeron_AudioRecordStop(void);
+
 /* Pauses / resumes the output device. The mixer callback stops, freezing
  * voices, queued-stream consumption, and queued-stream
  * audible clocks. Buffered PCM is preserved for a continuous resume. */

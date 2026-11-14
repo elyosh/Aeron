@@ -1217,6 +1217,200 @@ static void Aeron_AudioVoiceMixedLocked(AeronVoiceSlot* voice, const AeronClipDa
 	voice->draining    = !voice->loop && voice->state.pos >= (double)clip->frames;
 }
 
+/* --- recording ------------------------------------------------------------ */
+
+/* The recording of the output (Aeron_AudioRecordStart). The code that mixes
+ * copies each staged chunk into the ring under `lock`, which nothing else
+ * holds for long; Aeron_AudioRecordFlush, on the control thread, takes what is
+ * there and writes it to the file. A full ring drops frames and counts them. */
+#define AERON_AUDIO_RECORD_SECONDS 8
+
+static struct {
+	SDL_Mutex*    lock;
+	SDL_AtomicInt active;
+	float*        ring;    /* capacity frames of `channels` floats */
+	float*        scratch; /* what a flush writes, outside the lock */
+	size_t        capacity;
+	uint64_t      written; /* frames the mixer put in the ring */
+	uint64_t      flushed; /* frames taken out of it */
+	uint64_t      dropped;
+	int           channels;
+	AeronFile*    file;
+	uint64_t      file_frames;
+	int           failed;
+	char          path[512];
+} g_record;
+
+/* Called by the code that mixes, after the limiter. */
+static void Aeron_AudioRecordChunk(const float* stage, int frames, int channels) {
+	if (!SDL_GetAtomicInt(&g_record.active)) {
+		return;
+	}
+	SDL_LockMutex(g_record.lock);
+	if (g_record.ring && channels == g_record.channels) {
+		for (int i = 0; i < frames; ++i) {
+			if (g_record.written - g_record.flushed >= g_record.capacity) {
+				g_record.dropped += (uint64_t)(frames - i);
+				break;
+			}
+			memcpy(g_record.ring + (size_t)(g_record.written % g_record.capacity) * (size_t)channels,
+				   stage + (size_t)i * (size_t)channels, (size_t)channels * sizeof(float));
+			++g_record.written;
+		}
+	}
+	SDL_UnlockMutex(g_record.lock);
+}
+
+static void Aeron_AudioRecordPut32(uint8_t* out, uint32_t value) {
+	out[0] = (uint8_t)value;
+	out[1] = (uint8_t)(value >> 8);
+	out[2] = (uint8_t)(value >> 16);
+	out[3] = (uint8_t)(value >> 24);
+}
+
+/* A WAVE_FORMAT_EXTENSIBLE header for 32-bit float samples at the mixer's
+ * rate, with a fact chunk, for `frames` frames: 80 bytes. */
+static void Aeron_AudioRecordHeader(uint8_t header[80], int channels, uint64_t frames) {
+	/* KSDATAFORMAT_SUBTYPE_IEEE_FLOAT. */
+	static const uint8_t float_guid[16] = { 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+											0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 };
+	/* FL FR, then FC LFE BL BR, then SL SR: SDL's channel order. */
+	const uint32_t mask       = channels == 8 ? 0x63Fu : channels == 6 ? 0x3Fu : 0x3u;
+	const uint32_t block      = (uint32_t)channels * 4u;
+	const uint64_t data_bytes = frames * block;
+	const uint32_t data       = data_bytes > 0xFFFFFFFFu - 72u ? 0xFFFFFFFFu - 72u : (uint32_t)data_bytes;
+
+	memset(header, 0, 80);
+	memcpy(header, "RIFF", 4);
+	Aeron_AudioRecordPut32(header + 4, 72u + data);
+	memcpy(header + 8, "WAVEfmt ", 8);
+	Aeron_AudioRecordPut32(header + 16, 40);
+	header[20] = 0xFE; /* WAVE_FORMAT_EXTENSIBLE */
+	header[21] = 0xFF;
+	header[22] = (uint8_t)channels;
+	Aeron_AudioRecordPut32(header + 24, AERON_AUDIO_DEVICE_RATE);
+	Aeron_AudioRecordPut32(header + 28, AERON_AUDIO_DEVICE_RATE * block);
+	header[32] = (uint8_t)block;
+	header[34] = 32; /* bits per sample */
+	header[36] = 22; /* the size of the extension */
+	header[38] = 32; /* valid bits */
+	Aeron_AudioRecordPut32(header + 40, mask);
+	memcpy(header + 44, float_guid, 16);
+	memcpy(header + 60, "fact", 4);
+	Aeron_AudioRecordPut32(header + 64, 4);
+	Aeron_AudioRecordPut32(header + 68, (uint32_t)(frames > 0xFFFFFFFFu ? 0xFFFFFFFFu : frames));
+	memcpy(header + 72, "data", 4);
+	Aeron_AudioRecordPut32(header + 76, data);
+}
+
+void Aeron_AudioRecordFlush(void) {
+	if (!g_record.file) {
+		return;
+	}
+	SDL_LockMutex(g_record.lock);
+	size_t count = (size_t)(g_record.written - g_record.flushed);
+	for (size_t i = 0; i < count; ++i) {
+		const size_t slot = (size_t)((g_record.flushed + i) % g_record.capacity);
+		memcpy(g_record.scratch + i * (size_t)g_record.channels,
+			   g_record.ring + slot * (size_t)g_record.channels, (size_t)g_record.channels * sizeof(float));
+	}
+	g_record.flushed += count;
+	SDL_UnlockMutex(g_record.lock);
+
+	/* WAV samples are little-endian; so is every platform OpenXWA builds for. */
+	const size_t bytes   = count * (size_t)g_record.channels * sizeof(float);
+	size_t       written = 0;
+	if (count && !g_record.failed &&
+		(!AeronVfs_Write(g_record.file, g_record.scratch, bytes, &written) || written != bytes)) {
+		Aeron_LogError("aeron.audio", "could not write the audio recording %s", g_record.path);
+		g_record.failed = 1;
+	}
+	g_record.file_frames += count;
+}
+
+int Aeron_AudioRecordStart(AeronVfs* vfs, AeronVfsRoot root, const char* path) {
+	uint8_t header[80];
+	size_t  written = 0;
+
+	if (!g_audio.initialized || !vfs || !path || !path[0] || g_record.file) {
+		return 0;
+	}
+	if (!g_record.lock) {
+		g_record.lock = SDL_CreateMutex();
+		if (!g_record.lock) {
+			return 0;
+		}
+	}
+	const int channels = g_audio.out_channels;
+	g_record.capacity  = (size_t)AERON_AUDIO_RECORD_SECONDS * AERON_AUDIO_DEVICE_RATE;
+	g_record.ring      = (float*)SDL_malloc(g_record.capacity * (size_t)channels * sizeof(float));
+	g_record.scratch   = (float*)SDL_malloc(g_record.capacity * (size_t)channels * sizeof(float));
+	if (!g_record.ring || !g_record.scratch ||
+		!AeronVfs_Open(vfs, root, path, AERON_VFS_WRITE, &g_record.file)) {
+		Aeron_LogError("aeron.audio", "could not start the audio recording %s", path);
+		SDL_free(g_record.ring);
+		SDL_free(g_record.scratch);
+		g_record.ring = g_record.scratch = NULL;
+		g_record.file                    = NULL;
+		return 0;
+	}
+	snprintf(g_record.path, sizeof g_record.path, "%s", path);
+	Aeron_AudioRecordHeader(header, channels, 0);
+	g_record.failed =
+		!AeronVfs_Write(g_record.file, header, sizeof header, &written) || written != sizeof header;
+
+	SDL_LockMutex(g_record.lock);
+	g_record.channels    = channels;
+	g_record.written     = 0;
+	g_record.flushed     = 0;
+	g_record.dropped     = 0;
+	g_record.file_frames = 0;
+	SDL_UnlockMutex(g_record.lock);
+	SDL_SetAtomicInt(&g_record.active, 1);
+	Aeron_LogInfo("aeron.audio", "recording the audio output to %s: %d channels, 32-bit float, %d Hz", path,
+				  channels, AERON_AUDIO_DEVICE_RATE);
+	return 1;
+}
+
+int Aeron_AudioRecordStop(void) {
+	uint8_t header[80];
+	size_t  written = 0;
+
+	if (!g_record.file) {
+		return 0;
+	}
+	SDL_SetAtomicInt(&g_record.active, 0);
+	Aeron_AudioRecordFlush();
+	Aeron_AudioRecordHeader(header, g_record.channels, g_record.file_frames);
+	if (!AeronVfs_Seek(g_record.file, 0, 0) ||
+		!AeronVfs_Write(g_record.file, header, sizeof header, &written) || written != sizeof header) {
+		g_record.failed = 1;
+	}
+	if (!AeronVfs_Close(g_record.file)) {
+		g_record.failed = 1;
+	}
+	g_record.file = NULL;
+	SDL_LockMutex(g_record.lock);
+	const uint64_t dropped = g_record.dropped;
+	SDL_free(g_record.ring);
+	SDL_free(g_record.scratch);
+	g_record.ring = g_record.scratch = NULL;
+	SDL_UnlockMutex(g_record.lock);
+
+	const int ok = !g_record.failed && dropped == 0;
+	if (dropped) {
+		Aeron_LogError("aeron.audio",
+					   "the audio recording %s lost %llu frames: they weren't written to the file in time",
+					   g_record.path, (unsigned long long)dropped);
+	} else if (g_record.failed) {
+		Aeron_LogError("aeron.audio", "could not write the audio recording %s", g_record.path);
+	} else {
+		Aeron_LogInfo("aeron.audio", "recorded %.1f s of audio to %s",
+					  (double)g_record.file_frames / AERON_AUDIO_DEVICE_RATE, g_record.path);
+	}
+	return ok;
+}
+
 /* Mixes one chunk, then stages it as F32 through the limiter.
  *   1. Under the mixer mutex: frees finished voices, mixes 2D voices and
  *      streams, and copies each positional voice into a job.
@@ -1354,6 +1548,7 @@ static void Aeron_AudioMixChunk(int frames) {
 		}
 		Aeron_AudioLimitFrame(&g_audio.limiter, frame, channels);
 	}
+	Aeron_AudioRecordChunk(g_audio.stage, frames, channels);
 }
 
 /* Records the frames heard so far for the calls that don't take the SDL
@@ -1759,6 +1954,7 @@ void Aeron_AudioShutdown(void) {
 	if (!g_audio.initialized) {
 		return;
 	}
+	Aeron_AudioRecordStop();
 
 	/* Destroying the device stream pauses + unbinds it, so the callback cannot
 	 * run again before we tear down the tables. A headless mixer has none. */

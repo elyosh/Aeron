@@ -113,6 +113,7 @@ int32_t Aeron_BeginFrame(void) {
 	if (!g_aeron.initialized) {
 		return 0;
 	}
+	Aeron_AudioRecordFlush();
 
 	/* Throttle before sampling input so time spent waiting for FIFO
 	 * presentation does not age the state used to build this frame. */

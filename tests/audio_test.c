@@ -29,6 +29,7 @@
 
 #include "aeron/audio.h"
 #include "aeron/compat/dsound.h"
+#include "aeron/vfs.h"
 #include "audio_hrtf.h"
 #include "internal.h"
 
@@ -1874,6 +1875,75 @@ static void test_surround(void) {
 	Aeron_AudioClipDestroy(clip);
 }
 
+/* --- recording --------------------------------------------------------------- */
+
+static uint32_t read_u32(const uint8_t* p) {
+	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+/* A recording of a noise voice, written in two parts, gives a float WAV file
+ * whose samples are the rendered output, bit for bit. A recording that isn't
+ * written for more than 8 seconds loses frames and reports it. The files go
+ * to the system's temporary folder. */
+static void test_recording(void) {
+	enum { FRAMES = 4800 };
+
+	static float out[FRAMES * 2];
+	const char*  tmp = SDL_getenv("TMPDIR");
+	char         what[160];
+
+	if (!tmp)
+		tmp = SDL_getenv("TEMP");
+	if (!tmp)
+		tmp = ".";
+	AeronVfsConfig config;
+	memset(&config, 0, sizeof config);
+	config.org_name      = "aeron";
+	config.app_name      = "aeron_audio_test";
+	config.asset_root    = tmp;
+	config.resource_root = tmp;
+	config.user_root     = tmp;
+	config.temp_root     = tmp;
+	AeronVfs*   vfs      = AeronVfs_Create(&config);
+	const char* path     = "aeron_audio_test_recording.wav";
+
+	AeronClip clip = make_noise_clip(RATE, 17, 4);
+	flush_delay();
+	check(vfs && Aeron_AudioRecordStart(vfs, AERON_VFS_ROOT_TEMP, path), "a recording starts");
+	AeronVoice voice = Aeron_AudioVoicePlay(clip, 1.0f, 0.0f, 1.0f, 1);
+	render_into(out, FRAMES / 2, 1024);
+	Aeron_AudioRecordFlush();
+	render_into(out + FRAMES, FRAMES / 2, 1024);
+	Aeron_AudioVoiceStop(voice);
+	check(Aeron_AudioRecordStop(), "the recording finishes");
+
+	uint8_t* data = NULL;
+	size_t   size = 0;
+	int      read = vfs && AeronVfs_ReadAll(vfs, AERON_VFS_ROOT_TEMP, path, 0, &data, &size);
+	snprintf(what, sizeof what, "the file is a 2-channel, 48 kHz, 32-bit float WAV of %d frames (%zu bytes)",
+			 FRAMES, size);
+	check(read && size == 80 + FRAMES * 2 * sizeof(float) && memcmp(data, "RIFF", 4) == 0 &&
+			  memcmp(data + 8, "WAVEfmt ", 8) == 0 && data[20] == 0xFE && data[21] == 0xFF && data[22] == 2 &&
+			  read_u32(data + 24) == RATE && data[34] == 32 && read_u32(data + 68) == FRAMES &&
+			  memcmp(data + 72, "data", 4) == 0 && read_u32(data + 76) == FRAMES * 2 * sizeof(float),
+		  what);
+	check(read && size == 80 + FRAMES * 2 * sizeof(float) && memcmp(data + 80, out, sizeof out) == 0,
+		  "its samples are the rendered output, bit for bit");
+	free(data);
+
+	/* 9 seconds without writing the file. */
+	check(vfs && Aeron_AudioRecordStart(vfs, AERON_VFS_ROOT_TEMP, path), "a second recording starts");
+	for (int done = 0; done < 9 * RATE; done += MAX_FRAMES)
+		render(MAX_FRAMES, 1024);
+	check(!Aeron_AudioRecordStop(), "a recording that isn't written for 9 seconds reports lost frames");
+
+	if (vfs) {
+		AeronVfs_Remove(vfs, AERON_VFS_ROOT_TEMP, path);
+		AeronVfs_Destroy(vfs);
+	}
+	Aeron_AudioClipDestroy(clip);
+}
+
 /* --- output and limiter --------------------------------------------------- */
 
 /* The output can have 6 channels. A 2D voice plays on the first two, front
@@ -2231,6 +2301,7 @@ int main(int argc, char** argv) {
 	test_doppler();
 	test_shim_doppler();
 	test_output_channels();
+	test_recording();
 	test_limiter_delay();
 	test_limiter_peak();
 	Aeron_AudioShutdown();

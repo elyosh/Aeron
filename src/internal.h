@@ -388,6 +388,9 @@ void Aeron_AudioShutdown(void);
  * when `device_id` is the mixer's device. SDL keeps converting the mixer's
  * stream, so only the cursors' latency changes. */
 void Aeron_AudioHandleDeviceFormatChanged(uint32_t device_id);
+/* Writes what the mixer recorded since the last call to the recording's file
+ * (Aeron_AudioRecordStart). Aeron_BeginFrame calls it. */
+void Aeron_AudioRecordFlush(void);
 /* The frames by which the output limiter delays everything mixed. */
 int Aeron_AudioOutputDelayFrames(void);
 
