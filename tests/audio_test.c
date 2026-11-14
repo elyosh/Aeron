@@ -380,7 +380,8 @@ static void check_status(IDirectSoundBuffer* buffer, uint32_t expected, const ch
 
 /* A 2D looping buffer at the mixer's rate, so one source frame is mixed per
  * output frame and the cursors are exact. The cursors are in bytes: two per
- * frame. */
+ * frame. While the buffer plays, the write cursor is 3 frames (6 bytes) past
+ * the play cursor, since the resampler reads two frames ahead. */
 static void test_shim_cursors(void) {
 	enum { FRAMES = 48000, BYTES = FRAMES * 2 };
 
@@ -391,15 +392,15 @@ static void test_shim_cursors(void) {
 
 	check_cursors(buffer, 0, 0, "new buffer");
 	buffer->lpVtbl->Play(buffer, 0, 0, DSBPLAY_LOOPING);
-	check_cursors(buffer, 0, 0, "after Play");
+	check_cursors(buffer, 0, 6, "after Play");
 	check_status(buffer, DSBSTATUS_PLAYING | DSBSTATUS_LOOPING, "after Play");
 	render(1000, 1000);
-	check_cursors(buffer, 2000, 2000, "after 1000 frames");
+	check_cursors(buffer, 2000, 2006, "after 1000 frames");
 
 	buffer->lpVtbl->SetCurrentPosition(buffer, 4000);
-	check_cursors(buffer, 4000, 4000, "after SetCurrentPosition(4000)");
+	check_cursors(buffer, 4000, 4006, "after SetCurrentPosition(4000)");
 	render(500, 128);
-	check_cursors(buffer, 5000, 5000, "500 more frames, mixed in chunks of 128");
+	check_cursors(buffer, 5000, 5006, "500 more frames, mixed in chunks of 128");
 
 	buffer->lpVtbl->Stop(buffer);
 	check_cursors(buffer, 5000, 5000, "after Stop");
@@ -409,11 +410,13 @@ static void test_shim_cursors(void) {
 
 	buffer->lpVtbl->Play(buffer, 0, 0, DSBPLAY_LOOPING);
 	render(100, 100);
-	check_cursors(buffer, 5200, 5200, "100 frames after resuming");
+	check_cursors(buffer, 5200, 5206, "100 frames after resuming");
 
 	buffer->lpVtbl->SetCurrentPosition(buffer, BYTES - 400);
 	render(300, 300);
-	check_cursors(buffer, 200, 200, "300 frames from 200 frames before the end: wrapped");
+	check_cursors(buffer, 200, 206, "300 frames from 200 frames before the end: wrapped");
+	buffer->lpVtbl->SetCurrentPosition(buffer, BYTES - 2);
+	check_cursors(buffer, BYTES - 2, 4, "at the last frame: the write cursor wraps to frame 2");
 
 	/* Not looping: the voice ends 200 frames before the end of the render. */
 	buffer->lpVtbl->Stop(buffer);
@@ -823,6 +826,105 @@ static void test_chunk_independence(void) {
 	Aeron_AudioClipDestroy(clip);
 }
 
+/* --- resampler ------------------------------------------------------------ */
+
+/* The S16 output is truncated, so a sample can be off by one step, plus the
+ * rounding of the interpolation. */
+#define SAMPLE_TOLERANCE (1.5f / 32768.0f)
+
+/* The cubic interpolation reproduces a cubic polynomial exactly. A 30-frame
+ * clip at 22,050 Hz holds p(n) = 100 (n - 15)^2 + 2 (n - 15)^3, and plays as
+ * a centred 2D voice. Between frame 1 and frame 27 of the clip, where all
+ * four frames around the position are inside it, the output is p(position).
+ * Linear interpolation is off by up to about 25 S16 steps on this curve. */
+static void test_resampler_cubic_exact(void) {
+	enum { FRAMES = 30, CLIP_RATE = 22050, OUT = 64 };
+
+	int16_t     pcm[FRAMES];
+	const float step     = (float)CLIP_RATE / (float)RATE;
+	float       largest  = 0.0f;
+	int         measured = 0;
+	char        what[160];
+
+	for (int n = 0; n < FRAMES; ++n) {
+		const float x = (float)(n - 15);
+		pcm[n]        = (int16_t)(100.0f * x * x + 2.0f * x * x * x);
+	}
+	AeronClip  clip  = Aeron_AudioClipCreate(pcm, FRAMES, CLIP_RATE, 1, AERON_PCM_S16);
+	AeronVoice voice = Aeron_AudioVoicePlay(clip, 1.0f, 0.0f, 1.0f, 0);
+	render(OUT, OUT);
+	for (int k = 0; k < OUT; ++k) {
+		const double t = (double)k * step;
+		if (t < 1.0 || t > (double)(FRAMES - 3)) {
+			continue;
+		}
+		const double x     = t - 15.0;
+		const float  ideal = (float)((100.0 * x * x + 2.0 * x * x * x) / 32768.0);
+		const float  error = fmaxf(fabsf(left_at(k) - ideal), fabsf(right_at(k) - ideal));
+		largest            = fmaxf(largest, error);
+		++measured;
+	}
+	snprintf(what, sizeof what, "a cubic plays exactly over %d frames: largest error %.6f (limit %.6f)",
+			 measured, largest, SAMPLE_TOLERANCE);
+	check(measured > 40 && largest <= SAMPLE_TOLERANCE, what);
+	Aeron_AudioVoiceStop(voice);
+	Aeron_AudioClipDestroy(clip);
+}
+
+/* A 5 kHz sine in a looping 22,050 Hz clip, played to 48 kHz from 400 frames
+ * before the loop point. The cubic interpolation is closer to the true sine
+ * than linear interpolation of the same samples, which the mixer used before.
+ * Its error at the loop point is no larger than elsewhere, so the wrap uses
+ * the frames from the start of the clip. */
+static void test_resampler_sine(void) {
+	enum { CLIP_RATE = 22050, START = CLIP_RATE - 400, OUT = 2048 };
+
+	const double frequency = 5000.0;
+	const double amplitude = 16000.0;
+	const double step      = (double)CLIP_RATE / (double)RATE;
+	int16_t*     pcm       = (int16_t*)malloc(CLIP_RATE * sizeof(int16_t));
+	double       cubic_sum = 0.0, linear_sum = 0.0;
+	float        largest = 0.0f, largest_at_wrap = 0.0f;
+	char         what[192];
+
+	for (int n = 0; n < CLIP_RATE; ++n) {
+		pcm[n] = (int16_t)lrint(amplitude * sin(2.0 * 3.14159265358979323846 * frequency * n / CLIP_RATE));
+	}
+	AeronClip  clip  = Aeron_AudioClipCreate(pcm, CLIP_RATE, CLIP_RATE, 1, AERON_PCM_S16);
+	AeronVoice voice = Aeron_AudioVoicePlayFrom(clip, 1.0f, 0.0f, 1.0f, 1, START);
+	render(OUT, 1024);
+
+	const int wrap = (int)((CLIP_RATE - START) / step);
+	for (int k = 0; k < OUT; ++k) {
+		const double t = START + k * step;
+		const double ideal =
+			amplitude * sin(2.0 * 3.14159265358979323846 * frequency * t / CLIP_RATE) / 32768.0;
+		const size_t n      = (size_t)t % CLIP_RATE;
+		const double mu     = t - floor(t);
+		const double linear = (pcm[n] + (pcm[(n + 1) % CLIP_RATE] - pcm[n]) * mu) / 32768.0;
+		const float  error  = (float)fabs(left_at(k) - ideal);
+		cubic_sum += (left_at(k) - ideal) * (left_at(k) - ideal);
+		linear_sum += (linear - ideal) * (linear - ideal);
+		if (k >= wrap - 4 && k <= wrap + 4) {
+			largest_at_wrap = fmaxf(largest_at_wrap, error);
+		} else {
+			largest = fmaxf(largest, error);
+		}
+	}
+	const double cubic_rms  = sqrt(cubic_sum / OUT);
+	const double linear_rms = sqrt(linear_sum / OUT);
+	snprintf(what, sizeof what, "5 kHz sine: error %.5f, half or less of linear interpolation's %.5f",
+			 cubic_rms, linear_rms);
+	check(cubic_rms <= 0.5 * linear_rms, what);
+	snprintf(what, sizeof what, "across the loop point: largest error %.5f, at most the %.5f elsewhere",
+			 largest_at_wrap, largest);
+	check(largest_at_wrap <= largest, what);
+
+	Aeron_AudioVoiceStop(voice);
+	Aeron_AudioClipDestroy(clip);
+	free(pcm);
+}
+
 /* --- benchmark ----------------------------------------------------------- */
 
 /* 32 positional voices of a 22,050 Hz noise clip, circling the listener at
@@ -922,6 +1024,8 @@ int main(int argc, char** argv) {
 	test_ramp_jump();
 	test_ramp_range_fade();
 	test_chunk_independence();
+	test_resampler_cubic_exact();
+	test_resampler_sine();
 	Aeron_AudioShutdown();
 
 	if (g_failures) {

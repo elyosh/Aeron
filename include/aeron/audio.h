@@ -99,7 +99,9 @@ AeronVoice Aeron_AudioVoicePlayFrom(AeronClip clip, float gain, float pan, float
 AeronVoice Aeron_AudioVoicePlay3DSource(AeronClip clip, float gain, float pitch, int loop,
 										const AeronAudioSource3D* source, size_t frame);
 /* Cursors are source frames: play estimates audible position; write is the
- * next frame to mix. Queued output is estimated at the current playback rate. */
+ * first frame the mixer hasn't read yet, three past the next frame to mix,
+ * since the resampler reads two frames ahead. It wraps around at the end of
+ * the clip. Queued output is estimated at the current playback rate. */
 int Aeron_AudioVoiceGetCursors(AeronVoice voice, size_t* play, size_t* write);
 int Aeron_AudioVoiceSetPosition(AeronVoice voice, size_t frame);
 /* Returns zero if the voice has already finished. */

@@ -425,19 +425,52 @@ static void Aeron_AudioVoiceSetGainTargets(AeronVoiceSlot* voice, const float ta
 	}
 }
 
-/* Linear-interpolated sample fetch from a clip channel. */
-static float Aeron_AudioSampleClip(const AeronClipData* clip, double pos, int channel, int loop) {
-	size_t i0   = (size_t)pos;
-	size_t i1   = i0 + 1;
-	float  frac = (float)(pos - (double)i0);
-	if (i1 >= clip->frames) {
-		i1 = loop ? 0 : clip->frames - 1;
+/* The four source frames around a clip position, and their weights. */
+typedef struct AeronClipTaps {
+	size_t frame[4];
+	float  weight[4];
+} AeronClipTaps;
+
+/* 4-point cubic Lagrange interpolation, OpenAL Soft's default resampler (its
+ * "spline"), with the weights computed from the fraction μ instead of read
+ * from a table. It uses the frames n−1, n, n+1 and n+2 around the position,
+ * and reproduces any cubic exactly. A looping clip wraps around at both ends;
+ * otherwise the first and last frames repeat. `pos` is below the clip's
+ * frame count. */
+static void Aeron_AudioClipTapsAt(const AeronClipData* clip, double pos, int loop, AeronClipTaps* taps) {
+	const size_t frames = clip->frames;
+	const size_t n      = (size_t)pos;
+	const float  mu     = (float)(pos - (double)n);
+	const float  mu2    = mu * mu;
+	const float  mu3    = mu2 * mu;
+
+	size_t next  = n + 1;
+	size_t after = n + 2;
+	if (loop) {
+		taps->frame[0] = n > 0 ? n - 1 : frames - 1;
+		next           = next < frames ? next : next - frames;
+		after          = next + 1 < frames ? next + 1 : next + 1 - frames;
+	} else {
+		taps->frame[0] = n > 0 ? n - 1 : 0;
+		next           = next < frames ? next : frames - 1;
+		after          = after < frames ? after : frames - 1;
 	}
-	const int16_t* p  = clip->pcm;
-	int            c  = clip->channels;
-	float          s0 = (float)p[i0 * c + channel];
-	float          s1 = (float)p[i1 * c + channel];
-	return s0 + (s1 - s0) * frac;
+	taps->frame[1]  = n;
+	taps->frame[2]  = next;
+	taps->frame[3]  = after;
+	taps->weight[0] = -mu / 3.0f + mu2 / 2.0f - mu3 / 6.0f;
+	taps->weight[1] = 1.0f - mu / 2.0f - mu2 + mu3 / 2.0f;
+	taps->weight[2] = mu + mu2 / 2.0f - mu3 / 2.0f;
+	taps->weight[3] = -mu / 6.0f + mu3 / 6.0f;
+}
+
+static float Aeron_AudioClipSample(const AeronClipData* clip, const AeronClipTaps* taps, int channel) {
+	const int16_t* p = clip->pcm;
+	const size_t   c = (size_t)clip->channels;
+	return taps->weight[0] * (float)p[taps->frame[0] * c + (size_t)channel] +
+		   taps->weight[1] * (float)p[taps->frame[1] * c + (size_t)channel] +
+		   taps->weight[2] * (float)p[taps->frame[2] * c + (size_t)channel] +
+		   taps->weight[3] * (float)p[taps->frame[3] * c + (size_t)channel];
 }
 
 /* The SDL callback holds its stream lock while this voice is mixed. */
@@ -462,15 +495,17 @@ static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 				break;
 			}
 		}
-		float left, right;
+		float         left, right;
+		AeronClipTaps taps;
+		Aeron_AudioClipTapsAt(clip, voice->pos, voice->loop, &taps);
 		if (voice->is3d) {
 			/* A positional sound comes from one point, so a stereo clip is
 			   mixed down to mono before it is panned. Panning each channel
 			   on its own would drop one of them at the side. */
-			float mono = clip->channels >= 2
-							 ? 0.5f * (Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop) +
-									   Aeron_AudioSampleClip(clip, voice->pos, 1, voice->loop))
-							 : Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop);
+			float mono =
+				clip->channels >= 2
+					? 0.5f * (Aeron_AudioClipSample(clip, &taps, 0) + Aeron_AudioClipSample(clip, &taps, 1))
+					: Aeron_AudioClipSample(clip, &taps, 0);
 			/* The rear low-pass works on the mono signal, before panning.
 			   Without the filter, its state follows the signal, so that it
 			   starts from the current sound when the voice moves behind. */
@@ -481,10 +516,10 @@ static void Aeron_AudioMixVoice(AeronVoiceSlot* voice, int frames) {
 			left                 = mono * voice->gain_now[0];
 			right                = mono * voice->gain_now[1];
 		} else if (clip->channels >= 2) {
-			left  = Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop) * voice->gain_now[0];
-			right = Aeron_AudioSampleClip(clip, voice->pos, 1, voice->loop) * voice->gain_now[1];
+			left  = Aeron_AudioClipSample(clip, &taps, 0) * voice->gain_now[0];
+			right = Aeron_AudioClipSample(clip, &taps, 1) * voice->gain_now[1];
 		} else {
-			float mono = Aeron_AudioSampleClip(clip, voice->pos, 0, voice->loop);
+			float mono = Aeron_AudioClipSample(clip, &taps, 0);
 			left       = mono * voice->gain_now[0];
 			right      = mono * voice->gain_now[1];
 		}
@@ -1103,8 +1138,11 @@ int Aeron_AudioVoiceGetCursors(AeronVoice voice, size_t* play, size_t* write) {
 	if (clip) {
 		if (play)
 			*play = Aeron_AudioVoiceCursorLocked(slot, clip, played);
+		/* The resampler has read up to two frames past the position, so the
+		   first frame it hasn't read is three past it. DirectSound callers
+		   don't write between the play and write cursors. */
 		if (write)
-			*write = (size_t)fmod(slot->pos, (double)clip->frames);
+			*write = ((size_t)fmod(slot->pos, (double)clip->frames) + 3) % clip->frames;
 	}
 	Aeron_AudioUnlockOutput();
 	return clip != NULL;
