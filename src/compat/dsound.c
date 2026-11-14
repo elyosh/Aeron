@@ -23,6 +23,26 @@ enum { DS_DSBPLAY_LOOPING = DSBPLAY_LOOPING };
 
 typedef struct DSDevice DSDevice;
 
+typedef struct DS3DParams {
+	int   is3d; /* play positionally (DirectSound3D, mode != DISABLE) */
+	float pos[3];
+	float vel[3];
+	float min_dist;
+	float max_dist;
+} DS3DParams;
+
+/* The DirectSound3D parameters waiting for CommitDeferredSettings. */
+enum {
+	DS3D_PARAM_MODE     = 1u << 0,
+	DS3D_PARAM_POSITION = 1u << 1,
+	DS3D_PARAM_VELOCITY = 1u << 2,
+	DS3D_PARAM_MIN      = 1u << 3,
+	DS3D_PARAM_MAX      = 1u << 4,
+};
+
+/* The apply argument of the DirectSound3D setters. */
+enum { DS3D_IMMEDIATE = 0, DS3D_DEFERRED = 1 };
+
 /* Serializes buffer state shared by game and audio-producer threads. */
 typedef struct DSBufferStorage {
 	AeronMutex*      guard;
@@ -59,17 +79,25 @@ typedef struct DSBuffer {
 	int        looping;
 	uint32_t   cursor; /* saved byte position while stopped */
 
-	int   is3d; /* play positionally (DirectSound3D, mode != DISABLE) */
-	float pos3[3];
-	float vel3[3];
-	float min_dist;
-	float max_dist;
+	/* The DirectSound3D parameters in use, and the ones set with
+	   DS3D_DEFERRED that wait for CommitDeferredSettings. */
+	DS3DParams       params3d;
+	DS3DParams       deferred3d;
+	uint32_t         deferred3d_mask; /* DS3D_PARAM_* */
+	struct DSBuffer* deferred_next;   /* in the device's deferred list */
 } DSBuffer;
 
+/* Buffers are created and finally released on the game thread (see
+ * aeron/compat/dsound.h). The DirectSound3D setters and CommitDeferredSettings
+ * run there too. So neither list needs a lock. Producer threads such as the
+ * iMUSE timer only use their own buffer, under its storage guard. */
 struct DSDevice {
 	const IDirectSoundVtbl* lpVtbl;
 	int                     refcount;
 	DSBuffer*               buffers;
+	/* The buffers with DS3D_DEFERRED settings. The commit only walks these:
+	   the game has thousands of buffers, but only a few playing sounds. */
+	DSBuffer* deferred;
 };
 
 static void DSoundBuffer_LockState(DSBuffer* buffer) {
@@ -191,53 +219,140 @@ static int DS3DBuffer_Release(void* self) {
 	return 0;
 }
 
+/* Where the fade of a DSBCAPS_MUTE3DATMAXDISTANCE buffer starts, as a part of
+ * its max distance. */
+#define DSOUND_MUTE_FADE_START 0.75f
+
+/* The source the mixer gets for a buffer. A buffer created with
+ * DSBCAPS_MUTE3DATMAXDISTANCE is silent past its max distance, as in
+ * DirectSound. DirectSound mutes it at once. Here its gain fades out over the
+ * last quarter of the max distance instead, so it doesn't stop with an
+ * audible step. Caller holds the storage guard. */
+static void DSoundBuffer_Source3D(const DSBuffer* b, AeronAudioSource3D* out) {
+	memcpy(out->pos, b->params3d.pos, sizeof out->pos);
+	memcpy(out->vel, b->params3d.vel, sizeof out->vel);
+	out->min_dist        = b->params3d.min_dist;
+	out->max_dist        = b->params3d.max_dist;
+	out->mute_beyond_max = (b->flags & DSBCAPS_MUTE3DATMAXDISTANCE) != 0;
+	out->fade_start      = out->mute_beyond_max ? DSOUND_MUTE_FADE_START * out->max_dist : 0.0f;
+}
+
+/* Sends the parameters in use to the playing voice. Caller holds the storage
+ * guard. */
+static void DSoundBuffer_Push3D(DSBuffer* b) {
+	if (b->voice && b->params3d.is3d) {
+		AeronAudioSource3D source;
+		DSoundBuffer_Source3D(b, &source);
+		Aeron_AudioVoiceSet3DSource(b->voice, &source);
+	}
+}
+
+/* Records a DS3D_DEFERRED setting, and adds the buffer to its device's
+ * deferred list the first time. */
+static void DSoundBuffer_MarkDeferred3D(DSBuffer* b, uint32_t param) {
+	if (!b->deferred3d_mask) {
+		b->deferred_next    = b->device->deferred;
+		b->device->deferred = b;
+	}
+	b->deferred3d_mask |= param;
+}
+
+/* Applies the parameters set with DS3D_DEFERRED. The caller holds the storage
+ * guard, and removes the buffer from the deferred list. */
+static void DSoundBuffer_ApplyDeferred3D(DSBuffer* b) {
+	const uint32_t mask = b->deferred3d_mask;
+	if (!mask) {
+		return;
+	}
+	if (mask & DS3D_PARAM_MODE) {
+		b->params3d.is3d = b->deferred3d.is3d;
+	}
+	if (mask & DS3D_PARAM_POSITION) {
+		memcpy(b->params3d.pos, b->deferred3d.pos, sizeof b->params3d.pos);
+		b->params3d.is3d = 1;
+	}
+	if (mask & DS3D_PARAM_VELOCITY) {
+		memcpy(b->params3d.vel, b->deferred3d.vel, sizeof b->params3d.vel);
+	}
+	if (mask & DS3D_PARAM_MIN) {
+		b->params3d.min_dist = b->deferred3d.min_dist;
+	}
+	if (mask & DS3D_PARAM_MAX) {
+		b->params3d.max_dist = b->deferred3d.max_dist;
+	}
+	b->deferred3d_mask = 0;
+	DSoundBuffer_Push3D(b);
+}
+
+/* With DS3D_IMMEDIATE, a setter changes the parameters in use and the playing
+ * voice. With DS3D_DEFERRED, the change waits for CommitDeferredSettings. */
 static int DS3DBuffer_SetMaxDistance(void* self, float dist, uint32_t apply) {
-	(void)apply;
 	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
 	DSoundBuffer_LockState(owner);
-	owner->max_dist = dist;
+	if (apply & DS3D_DEFERRED) {
+		owner->deferred3d.max_dist = dist;
+		DSoundBuffer_MarkDeferred3D(owner, DS3D_PARAM_MAX);
+	} else {
+		owner->params3d.max_dist = dist;
+		DSoundBuffer_Push3D(owner);
+	}
 	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
 }
 
 static int DS3DBuffer_SetMinDistance(void* self, float dist, uint32_t apply) {
-	(void)apply;
 	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
 	DSoundBuffer_LockState(owner);
-	owner->min_dist = dist;
+	if (apply & DS3D_DEFERRED) {
+		owner->deferred3d.min_dist = dist;
+		DSoundBuffer_MarkDeferred3D(owner, DS3D_PARAM_MIN);
+	} else {
+		owner->params3d.min_dist = dist;
+		DSoundBuffer_Push3D(owner);
+	}
 	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
 }
 
+/* The mode only chooses how the next Play starts the voice. */
 static int DS3DBuffer_SetMode(void* self, uint32_t mode, uint32_t apply) {
-	(void)apply;
 	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
 	DSoundBuffer_LockState(owner);
-	owner->is3d = (mode != DS3DMODE_DISABLE);
+	if (apply & DS3D_DEFERRED) {
+		owner->deferred3d.is3d = (mode != DS3DMODE_DISABLE);
+		DSoundBuffer_MarkDeferred3D(owner, DS3D_PARAM_MODE);
+	} else {
+		owner->params3d.is3d = (mode != DS3DMODE_DISABLE);
+	}
 	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
 }
 
+/* Setting a position also turns 3D on again. */
 static int DS3DBuffer_SetPosition(void* self, float x, float y, float z, uint32_t apply) {
-	(void)apply;
 	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
 	DSoundBuffer_LockState(owner);
-	DSoundCompat_ToMixerCoords(x, y, z, owner->pos3);
-	owner->is3d = 1;
-	if (owner->voice) {
-		Aeron_AudioVoiceSet3DPosition(owner->voice, owner->pos3);
+	if (apply & DS3D_DEFERRED) {
+		DSoundCompat_ToMixerCoords(x, y, z, owner->deferred3d.pos);
+		DSoundBuffer_MarkDeferred3D(owner, DS3D_PARAM_POSITION);
+	} else {
+		DSoundCompat_ToMixerCoords(x, y, z, owner->params3d.pos);
+		owner->params3d.is3d = 1;
+		DSoundBuffer_Push3D(owner);
 	}
 	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
 }
 
 static int DS3DBuffer_SetVelocity(void* self, float x, float y, float z, uint32_t apply) {
-	(void)apply;
 	DSBuffer* owner = ((DS3DBuffer*)self)->owner;
 	DSoundBuffer_LockState(owner);
-	DSoundCompat_ToMixerCoords(x, y, z, owner->vel3);
-	if (owner->voice) {
-		Aeron_AudioVoiceSet3DVelocity(owner->voice, owner->vel3);
+	if (apply & DS3D_DEFERRED) {
+		DSoundCompat_ToMixerCoords(x, y, z, owner->deferred3d.vel);
+		DSoundBuffer_MarkDeferred3D(owner, DS3D_PARAM_VELOCITY);
+	} else {
+		DSoundCompat_ToMixerCoords(x, y, z, owner->params3d.vel);
+		DSoundBuffer_Push3D(owner);
 	}
 	DSoundBuffer_UnlockState(owner);
 	return DS_OK;
@@ -282,18 +397,30 @@ static int DSoundCompat_QueryInterface3DBuffer(DSBuffer* owner, void** out) {
 
 /* IDirectSound3DListener: a single shared listener obtained from the primary
  * buffer. It keeps the position, orientation and velocity in mixer
- * coordinates and sends them to the Aeron mixer on CommitDeferredSettings.
- * The distance model is sent when it changes. */
+ * coordinates. Settings made with DS3D_IMMEDIATE reach the mixer at once.
+ * Settings made with DS3D_DEFERRED wait for CommitDeferredSettings, which
+ * sends them in one batch with the deferred settings of every buffer of the
+ * device. */
+enum {
+	DS3D_LISTENER_POSITION    = 1u << 0,
+	DS3D_LISTENER_ORIENTATION = 1u << 1,
+	DS3D_LISTENER_VELOCITY    = 1u << 2,
+	DS3D_LISTENER_DISTANCE    = 1u << 3,
+	DS3D_LISTENER_DOPPLER     = 1u << 4,
+};
+
 typedef struct DS3DListener {
-	const void** lpVtbl;
-	int          refcount;
-	float        pos[3];
-	float        front[3];
-	float        top[3];
-	float        vel[3];
-	float        distance_factor;
-	float        rolloff_factor;
-	float        doppler_factor;
+	const void**       lpVtbl;
+	int                refcount;
+	DSDevice*          device; /* the device of the primary buffer */
+	AeronAudioListener current;
+	AeronAudioListener deferred;
+	uint32_t           deferred_mask; /* DS3D_LISTENER_* */
+	float              distance_factor;
+	float              rolloff_factor;
+	float              doppler_factor;
+	float              deferred_distance_factor;
+	float              deferred_doppler_factor;
 } DS3DListener;
 
 static DS3DListener g_ds3d_listener;
@@ -307,52 +434,110 @@ static void DS3DListener_PushDistanceModel(DS3DListener* l) {
 }
 
 static int DS3DListener_SetDistanceFactor(void* self, float value, uint32_t apply) {
-	(void)apply;
-	DS3DListener* l    = (DS3DListener*)self;
-	l->distance_factor = value;
-	DS3DListener_PushDistanceModel(l);
+	DS3DListener* l = (DS3DListener*)self;
+	if (apply & DS3D_DEFERRED) {
+		l->deferred_distance_factor = value;
+		l->deferred_mask |= DS3D_LISTENER_DISTANCE;
+	} else {
+		l->distance_factor = value;
+		DS3DListener_PushDistanceModel(l);
+	}
 	return DS_OK;
 }
 
 static int DS3DListener_SetDopplerFactor(void* self, float value, uint32_t apply) {
-	(void)apply;
-	DS3DListener* l   = (DS3DListener*)self;
-	l->doppler_factor = value;
-	DS3DListener_PushDistanceModel(l);
+	DS3DListener* l = (DS3DListener*)self;
+	if (apply & DS3D_DEFERRED) {
+		l->deferred_doppler_factor = value;
+		l->deferred_mask |= DS3D_LISTENER_DOPPLER;
+	} else {
+		l->doppler_factor = value;
+		DS3DListener_PushDistanceModel(l);
+	}
 	return DS_OK;
 }
 
 static int DS3DListener_SetOrientation(void* self, float fx, float fy, float fz, float tx, float ty, float tz,
 									   uint32_t apply) {
-	(void)apply;
 	DS3DListener* l = (DS3DListener*)self;
-	DSoundCompat_ToMixerCoords(fx, fy, fz, l->front);
-	DSoundCompat_ToMixerCoords(tx, ty, tz, l->top);
+	if (apply & DS3D_DEFERRED) {
+		DSoundCompat_ToMixerCoords(fx, fy, fz, l->deferred.front);
+		DSoundCompat_ToMixerCoords(tx, ty, tz, l->deferred.top);
+		l->deferred_mask |= DS3D_LISTENER_ORIENTATION;
+	} else {
+		DSoundCompat_ToMixerCoords(fx, fy, fz, l->current.front);
+		DSoundCompat_ToMixerCoords(tx, ty, tz, l->current.top);
+		Aeron_AudioSetListener(&l->current);
+	}
 	return DS_OK;
 }
 
 static int DS3DListener_SetPosition(void* self, float x, float y, float z, uint32_t apply) {
-	(void)apply;
 	DS3DListener* l = (DS3DListener*)self;
-	DSoundCompat_ToMixerCoords(x, y, z, l->pos);
+	if (apply & DS3D_DEFERRED) {
+		DSoundCompat_ToMixerCoords(x, y, z, l->deferred.pos);
+		l->deferred_mask |= DS3D_LISTENER_POSITION;
+	} else {
+		DSoundCompat_ToMixerCoords(x, y, z, l->current.pos);
+		Aeron_AudioSetListener(&l->current);
+	}
 	return DS_OK;
 }
 
 static int DS3DListener_SetVelocity(void* self, float x, float y, float z, uint32_t apply) {
-	(void)apply;
 	DS3DListener* l = (DS3DListener*)self;
-	DSoundCompat_ToMixerCoords(x, y, z, l->vel);
+	if (apply & DS3D_DEFERRED) {
+		DSoundCompat_ToMixerCoords(x, y, z, l->deferred.vel);
+		l->deferred_mask |= DS3D_LISTENER_VELOCITY;
+	} else {
+		DSoundCompat_ToMixerCoords(x, y, z, l->current.vel);
+		Aeron_AudioSetListener(&l->current);
+	}
 	return DS_OK;
 }
 
+/* Sends the listener and the deferred settings of every buffer in one batch,
+ * so no mixed chunk uses some of them without the others. The listener is
+ * sent even if nothing changed. */
 static int DS3DListener_CommitDeferredSettings(void* self) {
-	DS3DListener*      l = (DS3DListener*)self;
-	AeronAudioListener listener;
-	memcpy(listener.pos, l->pos, sizeof(listener.pos));
-	memcpy(listener.front, l->front, sizeof(listener.front));
-	memcpy(listener.top, l->top, sizeof(listener.top));
-	memcpy(listener.vel, l->vel, sizeof(listener.vel));
-	Aeron_AudioSetListener(&listener);
+	DS3DListener*  l      = (DS3DListener*)self;
+	DSDevice*      device = l->device;
+	const uint32_t mask   = l->deferred_mask;
+
+	Aeron_Audio3DBeginBatch();
+	if (device) {
+		DSBuffer* next;
+		for (DSBuffer* b = device->deferred; b; b = next) {
+			next             = b->deferred_next;
+			b->deferred_next = NULL;
+			DSoundBuffer_LockState(b);
+			DSoundBuffer_ApplyDeferred3D(b);
+			DSoundBuffer_UnlockState(b);
+		}
+		device->deferred = NULL;
+	}
+	if (mask & DS3D_LISTENER_POSITION) {
+		memcpy(l->current.pos, l->deferred.pos, sizeof l->current.pos);
+	}
+	if (mask & DS3D_LISTENER_ORIENTATION) {
+		memcpy(l->current.front, l->deferred.front, sizeof l->current.front);
+		memcpy(l->current.top, l->deferred.top, sizeof l->current.top);
+	}
+	if (mask & DS3D_LISTENER_VELOCITY) {
+		memcpy(l->current.vel, l->deferred.vel, sizeof l->current.vel);
+	}
+	if (mask & DS3D_LISTENER_DISTANCE) {
+		l->distance_factor = l->deferred_distance_factor;
+	}
+	if (mask & DS3D_LISTENER_DOPPLER) {
+		l->doppler_factor = l->deferred_doppler_factor;
+	}
+	if (mask & (DS3D_LISTENER_DISTANCE | DS3D_LISTENER_DOPPLER)) {
+		DS3DListener_PushDistanceModel(l);
+	}
+	l->deferred_mask = 0;
+	Aeron_AudioSetListener(&l->current);
+	Aeron_Audio3DEndBatch();
 	return DS_OK;
 }
 
@@ -377,9 +562,10 @@ static const void* g_ds3d_listener_vtbl[] = {
 	(const void*)DS3DListener_CommitDeferredSettings, /* 17 */
 };
 
-static int DSoundCompat_QueryInterface3DListener(void** out) {
+static int DSoundCompat_QueryInterface3DListener(DSDevice* device, void** out) {
 	g_ds3d_listener.lpVtbl          = g_ds3d_listener_vtbl;
 	g_ds3d_listener.refcount        = 1;
+	g_ds3d_listener.device          = device;
 	g_ds3d_listener.distance_factor = 1.0f;
 	g_ds3d_listener.rolloff_factor  = 1.0f;
 	g_ds3d_listener.doppler_factor  = 1.0f;
@@ -398,7 +584,7 @@ static int AERON_DXAPI DSoundBuffer_QueryInterface(void* self, const void* iid, 
 	}
 	if (DSoundCompat_GuidEqual(iid, &IID_IDirectSound3DListener)) {
 		/* The recovered code obtains the single listener from the primary buffer. */
-		return DSoundCompat_QueryInterface3DListener(out);
+		return DSoundCompat_QueryInterface3DListener(((DSBuffer*)self)->device, out);
 	}
 	*out = NULL;
 	return DS_FAIL;
@@ -417,6 +603,15 @@ static void DSoundBuffer_Destroy(DSBuffer* b) {
 	}
 	if (b->next) {
 		b->next->prev = b->prev;
+	}
+	if (b->deferred3d_mask) {
+		DSBuffer** link = &b->device->deferred;
+		while (*link && *link != b) {
+			link = &(*link)->deferred_next;
+		}
+		if (*link) {
+			*link = b->deferred_next;
+		}
 	}
 	DSBufferStorage* storage = b->storage;
 	DSoundBuffer_LockState(b);
@@ -638,10 +833,10 @@ static int AERON_DXAPI DSoundBuffer_Play(void* self, uint32_t reserved1, uint32_
 	float  gain  = DSoundCompat_GainFromMillibels(b->volume_mb);
 	float  pitch = DSoundCompat_Pitch(b);
 	size_t frame = b->cursor / (uint32_t)(b->channels * (b->bits / 8));
-	if (b->is3d) {
-		b->voice = Aeron_AudioVoicePlay3DFrom(b->storage->clip, gain, pitch, b->looping, b->pos3, b->min_dist,
-											  b->max_dist, frame);
-		Aeron_AudioVoiceSet3DVelocity(b->voice, b->vel3);
+	if (b->params3d.is3d) {
+		AeronAudioSource3D source;
+		DSoundBuffer_Source3D(b, &source);
+		b->voice = Aeron_AudioVoicePlay3DSource(b->storage->clip, gain, pitch, b->looping, &source, frame);
 	} else {
 		b->voice = Aeron_AudioVoicePlayFrom(
 			b->storage->clip, gain, DSoundCompat_BalanceFromMillibels(b->pan_mb), pitch, b->looping, frame);
@@ -790,6 +985,9 @@ static int AERON_DXAPI DSoundDevice_Release(void* self) {
 	while (d->buffers) {
 		DSoundBuffer_Destroy(d->buffers);
 	}
+	if (g_ds3d_listener.device == d) {
+		g_ds3d_listener.device = NULL;
+	}
 	free(d);
 	return 0;
 }
@@ -847,9 +1045,9 @@ static int AERON_DXAPI DSoundDevice_CreateSoundBuffer(void* self, const DSBuffer
 			DSoundBuffer_Destroy(b);
 			return DS_FAIL;
 		}
-		b->is3d     = (desc->dwFlags & DSBCAPS_CTRL3D) != 0;
-		b->min_dist = 1.0f;
-		b->max_dist = 1000000000.0f;
+		b->params3d.is3d     = (desc->dwFlags & DSBCAPS_CTRL3D) != 0;
+		b->params3d.min_dist = 1.0f;
+		b->params3d.max_dist = 1000000000.0f;
 	}
 
 	*buffer = &b->iface;
@@ -889,11 +1087,9 @@ static int AERON_DXAPI DSoundDevice_DuplicateSoundBuffer(void* self, IDirectSoun
 	dup->frequency = src->frequency;
 	dup->storage   = src->storage;
 	++dup->storage->refcount;
-	dup->is3d = src->is3d;
-	memcpy(dup->pos3, src->pos3, sizeof dup->pos3);
-	memcpy(dup->vel3, src->vel3, sizeof dup->vel3);
-	dup->min_dist = src->min_dist; /* DirectSound copies 3D params into the duplicate */
-	dup->max_dist = src->max_dist;
+	/* DirectSound copies the 3D parameters in use into the duplicate. Deferred
+	   ones stay with the source. */
+	dup->params3d = src->params3d;
 
 	DSoundBuffer_UnlockState(src);
 	*duplicate = &dup->iface;

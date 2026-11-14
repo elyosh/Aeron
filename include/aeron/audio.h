@@ -45,6 +45,22 @@ typedef struct AeronAudioListener {
 	float vel[3];   /* world velocity for doppler */
 } AeronAudioListener;
 
+/* Where a positional voice is and how its distance affects it. */
+typedef struct AeronAudioSource3D {
+	float pos[3];
+	float vel[3]; /* units per second, for doppler */
+	/* Inverse-distance attenuation: full gain up to min_dist, and no further
+	   attenuation past max_dist. */
+	float min_dist;
+	float max_dist;
+	/* When set, the voice is silent past max_dist. It keeps playing, and is
+	   heard again when it comes back in range. */
+	int mute_beyond_max;
+	/* With mute_beyond_max: the gain falls linearly from fade_start to zero at
+	   max_dist, so the voice doesn't go silent at once. 0 = no fade. */
+	float fade_start;
+} AeronAudioSource3D;
+
 /* Clips ------------------------------------------------------------------- */
 
 /* Copies frame_count frames of interleaved PCM into an engine-owned clip.
@@ -75,14 +91,13 @@ void Aeron_AudioClipDestroy(AeronClip clip);
 /* pan is an amplitude-preserving stereo balance in [-1, 1]: at zero both
  * channels play at full gain; either extreme silences the opposite channel. */
 AeronVoice Aeron_AudioVoicePlay(AeronClip clip, float gain, float pan, float pitch, int loop);
-AeronVoice Aeron_AudioVoicePlay3D(AeronClip clip, float gain, float pitch, int loop, const float pos[3],
-								  float min_dist, float max_dist);
 
 /* Start playback at the specified source frame. */
 AeronVoice Aeron_AudioVoicePlayFrom(AeronClip clip, float gain, float pan, float pitch, int loop,
 									size_t frame);
-AeronVoice Aeron_AudioVoicePlay3DFrom(AeronClip clip, float gain, float pitch, int loop, const float pos[3],
-									  float min_dist, float max_dist, size_t frame);
+/* Starts a positional voice at the specified source frame. */
+AeronVoice Aeron_AudioVoicePlay3DSource(AeronClip clip, float gain, float pitch, int loop,
+										const AeronAudioSource3D* source, size_t frame);
 /* Cursors are source frames: play estimates audible position; write is the
  * next frame to mix. Queued output is estimated at the current playback rate. */
 int Aeron_AudioVoiceGetCursors(AeronVoice voice, size_t* play, size_t* write);
@@ -97,14 +112,22 @@ size_t Aeron_AudioVoiceStopAndGetPosition(AeronVoice voice);
 void Aeron_AudioVoiceSetGain(AeronVoice voice, float gain);
 void Aeron_AudioVoiceSetPan(AeronVoice voice, float pan);
 void Aeron_AudioVoiceSetPitch(AeronVoice voice, float pitch);
-void Aeron_AudioVoiceSet3DPosition(AeronVoice voice, const float pos[3]);
-void Aeron_AudioVoiceSet3DVelocity(AeronVoice voice, const float vel[3]);
+/* Inside a 3D batch, the change waits for Aeron_Audio3DEndBatch. */
+void Aeron_AudioVoiceSet3DSource(AeronVoice voice, const AeronAudioSource3D* source);
 void Aeron_AudioVoiceStop(AeronVoice voice);
 /* Remains true while the voice's final output is queued for playback. */
 int Aeron_AudioVoiceIsPlaying(AeronVoice voice);
 
-/* Positional model (shared listener + global tuning factors). */
+/* Positional model (shared listener + global tuning factors). Inside a 3D
+ * batch, a listener change waits for Aeron_Audio3DEndBatch. */
 void Aeron_AudioSetListener(const AeronAudioListener* listener);
+
+/* The listener and source changes made between Begin and End reach the mixer
+ * together, so no mixed chunk uses some of them without the others. Batches
+ * nest: the changes apply at the outermost End. Voices started inside a batch
+ * use their source at once. */
+void Aeron_Audio3DBeginBatch(void);
+void Aeron_Audio3DEndBatch(void);
 /* distance_factor is the number of metres in one unit. Only doppler uses it,
  * to compare speeds with the speed of sound. */
 void Aeron_AudioSetDistanceModel(float distance_factor, float rolloff_factor, float doppler_factor);

@@ -385,6 +385,17 @@ void Aeron_ApplyPendingOutputHdr(void);
 int  Aeron_AudioInit(void);
 void Aeron_AudioShutdown(void);
 
+/* The mixer without an output device, for tests and benchmarks.
+ * Aeron_AudioInitHeadless sets up the mixer as Aeron_AudioInit does, but
+ * opens no device. Every mixed frame then counts as played at once. Shut it
+ * down with Aeron_AudioShutdown. Fails if audio is already initialized. */
+int Aeron_AudioInitHeadless(void);
+/* Mixes `frames` frames into `out` as interleaved stereo, in steps of
+ * `chunk_frames` (at most the mixer's own chunk size), as the device callback
+ * does. The samples are the ones a device would receive, scaled to [-1, 1).
+ * Returns 0 unless the mixer was set up by Aeron_AudioInitHeadless. */
+int Aeron_AudioRenderHeadless(float* out, int frames, int chunk_frames);
+
 void Aeron_BeginInputFrame(AeronInputSnapshot* input);
 void Aeron_HandleEvent(const SDL_Event* event);
 void Aeron_ControllersInit(void);

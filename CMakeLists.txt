@@ -1222,6 +1222,23 @@ if(AERON_BUILD_TOOLS)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
     file(RELATIVE_PATH TEXTURE_TEST_SHADER_DIR "${CMAKE_BINARY_DIR}" "${AERON_SHADER_OUTPUT_DIR}")
     target_compile_definitions(aeron_texture_layers_test PRIVATE TEST_SHADER_DIR="${TEXTURE_TEST_SHADER_DIR}")
+
+    # Tests the audio mixer and the DirectSound shim without an audio device:
+    # distance attenuation, panning and buffer cursors. With --bench, it
+    # measures the cost of mixing 32 positional voices instead.
+    if(TARGET aeron_compat)
+        add_executable(aeron_audio_test tests/audio_test.c)
+        target_include_directories(aeron_audio_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_link_libraries(aeron_audio_test PRIVATE aeron_compat)
+        set_target_properties(aeron_audio_test PROPERTIES
+            C_STANDARD 99
+            C_STANDARD_REQUIRED ON
+            C_EXTENSIONS OFF
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+        if(NOT MSVC)
+            target_link_libraries(aeron_audio_test PRIVATE m)
+        endif()
+    endif()
 endif()
 
 if(AERON_BUILD_TOOLS OR AERON_BUILD_SCENE_CAPTURE)
