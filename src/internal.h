@@ -416,6 +416,11 @@ int Aeron_LogFileDescriptor(void);
 void Aeron_CrashHandlerInit(const char* directory, const char* app_name, const char* app_version);
 #endif
 void Aeron_ClearRenderSubmissions(void);
+/* The relaunch of Aeron_RequestRelaunch (src/relaunch.c). Aeron_Shutdown calls
+ * the first one before it closes the window, and the second one after. */
+void Aeron_RelaunchBeforeWindowClose(void);
+void Aeron_RelaunchRun(void);
+void Aeron_RelaunchCancel(void);
 
 /* ---- Debug UI internal hooks (src/debug_ui.cpp) ----
  * Real implementations only when built with AERON_DEBUG_UI; the macros

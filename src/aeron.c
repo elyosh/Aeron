@@ -136,8 +136,12 @@ void Aeron_Shutdown(void) {
 	SDL_StopTextInput(g_aeron.window);
 	Aeron_ControllersShutdown();
 	Aeron_RenderBackendShutdown();
+	Aeron_RelaunchBeforeWindowClose();
 	Aeron_WindowShutdown();
 	AeronVfs_DeinitInternal(&g_aeron.vfs);
+	/* After the window and the files are closed, so the new process doesn't
+	   share them. */
+	Aeron_RelaunchRun();
 	SDL_Quit();
 	memset(&g_aeron, 0, sizeof(g_aeron));
 }
@@ -146,7 +150,10 @@ void Aeron_RequestQuit(void) { g_aeron.quit_requested = 1; }
 
 int Aeron_QuitRequested(void) { return g_aeron.quit_requested; }
 
-void Aeron_ClearQuitRequest(void) { g_aeron.quit_requested = 0; }
+void Aeron_ClearQuitRequest(void) {
+	g_aeron.quit_requested = 0;
+	Aeron_RelaunchCancel();
+}
 
 int Aeron_FatalErrorRequested(void) { return g_aeron.fatal_error_requested; }
 

@@ -453,6 +453,7 @@ set(AERON_SOURCES
     src/numeric.c
     src/paths.c
     src/random.c
+    src/relaunch.c
     src/render_backend.c
     src/surface.c
     src/sync.c

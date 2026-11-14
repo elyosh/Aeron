@@ -92,8 +92,14 @@ int Aeron_Present(void);
 void Aeron_RequestQuit(void);
 /* Returns nonzero after the user or application has requested exit. */
 int Aeron_QuitRequested(void);
-/* Clears a quit request, for an application that asks before it quits. */
+/* Clears a quit request, for an application that asks before it quits. It
+ * also cancels a relaunch. */
 void Aeron_ClearQuitRequest(void);
+/* Requests a quit, then a new start of the application with arguments `args`
+ * (without the program). Aeron_Shutdown starts the new process after it closes
+ * the window, and doesn't wait for it. Returns 0, logs why and requests
+ * nothing when the executable can't be found. */
+int Aeron_RequestRelaunch(const char* const* args, int count);
 /* Reports one fatal application error, requests orderly shutdown, and latches a
  * nonzero process result. Later reports do not replace the first diagnostic. */
 void Aeron_RequestFatalError(const char* title, const char* message);
