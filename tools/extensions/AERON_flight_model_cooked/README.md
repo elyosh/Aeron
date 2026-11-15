@@ -129,7 +129,8 @@ added_vertex: u32 source, u32 primitive, f32 uv[2], f32 normal[3], f32 tangent[4
 - An added vertex has the position and component of merged vertex
   `source`, and its own primitive (its material), UV, normal and tangent.
   As in the merged vertices, the tangent's w is the sign of the bitangent.
-  The coarsest level gives each of its triangles three added vertices.
+  The cooker's coarsest level gives most of its triangles three added
+  vertices. The triangles of its brightest emitters use merged vertices.
 - The added vertices of all levels follow the merged vertices, level after
   level, and the indices number them in that order. A level uses only the
   merged vertices and the added vertices of levels up to its own.

@@ -43,6 +43,24 @@ typedef struct AeronLodGenerateOptions {
 	 * with emission x mapped to x / (1 + x)) counts as a distance of this
 	 * fraction of the model's radius. 0 measures only the geometry. */
 	float attribute_weight;
+	/* On coarse levels, components at least this many times the target
+	 * error across (their bounding box's longest side) keep their open
+	 * borders, so that large parts such as a TIE fighter's wing panels don't
+	 * pull apart. 0 frees every border. */
+	float lock_border_size;
+	/* On coarse levels, a component that keeps less than this share of its
+	 * surface area is simplified again at half the error, up to 4 times, so
+	 * that tubes and boxes don't flatten into strips. 0 for no check. */
+	float min_area_share;
+	/* On coarse levels, the brightest emitting parts are simplified on their
+	 * own, so that engines and lights smaller than the error don't vanish.
+	 * They are taken by emitted light, brightest first, until they hold
+	 * emitter_share of the model's light or there are emitter_count of
+	 * them (at most 255). Each keeps at least emitter_min_triangles. 0 for
+	 * emitter_count turns this off. */
+	float emitter_share;
+	int   emitter_count;
+	int   emitter_min_triangles;
 } AeronLodGenerateOptions;
 
 typedef struct AeronLodLevel {
@@ -69,8 +87,10 @@ typedef struct AeronLodLevel {
 
 /* The default options: the plan's error ladder (0.5%, 2% and 8% of the
  * radius), a 20% minimum gain, 300 triangles, permissive collapses, locked
- * component borders, pruning, only the third level coarse, and an
- * attribute weight of 1. */
+ * component borders, pruning, only the third level coarse, an attribute
+ * weight of 4, locked borders on components 8 times the error across, a 50%
+ * minimum area, and up to 64 emitters for 90% of the light, with at least
+ * 4 triangles each. */
 AeronLodGenerateOptions aeron_lod_default_options(void);
 
 /* Generates up to options->level_count levels of `model`, coarsest last.
@@ -80,5 +100,21 @@ int aeron_lod_generate(const AeronGltfModel* model, const AeronLodGenerateOption
 					   AeronLodLevel levels[AERON_LOD_MAX_GENERATED]);
 
 void aeron_lod_level_free(AeronLodLevel* level);
+
+/* How a level compares with level 0, for aeron_lod_report. */
+typedef struct AeronLodMeasure {
+	/* The level's emitted light (area times the luminance of the emitted
+	 * light, sampled across each triangle) as a share of level 0's; -1 when
+	 * level 0 emits nothing. */
+	float light;
+	/* The share of level 0's covered area that the level leaves open, over
+	 * 13 orthographic views. Pixels closer than the level's error to level
+	 * 0's outline don't count, since the outline may move that much. */
+	float holes;
+} AeronLodMeasure;
+
+/* Measures `count` levels generated for `model`. False when out of memory. */
+bool aeron_lod_measure(const AeronGltfModel* model, const AeronLodLevel* levels, int count,
+					   AeronLodMeasure* out);
 
 #endif

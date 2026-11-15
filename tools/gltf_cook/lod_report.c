@@ -15,6 +15,18 @@
  *                      material borders and frees component borders; 4 for none
  *   --attribute-weight W  how much a change of appearance counts as error on
  *                      coarse levels, as a fraction of the radius; 0 for none
+ *   --lock-border-size S  on coarse levels, keep the open borders of
+ *                      components S times the error across; 0 for none
+ *   --min-area-share A on coarse levels, simplify a component again at half
+ *                      the error when it keeps less than this share of its
+ *                      area; 0 for no check
+ *   --emitters SHARE,COUNT,MIN  on coarse levels, simplify on their own the
+ *                      brightest emitters, up to SHARE of the light and COUNT
+ *                      emitters, keeping MIN triangles each; COUNT 0 for none
+ *   --measure          also print, for each level, the share of level 0's
+ *                      emitted light it keeps and the share of level 0's
+ *                      covered area it leaves open (lod_generate.h,
+ *                      AeronLodMeasure)
  */
 #include "lod_generate.h"
 
@@ -49,14 +61,17 @@ static const char* base_name(const char* path) {
 }
 
 static int usage(void) {
-	fprintf(stderr,
-			"usage: aeron_lod_report [--errors A,B,C] [--min-gain G] [--no-permissive] [--free-borders] "
-			"[--no-prune] [--coarse-from N] [--attribute-weight W] MODEL.glb...\n");
+	fprintf(
+		stderr,
+		"usage: aeron_lod_report [--errors A,B,C] [--min-gain G] [--no-permissive] [--free-borders] "
+		"[--no-prune] [--coarse-from N] [--attribute-weight W] [--lock-border-size S] [--min-area-share A] "
+		"[--emitters SHARE,COUNT,MIN] [--measure] MODEL.glb...\n");
 	return 2;
 }
 
 int main(int argc, char** argv) {
 	AeronLodGenerateOptions options = aeron_lod_default_options();
+	bool                    measure = false;
 	int                     first   = 1;
 	for (; first < argc && strncmp(argv[first], "--", 2) == 0; first++) {
 		if (!strcmp(argv[first], "--errors") && first + 1 < argc) {
@@ -74,6 +89,16 @@ int main(int argc, char** argv) {
 			options.prune = false;
 		} else if (!strcmp(argv[first], "--attribute-weight") && first + 1 < argc) {
 			options.attribute_weight = (float)atof(argv[++first]);
+		} else if (!strcmp(argv[first], "--lock-border-size") && first + 1 < argc) {
+			options.lock_border_size = (float)atof(argv[++first]);
+		} else if (!strcmp(argv[first], "--min-area-share") && first + 1 < argc) {
+			options.min_area_share = (float)atof(argv[++first]);
+		} else if (!strcmp(argv[first], "--emitters") && first + 1 < argc) {
+			if (sscanf(argv[++first], "%f,%d,%d", &options.emitter_share, &options.emitter_count,
+					   &options.emitter_min_triangles) != 3)
+				return usage();
+		} else if (!strcmp(argv[first], "--measure")) {
+			measure = true;
 		} else if (!strcmp(argv[first], "--coarse-from") && first + 1 < argc) {
 			options.coarse_from_level = atoi(argv[++first]) - 1;
 		} else {
@@ -120,6 +145,12 @@ int main(int argc, char** argv) {
 			radius += (hi[a] - lo[a]) * (hi[a] - lo[a]);
 		radius = 0.5f * sqrtf(radius);
 
+		AeronLodMeasure measures[AERON_LOD_MAX_GENERATED];
+		if (measure && !aeron_lod_measure(render, levels, count, measures)) {
+			fprintf(stderr, "%s: out of memory\n", argv[i]);
+			failures++;
+			measure = false;
+		}
 		const uint32_t full = render->index_count / 3;
 		printf("%-34s %9u ", base_name(argv[i]), full);
 		for (int k = 0; k < count; k++) {
@@ -130,6 +161,10 @@ int main(int argc, char** argv) {
 				printf(" [%u dropped]", levels[k].dropped_triangles);
 			if (levels[k].vertex_count)
 				printf(" [+%u vertices]", levels[k].vertex_count);
+			if (measure && measures[k].light >= 0.0f)
+				printf(" light %.0f%%", 100.0 * measures[k].light);
+			if (measure)
+				printf(" holes %.2f%%", 100.0 * measures[k].holes);
 			printf(k + 1 < count ? " |" : "");
 			aeron_lod_level_free(&levels[k]);
 		}

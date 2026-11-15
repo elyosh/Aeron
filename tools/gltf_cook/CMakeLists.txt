@@ -70,8 +70,8 @@ if(AERON_BUILD_TOOLS)
         C_STANDARD_REQUIRED ON)
 
     # Generated levels of detail, and aeron_lod_report, which measures them
-    # on cooked models.
-    add_library(aeron_lod_generate STATIC lod_generate.c)
+    # on cooked models (lod_measure.c).
+    add_library(aeron_lod_generate STATIC lod_generate.c lod_measure.c lod_texels.c)
     target_include_directories(aeron_lod_generate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_include_directories(aeron_lod_generate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/bcdec)
     # aeron_scene's KTX2 reader and imgbake's sRGB table measure each
@@ -79,9 +79,9 @@ if(AERON_BUILD_TOOLS)
     target_link_libraries(aeron_lod_generate PUBLIC aeron_flight_model PRIVATE aeron_meshoptimizer aeron_scene imgbake)
     if(NOT MSVC)
         target_link_libraries(aeron_lod_generate PRIVATE m)
-        set_source_files_properties(lod_generate.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+        set_source_files_properties(lod_generate.c lod_texels.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
     else()
-        set_source_files_properties(lod_generate.c PROPERTIES COMPILE_OPTIONS "/fp:precise")
+        set_source_files_properties(lod_generate.c lod_texels.c PROPERTIES COMPILE_OPTIONS "/fp:precise")
     endif()
     set_target_properties(aeron_lod_generate PROPERTIES
         C_STANDARD 11

@@ -1,12 +1,7 @@
 #include "lod_generate.h"
 
-#include "aeron/scene/ktx2_reader.h"
+#include "lod_texels.h"
 #include "meshoptimizer.h"
-#include "srgb8.h"
-
-#define BCDEC_STATIC
-#define BCDEC_IMPLEMENTATION
-#include "bcdec.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -22,7 +17,12 @@ AeronLodGenerateOptions aeron_lod_default_options(void) {
 		.lock_component_borders = true,
 		.prune                  = true,
 		.coarse_from_level      = 2,
-		.attribute_weight       = 1.0f,
+		.attribute_weight       = 4.0f,
+		.lock_border_size       = 8.0f,
+		.min_area_share         = 0.5f,
+		.emitter_share          = 0.9f,
+		.emitter_count          = 64,
+		.emitter_min_triangles  = 4,
 	};
 }
 
@@ -39,119 +39,6 @@ void aeron_lod_level_free(AeronLodLevel* level) {
 
 #define LOD_ATTRIBUTES 6 /* linear base colour, then emitted light mapped to x / (1 + x) */
 
-/* One atlas page of a channel, decoded at a small mip to linear RGB. */
-typedef struct DecodedPage {
-	float* rgb;
-	int    width, height;
-} DecodedPage;
-
-typedef struct DecodedChannel {
-	Ktx2*        ktx2;
-	int          level;
-	bool         srgb;
-	int          pages;
-	DecodedPage* page; /* decoded on first use */
-} DecodedChannel;
-
-static bool channel_open(DecodedChannel* c, const AeronGltfChannelKtx2* source) {
-	memset(c, 0, sizeof *c);
-	if (!source->data || !source->size)
-		return false;
-	c->ktx2 = ktx2_open_mem(source->data, source->size, "lod appearance");
-	if (!c->ktx2)
-		return false;
-	const AeronTextureFormat f = ktx2_format(c->ktx2);
-	if (f != AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB && f != AERON_TEXTURE_FORMAT_BC7_RGBA_UNORM &&
-		f != AERON_TEXTURE_FORMAT_RGBA8_SRGB && f != AERON_TEXTURE_FORMAT_RGBA8_UNORM) {
-		ktx2_close(c->ktx2);
-		c->ktx2 = NULL;
-		return false;
-	}
-	c->srgb = f == AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB || f == AERON_TEXTURE_FORMAT_RGBA8_SRGB;
-	/* The first level 256 texels wide or less: enough to tell a material's
-	 * parts apart, small enough to decode quickly. */
-	const int levels = ktx2_level_count(c->ktx2);
-	while (c->level + 1 < levels && ktx2_level(c->ktx2, c->level).width > 256)
-		c->level++;
-	c->pages = ktx2_layer_count(c->ktx2) > 0 ? ktx2_layer_count(c->ktx2) : 1;
-	c->page  = calloc((size_t)c->pages, sizeof *c->page);
-	if (!c->page) {
-		ktx2_close(c->ktx2);
-		c->ktx2 = NULL;
-		return false;
-	}
-	return true;
-}
-
-static void channel_close(DecodedChannel* c) {
-	for (int i = 0; c->page && i < c->pages; i++)
-		free(c->page[i].rgb);
-	free(c->page);
-	if (c->ktx2)
-		ktx2_close(c->ktx2);
-}
-
-static const DecodedPage* channel_page(DecodedChannel* c, uint32_t page) {
-	if (!c->ktx2 || (int)page >= c->pages)
-		return NULL;
-	DecodedPage* p = &c->page[page];
-	if (p->rgb)
-		return p;
-	const Ktx2Level level = ktx2_level_face(c->ktx2, c->level, (int)page);
-	const int       w = level.width, h = level.height;
-	uint8_t*        rgba = malloc((size_t)((w + 3) & ~3) * (size_t)((h + 3) & ~3) * 4);
-	p->rgb               = malloc(sizeof(float) * 3 * (size_t)w * (size_t)h);
-	if (!rgba || !p->rgb || !level.data) {
-		free(rgba);
-		free(p->rgb);
-		p->rgb = NULL;
-		return NULL;
-	}
-	const AeronTextureFormat f     = ktx2_format(c->ktx2);
-	const int                pitch = ((w + 3) & ~3) * 4;
-	if (f == AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB || f == AERON_TEXTURE_FORMAT_BC7_RGBA_UNORM) {
-		const int bw = (w + 3) / 4, bh = (h + 3) / 4;
-		for (int by = 0; by < bh; by++)
-			for (int bx = 0; bx < bw; bx++)
-				bcdec_bc7(level.data + 16 * ((size_t)by * (size_t)bw + (size_t)bx),
-						  rgba + (size_t)(4 * by) * (size_t)pitch + 16 * (size_t)bx, pitch);
-	} else {
-		for (int y = 0; y < h; y++)
-			memcpy(rgba + (size_t)y * (size_t)pitch, level.data + (size_t)y * (size_t)w * 4, (size_t)w * 4);
-	}
-	for (int y = 0; y < h; y++)
-		for (int x = 0; x < w; x++)
-			for (int k = 0; k < 3; k++) {
-				const uint8_t code = rgba[(size_t)y * (size_t)pitch + 4 * (size_t)x + (size_t)k];
-				p->rgb[3 * ((size_t)y * (size_t)w + (size_t)x) + (size_t)k] =
-					c->srgb ? srgb8_to_linear(code) : (float)code / 255.0f;
-			}
-	free(rgba);
-	p->width  = w;
-	p->height = h;
-	return p;
-}
-
-/* The texel that material `m` shows at UV `uv` in `channel`, found the way
- * the shader samples it (atlas_sample: offset + frac(uv) * scale). False
- * when the material doesn't use the channel. */
-static bool material_texel(DecodedChannel* c, const AeronGltfMaterial* m, int channel, const float uv[2],
-						   float out[3]) {
-	const float* x = m->uv_xform[channel];
-	if (x[2] == 0.0f || x[3] == 0.0f)
-		return false;
-	const DecodedPage* p = channel_page(c, m->atlas_page[channel]);
-	if (!p)
-		return false;
-	const float u  = x[0] + (uv[0] - floorf(uv[0])) * x[2];
-	const float v  = x[1] + (uv[1] - floorf(uv[1])) * x[3];
-	int         tx = (int)(u * (float)p->width), ty = (int)(v * (float)p->height);
-	tx = tx < 0 ? 0 : tx >= p->width ? p->width - 1 : tx;
-	ty = ty < 0 ? 0 : ty >= p->height ? p->height - 1 : ty;
-	memcpy(out, &p->rgb[3 * ((size_t)ty * (size_t)p->width + (size_t)tx)], sizeof(float) * 3);
-	return true;
-}
-
 /* Each primitive's average base colour and emitted light, LOD_ATTRIBUTES
  * floats per primitive, over its own material's triangles, weighted by
  * area. NULL when out of memory. */
@@ -164,9 +51,9 @@ static float* primitive_appearance(const AeronGltfModel* model) {
 		free(sum);
 		return NULL;
 	}
-	DecodedChannel base, emissive;
-	const bool     has_base     = channel_open(&base, &model->channels[AERON_GLTF_CHANNEL_BASE_COLOR]);
-	const bool     has_emissive = channel_open(&emissive, &model->channels[AERON_GLTF_CHANNEL_EMISSIVE]);
+	LodChannel base, emissive;
+	const bool has_base     = lod_channel_open(&base, &model->channels[AERON_GLTF_CHANNEL_BASE_COLOR]);
+	const bool has_emissive = lod_channel_open(&emissive, &model->channels[AERON_GLTF_CHANNEL_EMISSIVE]);
 	for (uint32_t t = 0; t + 2 < model->index_count; t += 3) {
 		const AeronGltfVertex* v[3] = { &model->vertices[model->indices[t]],
 										&model->vertices[model->indices[t + 1]],
@@ -198,9 +85,9 @@ static float* primitive_appearance(const AeronGltfModel* model) {
 		for (int k = 0; k < 4; k++) {
 			float texel[3] = { 1.0f, 1.0f, 1.0f }, light[3] = { 1.0f, 1.0f, 1.0f };
 			if (has_base)
-				material_texel(&base, m, AERON_GLTF_CHANNEL_BASE_COLOR, uvs[k], texel);
+				lod_material_texel(&base, m, AERON_GLTF_CHANNEL_BASE_COLOR, uvs[k], texel);
 			const bool lit =
-				has_emissive && material_texel(&emissive, m, AERON_GLTF_CHANNEL_EMISSIVE, uvs[k], light);
+				has_emissive && lod_material_texel(&emissive, m, AERON_GLTF_CHANNEL_EMISSIVE, uvs[k], light);
 			for (int c = 0; c < 3; c++) {
 				s[c] += area * texel[c] * m->base_color_factor[c];
 				const float e =
@@ -222,10 +109,127 @@ static float* primitive_appearance(const AeronGltfModel* model) {
 		}
 	}
 	if (has_base)
-		channel_close(&base);
+		lod_channel_close(&base);
 	if (has_emissive)
-		channel_close(&emissive);
+		lod_channel_close(&emissive);
 	free(sum);
+	return out;
+}
+
+/* ===== Emitters ===== */
+
+/* A triangle emits when the luminance of its light is above this. */
+#define LOD_EMITTER_THRESHOLD 0.05f
+
+static uint32_t find_root(uint32_t* parent, uint32_t v) {
+	while (parent[v] != v)
+		v = parent[v] = parent[parent[v]];
+	return v;
+}
+
+typedef struct EmitterRank {
+	double   light;
+	uint32_t root;
+} EmitterRank;
+
+static int compare_light(const void* a, const void* b) {
+	const double x = ((const EmitterRank*)a)->light, y = ((const EmitterRank*)b)->light;
+	return x < y ? 1 : x > y ? -1 : 0;
+}
+
+/* Finds the emitters that coarse levels simplify on their own. An emitter is
+ * a set of emitting triangles joined by their corners' positions; its light
+ * is their area times their emitted luminance, sampled at the corners and
+ * the centre. The brightest are taken until they hold `share` of the
+ * model's light, `count` at most. Returns for each triangle of the model
+ * its emitter's rank plus one, or 0 when it isn't in one; NULL when out of
+ * memory. */
+static uint8_t* find_emitters(const AeronGltfModel* model, float share, int count) {
+	const uint32_t triangles = model->index_count / 3;
+	uint8_t*       out       = calloc(triangles ? triangles : 1, 1);
+	float*         emitted   = malloc(sizeof(float) * (triangles ? triangles : 1));
+	float*         positions = malloc(sizeof(float) * 3 * model->vertex_count);
+	uint32_t*      remap     = malloc(sizeof(uint32_t) * model->vertex_count);
+	uint32_t*      parent    = malloc(sizeof(uint32_t) * model->vertex_count);
+	double*        light     = calloc(model->vertex_count, sizeof(double));
+	EmitterRank*   rank      = malloc(sizeof(EmitterRank) * model->vertex_count);
+	uint8_t*       chosen    = calloc(model->vertex_count, 1);
+	if (!out || !emitted || !positions || !remap || !parent || !light || !rank || !chosen) {
+		free(out);
+		out = NULL;
+		goto done;
+	}
+	for (uint32_t v = 0; v < model->vertex_count; v++) {
+		memcpy(&positions[3 * v], model->vertices[v].pos, sizeof(float) * 3);
+		parent[v] = v;
+	}
+	meshopt_generatePositionRemap(remap, positions, model->vertex_count, sizeof(float) * 3);
+	LodChannel  emissive;
+	LodChannel* channel =
+		lod_channel_open(&emissive, &model->channels[AERON_GLTF_CHANNEL_EMISSIVE]) ? &emissive : NULL;
+	for (uint32_t t = 0; t < triangles; t++) {
+		const uint32_t*          tri  = &model->indices[3 * t];
+		const AeronGltfVertex*   v[3] = { &model->vertices[tri[0]], &model->vertices[tri[1]],
+										  &model->vertices[tri[2]] };
+		const AeronGltfMaterial* m    = lod_primitive_material(model, v[0]->prim_id);
+		emitted[t]                    = 0.0f;
+		if (!m)
+			continue;
+		const float uvs[4][2] = { { v[0]->uv[0], v[0]->uv[1] },
+								  { v[1]->uv[0], v[1]->uv[1] },
+								  { v[2]->uv[0], v[2]->uv[1] },
+								  { (v[0]->uv[0] + v[1]->uv[0] + v[2]->uv[0]) / 3.0f,
+									(v[0]->uv[1] + v[1]->uv[1] + v[2]->uv[1]) / 3.0f } };
+		for (int k = 0; k < 4; k++)
+			emitted[t] += lod_emitted_luminance(channel, m, uvs[k]) / 4.0f;
+		if (!(emitted[t] > LOD_EMITTER_THRESHOLD))
+			continue;
+		for (int k = 1; k < 3; k++) {
+			const uint32_t a = find_root(parent, remap[tri[0]]), b = find_root(parent, remap[tri[k]]);
+			if (a != b)
+				parent[a] = b;
+		}
+	}
+	if (channel)
+		lod_channel_close(channel);
+	double total = 0.0;
+	for (uint32_t t = 0; t < triangles; t++) {
+		if (!(emitted[t] > LOD_EMITTER_THRESHOLD))
+			continue;
+		const uint32_t* tri   = &model->indices[3 * t];
+		const float*    a     = model->vertices[tri[0]].pos;
+		const float*    b     = model->vertices[tri[1]].pos;
+		const float*    c     = model->vertices[tri[2]].pos;
+		const float     e1[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+		const float     e2[3] = { c[0] - a[0], c[1] - a[1], c[2] - a[2] };
+		const float     x = e1[1] * e2[2] - e1[2] * e2[1], y = e1[2] * e2[0] - e1[0] * e2[2],
+						z = e1[0] * e2[1] - e1[1] * e2[0];
+		const double    l = 0.5 * sqrt((double)(x * x + y * y + z * z)) * emitted[t];
+		light[find_root(parent, remap[tri[0]])] += l;
+		total += l;
+	}
+	uint32_t ranked = 0;
+	for (uint32_t v = 0; v < model->vertex_count; v++)
+		if (light[v] > 0.0)
+			rank[ranked++] = (EmitterRank) { light[v], v };
+	qsort(rank, ranked, sizeof *rank, compare_light);
+	count       = count > 255 ? 255 : count;
+	double kept = 0.0;
+	for (uint32_t k = 0; k < ranked && (int)k < count && kept < share * total; k++) {
+		chosen[rank[k].root] = (uint8_t)(k + 1);
+		kept += rank[k].light;
+	}
+	for (uint32_t t = 0; t < triangles; t++)
+		if (emitted[t] > LOD_EMITTER_THRESHOLD)
+			out[t] = chosen[find_root(parent, remap[model->indices[3 * t]])];
+done:
+	free(emitted);
+	free(positions);
+	free(remap);
+	free(parent);
+	free(light);
+	free(rank);
+	free(chosen);
 	return out;
 }
 
@@ -449,17 +453,51 @@ static int compare_u64(const void* a, const void* b) {
 	return x < y ? -1 : x > y;
 }
 
-/* Simplifies the triangles of one class, `indices[0..count)`, one component
- * at a time so that no triangle joins two mesh-table rows, and appends them
- * to `out`. Returns the largest error, in model units. */
-static float simplify_class(const AeronGltfModel* model, const uint32_t* indices, uint32_t count,
-							float target_error, unsigned options, LodScratch* s, uint32_t* out,
-							uint32_t* out_count, AeronLodLevel* level, NewVertices* added,
-							const float* appearance, float attribute_weight) {
+/* What a coarse level does differently from the others. */
+typedef struct CoarseLevel {
+	NewVertices* added;
+	/* Each primitive's appearance, and the attribute weight in model units,
+	 * or NULL and 0. */
+	const float* appearance;
+	float        attribute_weight;
+	/* Each model triangle's emitter (find_emitters), or NULL. */
+	const uint8_t* emitters;
+	uint32_t       emitter_min_indices;
+	float          lock_border_size;
+	float          min_area_share;
+} CoarseLevel;
+
+/* The area of `count` indices' triangles over `positions`. */
+static double area_of(const uint32_t* indices, size_t count, const float* positions) {
+	double area = 0.0;
+	for (size_t k = 0; k + 2 < count; k += 3) {
+		const float* a     = &positions[3 * (size_t)indices[k]];
+		const float* b     = &positions[3 * (size_t)indices[k + 1]];
+		const float* c     = &positions[3 * (size_t)indices[k + 2]];
+		const float  e1[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+		const float  e2[3] = { c[0] - a[0], c[1] - a[1], c[2] - a[2] };
+		const float  x = e1[1] * e2[2] - e1[2] * e2[1], y = e1[2] * e2[0] - e1[0] * e2[2],
+					 z = e1[0] * e2[1] - e1[1] * e2[0];
+		area += 0.5 * sqrt((double)(x * x + y * y + z * z));
+	}
+	return area;
+}
+
+/* Simplifies the triangles of one class, `indices[0..count)`, the model's
+ * triangles from `first_triangle` on, and appends them to `out`. It works one
+ * component at a time, so that no triangle joins two mesh-table rows, and on
+ * a coarse level one emitter at a time too. `coarse` is NULL on the other
+ * levels. Returns the largest error, in model units, or -1 when out of
+ * memory. */
+static float simplify_class(const AeronGltfModel* model, const uint32_t* indices, uint32_t first_triangle,
+							uint32_t count, float target_error, unsigned options, LodScratch* s,
+							uint32_t* out, uint32_t* out_count, AeronLodLevel* level,
+							const CoarseLevel* coarse) {
 	const uint32_t triangles = count / 3;
 	for (uint32_t t = 0; t < triangles; t++) {
 		const uint32_t component = (uint32_t)model->vertices[indices[3 * t]].component;
-		s->order[t]              = (uint64_t)component << 32 | t;
+		const uint32_t emitter   = coarse && coarse->emitters ? coarse->emitters[first_triangle + t] : 0;
+		s->order[t]              = (uint64_t)(component << 8 | emitter) << 32 | t;
 	}
 	qsort(s->order, triangles, sizeof *s->order, compare_u64);
 	float max_error = 0.0f;
@@ -467,6 +505,10 @@ static float simplify_class(const AeronGltfModel* model, const uint32_t* indices
 		uint32_t end = first + 1;
 		while (end < triangles && s->order[end] >> 32 == s->order[first] >> 32)
 			end++;
+		/* An emitter keeps its own materials and UVs, as on the other levels:
+		 * it is a few triangles, and its look is what matters. */
+		const bool   emitter = coarse && (s->order[first] >> 32 & 0xff);
+		NewVertices* added   = coarse && !emitter ? coarse->added : NULL;
 		/* The component's triangles on compact vertices. */
 		uint32_t index_count = 0, vertex_count = 0;
 		for (uint32_t k = first; k < end; k++)
@@ -484,6 +526,15 @@ static float simplify_class(const AeronGltfModel* model, const uint32_t* indices
 				s->local[index_count++] = s->compact[v];
 			}
 		}
+		/* The longest side of the part's bounding box: meshoptimizer scales
+		 * the part to it. */
+		float lo[3] = { INFINITY, INFINITY, INFINITY }, hi[3] = { -INFINITY, -INFINITY, -INFINITY };
+		for (uint32_t v = 0; v < vertex_count; v++)
+			for (int d = 0; d < 3; d++) {
+				lo[d] = fminf(lo[d], s->positions[3 * v + (uint32_t)d]);
+				hi[d] = fmaxf(hi[d], s->positions[3 * v + (uint32_t)d]);
+			}
+		const float extent = fmaxf(hi[0] - lo[0], fmaxf(hi[1] - lo[1], hi[2] - lo[2]));
 		/* On a coarse level, the centre and normal of each original
 		 * triangle, to find the triangles that new ones replace. */
 		for (uint32_t k = first; added && k < end; k++) {
@@ -497,11 +548,12 @@ static float simplify_class(const AeronGltfModel* model, const uint32_t* indices
 			if (!triangle_normal(r[0]->pos, r[1]->pos, r[2]->pos, r[0]->normal, n))
 				n[0] = n[1] = n[2] = 0.0f;
 		}
-		/* Unless this is a coarse level, protect the vertices on material
-		 * borders and UV seams. Across a UV seam, a collapse gives a triangle
-		 * a corner with the UV of the neighbouring face's mapping, which
-		 * stretches another part of the texture over it. The geometric error
-		 * doesn't see this: on a flat panel the collapse is free. */
+		/* Unless the triangles get vertices of their own, protect the
+		 * vertices on material borders and UV seams. Across a UV seam, a
+		 * collapse gives a triangle a corner with the UV of the neighbouring
+		 * face's mapping, which stretches another part of the texture over
+		 * it. The geometric error doesn't see this: on a flat panel the
+		 * collapse is free. */
 		meshopt_generatePositionRemap(s->position_remap, s->positions, vertex_count, sizeof(float) * 3);
 		memset(s->seam, 0, vertex_count);
 		for (uint32_t v = 0; v < vertex_count; v++) {
@@ -514,24 +566,51 @@ static float simplify_class(const AeronGltfModel* model, const uint32_t* indices
 			s->lock[v] = !added && s->seam[s->position_remap[v]] ? meshopt_SimplifyVertex_Protect : 0;
 
 		/* On a coarse level, a collapse that changes a primitive's average
-		 * appearance counts as error too. */
-		const bool weigh = added && appearance && attribute_weight > 0.0f;
+		 * appearance counts as error too. meshoptimizer measures distances
+		 * in units of the part's extent, so the weight is divided by it, to
+		 * mean the same thing in every component. */
+		const bool weigh = added && coarse->appearance && coarse->attribute_weight > 0.0f && extent > 0.0f;
 		float      weights[LOD_ATTRIBUTES];
 		for (int k = 0; k < LOD_ATTRIBUTES; k++)
-			weights[k] = attribute_weight;
+			weights[k] = weigh ? coarse->attribute_weight / extent : 0.0f;
 		for (uint32_t v = 0; weigh && v < vertex_count; v++) {
 			const uint32_t prim = model->vertices[s->source[v]].prim_id;
 			if (prim < model->total_prim_count)
-				memcpy(&s->attributes[(size_t)v * LOD_ATTRIBUTES], &appearance[(size_t)prim * LOD_ATTRIBUTES],
-					   sizeof(float) * LOD_ATTRIBUTES);
+				memcpy(&s->attributes[(size_t)v * LOD_ATTRIBUTES],
+					   &coarse->appearance[(size_t)prim * LOD_ATTRIBUTES], sizeof(float) * LOD_ATTRIBUTES);
 			else
 				memset(&s->attributes[(size_t)v * LOD_ATTRIBUTES], 0, sizeof(float) * LOD_ATTRIBUTES);
 		}
-		float        error = 0.0f;
-		const size_t kept  = meshopt_simplifyWithAttributes(
-			s->simplified, s->local, index_count, s->positions, vertex_count, sizeof(float) * 3,
-			weigh ? s->attributes : NULL, weigh ? sizeof(float) * LOD_ATTRIBUTES : 0, weigh ? weights : NULL,
-			weigh ? LOD_ATTRIBUTES : 0, s->lock, 0, target_error, options, &error);
+		/* On a coarse level, large components keep their open borders, so
+		 * that they don't pull apart from the parts beside them. An emitter
+		 * is never pruned and keeps a few triangles. */
+		unsigned part_options = options;
+		size_t   min_indices  = 0;
+		if (emitter) {
+			part_options &= ~(unsigned)meshopt_SimplifyPrune;
+			min_indices = coarse->emitter_min_indices;
+		} else if (coarse && coarse->lock_border_size > 0.0f &&
+				   extent >= coarse->lock_border_size * target_error) {
+			part_options |= meshopt_SimplifyLockBorder;
+		}
+		/* On a coarse level, a part that loses too much of its area, such as a
+		 * tube flattened into a strip, is simplified again at half the error. */
+		const bool   check_area = added && coarse->min_area_share > 0.0f;
+		const double area       = check_area ? area_of(s->local, index_count, s->positions) : 0.0;
+		float        part_error = target_error;
+		float        error      = 0.0f;
+		size_t       kept       = 0;
+		for (int attempt = 0;; attempt++) {
+			kept = meshopt_simplifyWithAttributes(
+				s->simplified, s->local, index_count, s->positions, vertex_count, sizeof(float) * 3,
+				weigh ? s->attributes : NULL, weigh ? sizeof(float) * LOD_ATTRIBUTES : 0,
+				weigh ? weights : NULL, weigh ? LOD_ATTRIBUTES : 0, s->lock, min_indices, part_error,
+				part_options, &error);
+			if (!check_area || attempt == 4 || area <= 0.0 ||
+				area_of(s->simplified, kept, s->positions) >= coarse->min_area_share * area)
+				break;
+			part_error *= 0.5f;
+		}
 		max_error = error > max_error ? error : max_error;
 		for (size_t k = 0; k + 2 < kept; k += 3) {
 			const uint32_t a         = s->source[s->simplified[k]];
@@ -597,6 +676,16 @@ int aeron_lod_generate(const AeronGltfModel* model, const AeronLodGenerateOption
 			return -1;
 		}
 	}
+	/* The emitters, for the coarse levels. */
+	uint8_t* emitters = NULL;
+	if (options->emitter_count > 0 && options->coarse_from_level < options->level_count) {
+		emitters = find_emitters(model, options->emitter_share, options->emitter_count);
+		if (!emitters) {
+			scratch_free(&scratch);
+			free(appearance);
+			return -1;
+		}
+	}
 	const float    attribute_weight = options->attribute_weight * radius;
 	const unsigned flags            = meshopt_SimplifyErrorAbsolute |
 									  (options->permissive ? meshopt_SimplifyPermissive : 0u) |
@@ -613,21 +702,32 @@ int aeron_lod_generate(const AeronGltfModel* model, const AeronLodGenerateOption
 				aeron_lod_level_free(&levels[k]);
 			scratch_free(&scratch);
 			free(appearance);
+			free(emitters);
 			return -1;
 		}
-		const float    target      = options->relative_errors[level] * radius;
-		const bool     coarse      = level >= options->coarse_from_level;
-		NewVertices    added       = { .first = next_new };
-		const unsigned level_flags = coarse ? flags & ~(unsigned)meshopt_SimplifyLockBorder : flags;
-		bool           failed      = false;
+		const float       target       = options->relative_errors[level] * radius;
+		const bool        coarse       = level >= options->coarse_from_level;
+		NewVertices       added        = { .first = next_new };
+		const unsigned    level_flags  = coarse ? flags & ~(unsigned)meshopt_SimplifyLockBorder : flags;
+		bool              failed       = false;
+		const CoarseLevel coarse_level = {
+			.added            = &added,
+			.appearance       = appearance,
+			.attribute_weight = appearance ? attribute_weight : 0.0f,
+			.emitters         = emitters,
+			.emitter_min_indices =
+				3 * (uint32_t)(options->emitter_min_triangles > 0 ? options->emitter_min_triangles : 0),
+			.lock_border_size = options->lock_border_size,
+			.min_area_share   = options->min_area_share,
+		};
 		for (int c = 0; c < 3; c++) {
 			const uint32_t start = out.index_count;
 			const uint32_t body  = class_count[c] - class_screen[c];
-			const float    error = simplify_class(model, model->indices + class_offset[c], body, target,
-												  level_flags, &scratch, out.indices, &out.index_count, &out,
-												  coarse ? &added : NULL, appearance, attribute_weight);
-			failed               = failed || error < 0.0f;
-			out.error            = error > out.error ? error : out.error;
+			const float error = simplify_class(model, model->indices + class_offset[c], class_offset[c] / 3,
+											   body, target, level_flags, &scratch, out.indices,
+											   &out.index_count, &out, coarse ? &coarse_level : NULL);
+			failed            = failed || error < 0.0f;
+			out.error         = error > out.error ? error : out.error;
 			memcpy(out.indices + out.index_count, model->indices + class_offset[c] + body,
 				   sizeof(uint32_t) * class_screen[c]);
 			out.index_count += class_screen[c];
@@ -646,6 +746,7 @@ int aeron_lod_generate(const AeronGltfModel* model, const AeronLodGenerateOption
 				aeron_lod_level_free(&levels[k]);
 			scratch_free(&scratch);
 			free(appearance);
+			free(emitters);
 			return -1;
 		}
 		if (out.index_count == 0 || (float)out.index_count > (1.0f - options->min_gain) * (float)previous) {
@@ -658,5 +759,6 @@ int aeron_lod_generate(const AeronGltfModel* model, const AeronLodGenerateOption
 	}
 	scratch_free(&scratch);
 	free(appearance);
+	free(emitters);
 	return kept;
 }
