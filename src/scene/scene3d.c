@@ -18,7 +18,7 @@
 #include <string.h>
 
 typedef char AeronScenePointLightGPUSizeCheck[sizeof(AeronScenePointLightGPU) == 64 ? 1 : -1];
-typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 48 ? 1 : -1];
+typedef char AeronSceneClusterLightGPUSizeCheck[sizeof(AeronSceneClusterLightGPU) == 64 ? 1 : -1];
 typedef char AeronSceneClusterUniformGPUSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 96 ? 1 : -1];
 
 /* struct AeronScene3D lives in internal.h (shared with
@@ -881,8 +881,9 @@ int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLigh
 	if (!s || !desc || desc->depth_slices < 4u || desc->depth_slices > 64u) {
 		return 0;
 	}
-	s->cluster_desc            = *desc;
-	s->cluster_desc.debug_view = desc->debug_view != 0;
+	s->cluster_desc                   = *desc;
+	s->cluster_desc.debug_view        = desc->debug_view != 0;
+	s->cluster_desc.merge_spot_lights = desc->merge_spot_lights != 0;
 	return 1;
 }
 
@@ -903,6 +904,8 @@ void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClustere
 	out->cluster_count          = s->cluster_count;
 	out->clustered_active       = (uint32_t)(s->cluster_active != 0);
 	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_data_buffer_cap;
+	out->grouped_spot_light_count = s->grouped_spot_light_count;
+	out->merged_spot_light_count  = s->merged_spot_light_count;
 }
 
 void AeronScene_SetDirectionalShadow(AeronScene3D* s, const AeronSceneDirectionalShadowDesc* shadow) {
@@ -2423,6 +2426,150 @@ static void scene_choose_lods(AeronScene3D* s) {
 	}
 }
 
+/* Spot light merging (AeronSceneClusteredLightDesc.merge_spot_lights). A
+ * spot light joins a group when it is within this share of its range from
+ * the group's first light. */
+#define SCENE_SPOT_GROUP_REACH 0.05f
+/* A group's lights stay separate up to this many times their spread from
+ * the group's centre. There, the merged light is typically within a few
+ * percent of their light, and 12% at worst, when they lie along the line
+ * to the surface. Its cone is within 11 degrees of theirs. */
+#define SCENE_SPOT_MERGE_SPREADS 5.0f
+/* Grouped lights point the same way within about 0.8 degrees, have colours
+ * of the same hue within this much of each channel's share, and ranges
+ * within this ratio. */
+#define SCENE_SPOT_GROUP_MIN_COS 0.9999f
+#define SCENE_SPOT_GROUP_HUE 1e-3f
+#define SCENE_SPOT_GROUP_RANGE_RATIO 1.1f
+
+/* Whether `light`, a spot light with unit direction `direction`, can join
+ * the group whose first light is `first`. */
+static int scene_spot_light_groups_with(const AeronSceneLight* light, const float direction[3],
+										const AeronSceneLight* first, const float first_direction[3]) {
+	if (light->spot_inner_angle != first->spot_inner_angle ||
+		light->spot_outer_angle != first->spot_outer_angle ||
+		direction[0] * first_direction[0] + direction[1] * first_direction[1] +
+				direction[2] * first_direction[2] <
+			SCENE_SPOT_GROUP_MIN_COS) {
+		return 0;
+	}
+	const float range_low  = fminf(light->radius, first->radius);
+	const float range_high = fmaxf(light->radius, first->radius);
+	if (!(range_high <= range_low * SCENE_SPOT_GROUP_RANGE_RATIO)) {
+		return 0;
+	}
+	const float sum       = light->color[0] + light->color[1] + light->color[2];
+	const float first_sum = first->color[0] + first->color[1] + first->color[2];
+	for (int c = 0; c < 3; ++c) {
+		if (!(fabsf(light->color[c] / sum - first->color[c] / first_sum) <= SCENE_SPOT_GROUP_HUE)) {
+			return 0;
+		}
+	}
+	const float dx    = light->pos[0] - first->pos[0];
+	const float dy    = light->pos[1] - first->pos[1];
+	const float dz    = light->pos[2] - first->pos[2];
+	const float reach = range_low * SCENE_SPOT_GROUP_REACH;
+	return dx * dx + dy * dy + dz * dz <= reach * reach;
+}
+
+/* Groups the scene's spot lights for merging, in the order they were
+ * added: each joins the first group it can join, or starts one. Each group
+ * of at least two lights whose merge distance is under their range gets a
+ * merged light in `merged`: at the lights' centre weighted by their colour,
+ * with their summed colour, their largest range and source radius, and the
+ * first light's direction and cone. `group_of` receives each light's
+ * merged light index, or UINT32_MAX; `merge_centers` and
+ * `merge_distances` each merged light's centre and merge distance. Returns
+ * the number of merged lights, at most `capacity`. */
+static uint32_t scene_merge_spot_lights(AeronScene3D* s, uint32_t capacity, AeronSceneLight* merged,
+										uint32_t* group_of, float (*merge_centers)[3],
+										float*    merge_distances) {
+	uint32_t first_of[AERON_SCENE_MAX_LIGHTS];
+	float    directions[AERON_SCENE_MAX_LIGHTS][3];
+	uint32_t members[AERON_SCENE_MAX_LIGHTS];
+	uint32_t group_count = 0;
+	uint32_t light_group[AERON_SCENE_MAX_LIGHTS];
+	for (uint32_t i = 0; i < (uint32_t)s->light_count; ++i) {
+		const AeronSceneLight* light = &s->lights[i];
+		group_of[i]                  = UINT32_MAX;
+		light_group[i]               = UINT32_MAX;
+		float cos_inner, cos_outer;
+		if (scene_light_is_tube(light) || !scene_light_spot_cosines(light, &cos_inner, &cos_outer) ||
+			!scene_light_direction(light, 0, directions[i]) || !(light->radius > 0.0f) ||
+			!(light->color[0] + light->color[1] + light->color[2] > 0.0f)) {
+			continue;
+		}
+		uint32_t g = 0;
+		while (g < group_count && !scene_spot_light_groups_with(light, directions[i], &s->lights[first_of[g]],
+																directions[first_of[g]])) {
+			++g;
+		}
+		if (g == group_count) {
+			first_of[group_count] = i;
+			members[group_count]  = 0;
+			group_count++;
+		}
+		members[g]++;
+		light_group[i] = g;
+	}
+
+	uint32_t merged_count = 0;
+	for (uint32_t g = 0; g < group_count && merged_count < capacity; ++g) {
+		if (members[g] < 2u) {
+			continue;
+		}
+		const AeronSceneLight* first     = &s->lights[first_of[g]];
+		AeronSceneLight*       light     = &merged[merged_count];
+		float                  center[3] = { 0.0f, 0.0f, 0.0f };
+		float                  weight    = 0.0f;
+		*light                           = *first;
+		memset(light->color, 0, sizeof light->color);
+		for (uint32_t i = first_of[g]; i < (uint32_t)s->light_count; ++i) {
+			if (light_group[i] != g) {
+				continue;
+			}
+			const AeronSceneLight* member = &s->lights[i];
+			const float            w      = member->color[0] + member->color[1] + member->color[2];
+			for (int c = 0; c < 3; ++c) {
+				center[c] += member->pos[c] * w;
+				light->color[c] += member->color[c];
+			}
+			weight += w;
+			light->radius        = fmaxf(light->radius, member->radius);
+			light->source_radius = fmaxf(light->source_radius, member->source_radius);
+		}
+		float spread = 0.0f;
+		for (int c = 0; c < 3; ++c) {
+			center[c] /= weight;
+		}
+		for (uint32_t i = first_of[g]; i < (uint32_t)s->light_count; ++i) {
+			if (light_group[i] == g) {
+				const float dx = s->lights[i].pos[0] - center[0];
+				const float dy = s->lights[i].pos[1] - center[1];
+				const float dz = s->lights[i].pos[2] - center[2];
+				spread         = fmaxf(spread, sqrtf(dx * dx + dy * dy + dz * dz));
+			}
+		}
+		/* Not zero, which marks a light outside any group, even for lights
+		 * at the same place. */
+		const float distance = fmaxf(spread * SCENE_SPOT_MERGE_SPREADS, light->radius * 1e-6f);
+		if (!(distance < light->radius) || !isfinite(distance)) {
+			continue;
+		}
+		memcpy(light->pos, center, sizeof light->pos);
+		memcpy(merge_centers[merged_count], center, sizeof center);
+		merge_distances[merged_count] = distance;
+		for (uint32_t i = first_of[g]; i < (uint32_t)s->light_count; ++i) {
+			if (light_group[i] == g) {
+				group_of[i] = merged_count;
+			}
+		}
+		s->grouped_spot_light_count += members[g];
+		merged_count++;
+	}
+	return merged_count;
+}
+
 int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!s || !cmd) {
 		return 0;
@@ -2535,7 +2682,20 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		s->mesh_tables_dropped_logged = 1;
 	}
 
-	const uint32_t point_count = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
+	const uint32_t  light_count = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
+	AeronSceneLight merged[AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS];
+	uint32_t        group_of[AERON_SCENE_MAX_LIGHTS];
+	float           merge_centers[AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS][3];
+	float           merge_distances[AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS];
+	s->grouped_spot_light_count = 0;
+	s->merged_spot_light_count  = 0;
+	if (s->cluster_desc.merge_spot_lights && light_count > 1) {
+		s->merged_spot_light_count =
+			scene_merge_spot_lights(s, AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS, merged,
+									group_of, merge_centers, merge_distances);
+	}
+	/* The scene's lights, then the merged ones. */
+	const uint32_t point_count = light_count + s->merged_spot_light_count;
 	if (point_count > 0 &&
 		!scene_storage_reserve((void**)&s->point_light_staging, &s->point_light_staging_cap, point_count,
 							   sizeof *s->point_light_staging)) {
@@ -2554,12 +2714,13 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	AeronSceneInternal_QuatToMat3(s->camera.ori, view_rotation);
 	/* Spheres, then spot lights, then tubes, so the shader takes each in its
 	 * own loop. Each kind is sorted by the depth of the lights' bounds. */
-	SceneLightOrder order[AERON_SCENE_MAX_LIGHTS];
-	float           bounds[AERON_SCENE_MAX_LIGHTS][4];
+	SceneLightOrder order[AERON_SCENE_MAX_SHADED_LIGHTS];
+	float           bounds[AERON_SCENE_MAX_SHADED_LIGHTS][4];
 	uint32_t        kind_counts[3]          = { 0, 0, 0 };
 	uint32_t        spots_without_direction = 0;
 	for (uint32_t light = 0; light < point_count; ++light) {
-		const AeronSceneLight* source = &s->lights[light];
+		const AeronSceneLight* source =
+			light < light_count ? &s->lights[light] : &merged[light - light_count];
 		AeronScene_LightBounds(source, bounds[light], &bounds[light][3]);
 		const float dx    = bounds[light][0] - s->camera.pos[0];
 		const float dy    = bounds[light][1] - s->camera.pos[1];
@@ -2585,8 +2746,10 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	qsort(order, point_count, sizeof order[0], scene_light_order_compare);
 	for (uint32_t i = 0; i < point_count; ++i) {
-		const AeronSceneLight*     source      = &s->lights[order[i].light];
-		const float*               bound       = bounds[order[i].light];
+		const uint32_t         index = order[i].light;
+		const AeronSceneLight* source =
+			index < light_count ? &s->lights[index] : &merged[index - light_count];
+		const float*               bound       = bounds[index];
 		AeronScenePointLightGPU*   destination = &s->point_light_staging[i];
 		AeronSceneClusterLightGPU* cluster     = &s->cluster_light_staging[i];
 		destination->position_range[0]         = source->pos[0];
@@ -2640,6 +2803,21 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			}
 			cluster->view_spot_position_range[3] = source->radius;
 			cluster->view_spot_direction_cos[3]  = cos_outer;
+			const uint32_t group = index < light_count
+									   ? (s->merged_spot_light_count ? group_of[index] : UINT32_MAX)
+									   : index - light_count;
+			if (group != UINT32_MAX) {
+				const float* center = merge_centers[group];
+				const float  gx     = center[0] - s->camera.pos[0];
+				const float  gy     = center[1] - s->camera.pos[1];
+				const float  gz     = center[2] - s->camera.pos[2];
+				for (int row = 0; row < 3; ++row) {
+					const float* r           = &view_rotation[row * 3];
+					cluster->view_merge[row] = r[0] * gx + r[1] * gy + r[2] * gz;
+				}
+				cluster->view_merge[3] =
+					index < light_count ? merge_distances[group] : -merge_distances[group];
+			}
 		}
 		const float dx = bound[0] - s->camera.pos[0];
 		const float dy = bound[1] - s->camera.pos[1];

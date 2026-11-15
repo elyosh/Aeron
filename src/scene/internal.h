@@ -23,6 +23,10 @@
 #define AERON_SCENE_MAX_SHADOW_ONLY 32767
 #define AERON_SCENE_SHADOW_ONLY_BASE 32768u
 #define AERON_SCENE_MAX_LIGHTS AERON_SCENE_POINT_LIGHT_CAPACITY
+/* The lights the shaders take: the scene's lights, and a merged light for
+ * each group of at least two spot lights
+ * (AeronSceneClusteredLightDesc.merge_spot_lights). */
+#define AERON_SCENE_MAX_SHADED_LIGHTS (AERON_SCENE_MAX_LIGHTS + AERON_SCENE_MAX_LIGHTS / 2)
 #define AERON_SCENE_CLUSTER_DEFAULT_TILE_SIZE 32u
 #define AERON_SCENE_CLUSTER_MAX_TILE_SIZE 64u
 #define AERON_SCENE_CLUSTER_TILE_ALIGNMENT 8u
@@ -308,11 +312,16 @@ typedef struct AeronScenePointLightGPU {
 /* A point light in view space, in the point light order: the sphere that
  * holds what it lights (AeronScene_LightBounds). For a spot light, also
  * its position and range, and its unit direction with the cosine of its
- * outer angle in w; w is -1 for other lights. */
+ * outer angle in w; w is -1 for other lights. For a spot light in a merged
+ * group, the group's centre and its merge distance: a tile nearer to the
+ * centre than that takes the group's lights, and a farther one its merged
+ * light. w is the distance for a light of the group, minus the distance
+ * for the merged light, and 0 for other lights. */
 typedef struct AeronSceneClusterLightGPU {
 	float view_position_range[4];
 	float view_spot_position_range[4];
 	float view_spot_direction_cos[4];
+	float view_merge[4];
 } AeronSceneClusterLightGPU;
 
 /* The cluster build's output, one uint buffer (scene_clustered_lights.hlsli):
@@ -587,6 +596,10 @@ struct AeronScene3D {
 	 * then tubes from point_tube_start on. */
 	uint32_t                   point_spot_start;
 	uint32_t                   point_tube_start;
+	/* This frame's merged spot light groups (merge_spot_lights): the spot
+	 * lights in them, and the merged lights added. */
+	uint32_t                   grouped_spot_light_count;
+	uint32_t                   merged_spot_light_count;
 	uint32_t                   point_light_staging_cap;
 	AeronSceneClusterLightGPU* cluster_light_staging;
 	uint32_t                   cluster_light_staging_cap;

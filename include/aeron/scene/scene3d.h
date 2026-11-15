@@ -86,6 +86,11 @@ typedef struct AeronSceneClusteredLightDesc {
 	/* Cluster occupancy view, drawn by the debug shader variant
 	 * (AERON_DEBUG_UI builds only). */
 	int debug_view;
+	/* Spot lights close together that point the same way, with the same
+	 * cone, colour and range, such as the engines of a ship, are shaded as
+	 * one light in the screen tiles far from them. In the tiles near them,
+	 * they stay separate. */
+	int merge_spot_lights;
 } AeronSceneClusteredLightDesc;
 
 typedef struct AeronSceneClusteredLightStats {
@@ -98,6 +103,10 @@ typedef struct AeronSceneClusteredLightStats {
 	uint32_t cluster_count;
 	uint32_t clustered_active;
 	uint64_t allocated_buffer_bytes;
+	/* The spot lights merge_spot_lights grouped, and the merged lights that
+	 * stand for them far away. */
+	uint32_t grouped_spot_light_count;
+	uint32_t merged_spot_light_count;
 } AeronSceneClusteredLightStats;
 
 /* Directional-shadow flags (AeronSceneMeshInstance.shadow_flags).

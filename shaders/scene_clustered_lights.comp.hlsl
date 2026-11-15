@@ -14,6 +14,10 @@ struct ClusterLight {
 	/* A spot light's unit direction, w: the cosine of its outer angle, -1
 	 * for other lights. */
 	float4 spot_direction_cos;
+	/* For a spot light in a merged group, the group's centre and merge
+	 * distance: w is the distance for a light of the group, minus the
+	 * distance for its merged light, and 0 for other lights. */
+	float4 merge;
 };
 StructuredBuffer<ClusterLight> g_lights : register(t0, space0);
 /* The depth bins' ranges, then the tiles' masks
@@ -107,7 +111,13 @@ bool spot_outside_plane(float offset, float facing, float range, float cos_outer
  * the tile's four side planes through the camera, expanded by a pixel. A
  * spot light must also have part of its cone inside each of them: its
  * bounding sphere holds the whole cone, which is much larger than the part
- * the light shines into. */
+ * the light shines into.
+ *
+ * A tile takes either the lights of a merged group or their merged light:
+ * the merged light when the tile is farther from the group's centre than
+ * the merge distance, the group's lights otherwise. The tile's distance is
+ * the largest distance of the centre outside one of the tile's planes,
+ * which is never more than the true distance. */
 void build_tile(uint tile_index) {
 	uint  tile_x       = tile_index % fs_cluster_grid_x;
 	uint  tile_y       = tile_index / fs_cluster_grid_x;
@@ -145,6 +155,18 @@ void build_tile(uint tile_index) {
 			if (!(p.z + r >= fs_cluster_near_z && all(side >= -r * plane_lengths)))
 				continue;
 			if (index >= spot_start && index < tube_start) {
+				float4 merge = g_lights[index].merge;
+				if (merge.w != 0.0f) {
+					float4 outside  = float4(slopes.x * merge.z - merge.x, merge.x - slopes.y * merge.z,
+											 slopes.z * merge.z - merge.y, merge.y - slopes.w * merge.z) /
+									 plane_lengths;
+					float  distance = max(max(fs_cluster_near_z - merge.z, 0.0f),
+										  max(max(outside.x, outside.y), max(outside.z, outside.w)));
+					/* A light of the group in a far tile, or the merged light
+					 * in a near one. */
+					if ((distance > abs(merge.w)) != (merge.w < 0.0f))
+						continue;
+				}
 				float4 spot      = g_lights[index].spot_position_range;
 				float4 direction = g_lights[index].spot_direction_cos;
 				float  cos_outer = direction.w;
