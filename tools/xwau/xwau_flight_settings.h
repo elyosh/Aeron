@@ -48,6 +48,9 @@
  *     differ from the stock tables: the side, forward and up values of the
  *     six slots, and the divisor. A formation with a divisor of 0 is
  *     reported and left out, since the game divides by it.
+ *   - `projectiles` and `homing_profiles` hold the entries of the mod's
+ *     projectile tables that differ from the stock tables. The weapon stats
+ *     also fall back on the mod's lifetimes, as hook_weapon_rate does.
  */
 
 #include <stdbool.h>

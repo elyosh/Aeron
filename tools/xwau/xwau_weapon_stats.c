@@ -533,8 +533,8 @@ static const XwauWeaponStatsValue* find_stat(const XwauWeaponStatsValue* items, 
 
 /* Returns one part of a duration at `form`. It looks in the same order as
    the game: for each form in the row of `form`, first the model's values,
-   then the global values. If no value is set, it returns the stock
-   value. */
+   then the global values. If no value is set, it returns the value of
+   `stock->projectiles`: the hook reads it from the mod's executable. */
 static long long duration_part(const XwauWeaponStats* stats, const XwauStockValues* stock,
 							   const char* profile, int weapon, int form, int stat) {
 	for (const int* f = kFormChains[form]; *f >= 0; ++f) {
@@ -545,9 +545,10 @@ static long long duration_part(const XwauWeaponStats* stats, const XwauStockValu
 			return v->value;
 	}
 	const size_t at = (size_t)(weapon - FIRST_WEAPON);
-	if (at >= stock->lifetime_count)
+	if (!stock->projectiles || at >= XWAU_GAME_PROJECTILE_TYPES)
 		return 0;
-	return stat == STAT_DURATION_SECONDS ? stock->lifetime_seconds[at] : stock->lifetime_fractions[at];
+	return stat == STAT_DURATION_SECONDS ? stock->projectiles->lifetime_seconds[at]
+										 : stock->projectiles->lifetime_fractions[at];
 }
 
 /* Writes the duration of `weapon` at `form`, in milliseconds. The game

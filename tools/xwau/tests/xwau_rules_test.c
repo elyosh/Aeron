@@ -140,8 +140,11 @@ static const char*     kScreenSources[57];
 static XwauNames       g_names;
 static const uint16_t  kStockHullIcons[]        = { 0, 100, 200, 300 };
 static const uint8_t   kStockHardpointKinds[40] = { 0, 1, 1, 1 };
-static const uint16_t  kStockLifetimeSeconds[27]   = { 1, 1, 1, 1, 1, 2, 40, 25, 3, 3 };
-static const uint16_t  kStockLifetimeFractions[27] = { 0, 0x8000, 0, 0x8000, 0x8000 };
+/* The stock projectile tables of the tests. The fake exe holds them too. */
+static const XwauProjectileTables kStockProjectiles = {
+	.lifetime_seconds   = { 1, 1, 1, 1, 1, 2, 40, 25, 3, 3 },
+	.lifetime_fractions = { 0, 0x8000, 0, 0x8000, 0x8000 },
+};
 /* The stock formations of the tests are all 0, as the fake exe's are. */
 static const int16_t   kStockFormationPositions[3][XWAU_GAME_FORMATIONS * XWAU_GAME_FORMATION_SLOTS];
 static const int16_t   kStockFormationDivisors[XWAU_GAME_FORMATIONS];
@@ -152,9 +155,7 @@ static XwauStockValues g_stock = {
 	.map_icon_count       = 4,
 	.hardpoint_kinds      = kStockHardpointKinds,
 	.hardpoint_kind_count = 40,
-	.lifetime_seconds     = kStockLifetimeSeconds,
-	.lifetime_fractions   = kStockLifetimeFractions,
-	.lifetime_count       = 27,
+	.projectiles          = &kStockProjectiles,
 	.formation_positions  = { kStockFormationPositions[0], kStockFormationPositions[1],
 							  kStockFormationPositions[2] },
 	.formation_divisors   = kStockFormationDivisors,
@@ -1244,6 +1245,26 @@ static void fake_rule_patches(FakeExe* exe, bool shared, bool tftc_only) {
 	}
 }
 
+/* Writes `tables` at the addresses of the projectile tables. */
+static void fake_projectiles(FakeExe* exe, const XwauProjectileTables* t) {
+	for (int i = 0; i < XWAU_GAME_PROJECTILE_TYPES; ++i) {
+		put32(fake_at(exe, 0x5B64B8 + 4 * (unsigned)i), (unsigned)t->damage[i]);
+		put16(fake_at(exe, 0x5B6528 + 2 * (unsigned)i), t->speed[i]);
+		put16(fake_at(exe, 0x5B6560 + 2 * (unsigned)i), t->lifetime_seconds[i]);
+		put16(fake_at(exe, 0x5B6598 + 2 * (unsigned)i), t->lifetime_fractions[i]);
+		put16(fake_at(exe, 0x5B65D0 + 2 * (unsigned)i), (unsigned)(uint16_t)t->launch_offset[i]);
+		*fake_at(exe, 0x5B6608 + (unsigned)i) = t->warhead_class[i];
+		put16(fake_at(exe, 0x5B6628 + 2 * (unsigned)i), t->score[i]);
+		*fake_at(exe, 0x5B6660 + (unsigned)i) = t->side[i];
+		put16(fake_at(exe, 0x5B6680 + 2 * (unsigned)i), t->side_model[i]);
+		*fake_at(exe, 0x5B6770 + (unsigned)i) = t->homing_profile[i];
+	}
+	for (int i = 0; i < XWAU_GAME_HOMING_RATES; ++i) {
+		put16(fake_at(exe, 0x5B6790 + 2 * (unsigned)i), t->homing_turn_rates[i]);
+		put16(fake_at(exe, 0x5B67E8 + 2 * (unsigned)i), t->homing_speed_rates[i]);
+	}
+}
+
 static void fake_exe_init(FakeExe* exe) {
 	exe->size = 0x400;
 	for (size_t i = 0; i < FAKE_SECTIONS; ++i)
@@ -1287,6 +1308,7 @@ static void fake_exe_init(FakeExe* exe) {
 	for (int t = 0; t < 557; ++t)
 		put16(fake_at(exe, 0x5FB240 + 24 * t + 20), 0xFFFF);
 	fake_rule_patches(exe, false, false);
+	fake_projectiles(exe, &kStockProjectiles);
 }
 
 /* Gives object type `t` row `row` of Spacecraft0.LST and craft record `record`. */
@@ -2706,6 +2728,45 @@ static void test_formations(const char* scratch) {
 	free(text);
 }
 
+/* ---- Projectile tables ------------------------------------------------------- */
+
+static void test_projectiles(const char* scratch) {
+	char game[1024], settings[1300];
+	snprintf(game, sizeof game, "%s/projectiles_game", scratch);
+	MakeDirs(game);
+	snprintf(settings, sizeof settings, "%s/projectiles.yaml", scratch);
+	FakeExe exe;
+	fake_exe_init(&exe);
+	fake_exe_write(&exe, game);
+	char* text = flight_settings_text(game, settings);
+	check(text && !strstr(text, "projectiles:") && !strstr(text, "homing_profiles:"),
+		  "projectiles: none when the exe has the stock tables");
+	free(text);
+	/* TFTC-R's changes, a side the game has no name for, and a homing row. */
+	XwauProjectileTables mod   = kStockProjectiles;
+	mod.warhead_class[16]      = 2;
+	mod.lifetime_seconds[24]   = 2500;
+	mod.lifetime_fractions[24] = 1;
+	mod.launch_offset[20]      = 1;
+	mod.score[8]               = 921;
+	mod.side[3]                = 7;
+	mod.homing_turn_rates[8]   = 100;
+	fake_exe_init(&exe);
+	fake_projectiles(&exe, &mod);
+	fake_exe_write(&exe, game);
+	text = flight_settings_text(game, settings);
+	check(text &&
+			  strstr(text, "\nprojectiles:\n  type_288: {score: 921}\n  type_296: {warhead_class: 2}\n"
+						   "  type_300: {launch_offset_m: 0.024}\n"
+						   "  type_304: {life_seconds: 2500, life_fraction: 1}\n") &&
+			  !strstr(text, "type_283"),
+		  "projectiles: the changed entries are written, and a side the game has no name for is left out");
+	check(text && strstr(text, "\nhoming_profiles:\n  1: {turn_rates: [0, 100, 0, 0, 0, 0, 0], speed_rates: "
+							   "[0, 0, 0, 0, 0, 0, 0]}\n"),
+		  "projectiles: a changed homing row is written whole");
+	free(text);
+}
+
 /* ---- hook_hangars craft selection --------------------------------------------- */
 
 static void test_hangar_crafts(const char* scratch) {
@@ -3795,6 +3856,7 @@ int main(void) {
 	test_flight_settings(scratch);
 	test_exe_patches(scratch);
 	test_formations(scratch);
+	test_projectiles(scratch);
 	test_object_limits(scratch);
 	test_hangar_crafts(scratch);
 	test_weapon_lock(scratch);

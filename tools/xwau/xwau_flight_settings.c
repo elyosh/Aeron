@@ -183,6 +183,107 @@ static bool read_int16s(const XwauGameExe* exe, uint32_t address, int16_t* out, 
 
 /* Writes `formations`: each formation whose slots or divisor in the mod's
  * executable `exe` differ from `stock`. Returns whether it wrote any. */
+/* Writes `key` in the entry `name` of `projectiles`, after the section and
+   entry headers or a comma, as needed. */
+static void projectile_key(FILE* f, const char* name, bool* section, bool* entry, const char* key) {
+	if (!*section)
+		fputs("projectiles:\n", f);
+	if (!*entry)
+		fprintf(f, "  %s: {", name);
+	else
+		fputs(", ", f);
+	fprintf(f, "%s: ", key);
+	*section = *entry = true;
+}
+
+/* Writes `projectiles` and `homing_profiles`: the entries of the mod's
+ * projectile tables `mod` that differ from `stock`. Values that the game
+ * can't hold are reported and left out. Returns whether it wrote any. */
+static bool write_projectiles(FILE* f, const XwauNames* names, const XwauProjectileTables* mod,
+							  const XwauProjectileTables* stock) {
+	bool section = false;
+	for (int i = 0; i < XWAU_GAME_PROJECTILE_TYPES; ++i) {
+		const int   weapon = 280 + i;
+		const char* name   = XwauNames_WeaponType(names, weapon);
+		bool        entry  = false;
+		if (!name) {
+			ReportUnsupported("weapon type %d in the projectile tables of XWINGALLIANCE.EXE", weapon);
+			continue;
+		}
+		if (mod->damage[i] != stock->damage[i]) {
+			projectile_key(f, name, &section, &entry, "power");
+			fprintf(f, "%d", (int)mod->damage[i]);
+		}
+		if (mod->speed[i] != stock->speed[i]) {
+			projectile_key(f, name, &section, &entry, "speed_mglt");
+			Xwau_WriteUnit(f, XWAU_UNIT_MGLT, mod->speed[i]);
+		}
+		if (mod->lifetime_seconds[i] != stock->lifetime_seconds[i]) {
+			projectile_key(f, name, &section, &entry, "life_seconds");
+			fprintf(f, "%u", (unsigned)mod->lifetime_seconds[i]);
+		}
+		if (mod->lifetime_fractions[i] != stock->lifetime_fractions[i]) {
+			projectile_key(f, name, &section, &entry, "life_fraction");
+			fprintf(f, "%u", (unsigned)mod->lifetime_fractions[i]);
+		}
+		if (mod->launch_offset[i] != stock->launch_offset[i]) {
+			projectile_key(f, name, &section, &entry, "launch_offset_m");
+			Xwau_WriteMetres(f, mod->launch_offset[i]);
+		}
+		if (mod->warhead_class[i] != stock->warhead_class[i]) {
+			projectile_key(f, name, &section, &entry, "warhead_class");
+			fprintf(f, "%u", (unsigned)mod->warhead_class[i]);
+		}
+		if (mod->score[i] != stock->score[i]) {
+			projectile_key(f, name, &section, &entry, "score");
+			fprintf(f, "%u", (unsigned)mod->score[i]);
+		}
+		if (mod->side[i] != stock->side[i]) {
+			const int side = mod->side[i];
+			if (side == 0 || side == 1 || side == 255) {
+				projectile_key(f, name, &section, &entry, "side");
+				fputs(side == 0 ? "rebel" : side == 1 ? "imperial" : "none", f);
+			} else
+				ReportUnsupported("a weapon side of %d in XWINGALLIANCE.EXE", side);
+		}
+		if (mod->side_model[i] != stock->side_model[i]) {
+			const char* model = XwauNames_WeaponType(names, mod->side_model[i]);
+			if (model) {
+				projectile_key(f, name, &section, &entry, "side_model");
+				fputs(model, f);
+			} else
+				ReportUnsupported("a weapon side model that isn't a weapon type in XWINGALLIANCE.EXE");
+		}
+		if (mod->homing_profile[i] != stock->homing_profile[i]) {
+			const int row = mod->homing_profile[i] / 7;
+			if (mod->homing_profile[i] % 7 == 0 && row < 6) {
+				projectile_key(f, name, &section, &entry, "homing_profile");
+				fprintf(f, "%d", row);
+			} else
+				ReportUnsupported("a homing profile that doesn't start a row in XWINGALLIANCE.EXE");
+		}
+		if (entry)
+			fputs("}\n", f);
+	}
+	bool homing = false;
+	for (int row = 0; row < XWAU_GAME_HOMING_RATES / 7; ++row) {
+		const uint16_t* turn  = mod->homing_turn_rates + 7 * row;
+		const uint16_t* speed = mod->homing_speed_rates + 7 * row;
+		if (memcmp(turn, stock->homing_turn_rates + 7 * row, 7 * sizeof *turn) == 0 &&
+			memcmp(speed, stock->homing_speed_rates + 7 * row, 7 * sizeof *speed) == 0)
+			continue;
+		fprintf(f, "%s  %d: {turn_rates: [", homing ? "" : "homing_profiles:\n", row);
+		for (int k = 0; k < 7; ++k)
+			fprintf(f, "%s%u", k ? ", " : "", (unsigned)turn[k]);
+		fputs("], speed_rates: [", f);
+		for (int k = 0; k < 7; ++k)
+			fprintf(f, "%s%u", k ? ", " : "", (unsigned)speed[k]);
+		fputs("]}\n", f);
+		homing = true;
+	}
+	return section || homing;
+}
+
 static bool write_formations(FILE* f, const XwauGameExe* exe, const XwauStockValues* stock) {
 	enum { SLOTS = XWAU_GAME_FORMATIONS * XWAU_GAME_FORMATION_SLOTS };
 
@@ -597,7 +698,14 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	const bool settings   = XwauMissionSettings_WriteDefaults(f, &config);
 	const bool headlights = write_headlights(f, game);
 	bool       impact, rates;
-	write_weapons(f, names, stock, game, &impact, &rates);
+	/* The weapon stats fall back on the mod's projectile tables, as the hook
+	   does. */
+	XwauProjectileTables mod_projectiles;
+	XwauStockValues      weapon_stock    = *stock;
+	const bool           has_projectiles = exe && XwauGameExe_ReadProjectiles(exe, &mod_projectiles);
+	if (has_projectiles)
+		weapon_stock.projectiles = &mod_projectiles;
+	write_weapons(f, names, &weapon_stock, game, &impact, &rates);
 	const bool shields    = write_shield_recharge(f, game);
 	const bool docking    = write_docking(f, game);
 	const bool limits     = XwauObjectLimits_Write(f, game);
@@ -608,6 +716,8 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	const bool speed      = write_speed_effect(f, game);
 	const bool hyperspace = XwauHyperspace_WriteFlightSettings(f, &config.hyperspace);
 	const bool formations = write_formations(f, exe, stock);
+	const bool projectiles = has_projectiles && stock->projectiles &&
+							 write_projectiles(f, names, &mod_projectiles, stock->projectiles);
 	XwauGameExe_Free(exe);
 	bool       ai_attack, mag_pulse, warhead_lock;
 	const bool weapon_lock_ok =
@@ -632,7 +742,8 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 									suns ? "the suns" : NULL,
 									speed ? "the speed effect" : NULL,
 									hyperspace ? "the hyperspace speeds" : NULL,
-									formations ? "the formations" : NULL };
+									formations ? "the formations" : NULL,
+									projectiles ? "the projectile tables" : NULL };
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
 		if (parts[i])
 			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);

@@ -40,6 +40,10 @@ enum {
 	XWAU_GAME_SOUND_CASES     = 65,
 	XWAU_GAME_FORMATIONS      = 34,
 	XWAU_GAME_FORMATION_SLOTS = 6,
+	/* The projectile tables have an entry for each weapon type from 280 to
+	   307, and the homing tables 6 rows of 7 entries. */
+	XWAU_GAME_PROJECTILE_TYPES = 28,
+	XWAU_GAME_HOMING_RATES     = 42,
 };
 
 /* The formation tables: the side, forward and up values of each slot, and
@@ -84,6 +88,31 @@ typedef struct XwauGameType {
 	uint16_t list, row;
 } XwauGameType;
 
+/* The projectile tables of a game, at 0x5B64B8 to 0x5B683C. The tables by
+ * type have an entry for each weapon type from 280 (projectile_tables.inc in
+ * the game). */
+typedef struct XwauProjectileTables {
+	int32_t  damage[XWAU_GAME_PROJECTILE_TYPES];
+	uint16_t speed[XWAU_GAME_PROJECTILE_TYPES];
+	/* The life of a shot: whole game seconds, and a fraction of a game second
+	   in Q16. */
+	uint16_t lifetime_seconds[XWAU_GAME_PROJECTILE_TYPES];
+	uint16_t lifetime_fractions[XWAU_GAME_PROJECTILE_TYPES];
+	int16_t  launch_offset[XWAU_GAME_PROJECTILE_TYPES];
+	uint8_t  warhead_class[XWAU_GAME_PROJECTILE_TYPES];
+	uint16_t score[XWAU_GAME_PROJECTILE_TYPES];
+	uint8_t  side[XWAU_GAME_PROJECTILE_TYPES];
+	uint16_t side_model[XWAU_GAME_PROJECTILE_TYPES];
+	/* The first row of each weapon type's homing profile: 0, 7, ... 35. */
+	uint8_t  homing_profile[XWAU_GAME_PROJECTILE_TYPES];
+	uint16_t homing_turn_rates[XWAU_GAME_HOMING_RATES];
+	uint16_t homing_speed_rates[XWAU_GAME_HOMING_RATES];
+} XwauProjectileTables;
+
+/* Reads the projectile tables of `exe`. Returns false when it doesn't have
+ * them. */
+bool XwauGameExe_ReadProjectiles(const XwauGameExe* exe, XwauProjectileTables* out);
+
 /* More stock game values, stored like the game stores them. The writers
  * only write values that differ from them. The program that calls the
  * writers fills them from the game's own tables. */
@@ -97,11 +126,8 @@ typedef struct XwauStockValues {
 	/* The kind of each hardpoint type: 0 none, 1 laser, 2 warhead. */
 	const uint8_t* hardpoint_kinds;
 	size_t         hardpoint_kind_count;
-	/* The stock life of each weapon type, starting at type 280. It has two
-	   parts: whole game seconds, and a fraction of a game second in Q16. */
-	const uint16_t* lifetime_seconds;
-	const uint16_t* lifetime_fractions;
-	size_t          lifetime_count;
+	/* The projectile tables, or NULL to leave them out. */
+	const XwauProjectileTables* projectiles;
 	/* The side, forward and up values of the formation slots, each
 	   XWAU_GAME_FORMATIONS rows of XWAU_GAME_FORMATION_SLOTS, and the divisor
 	   of each formation. NULL leaves the formations out. */

@@ -141,6 +141,52 @@ const uint8_t* XwauGameExe_At(const XwauGameExe* exe, uint32_t address, size_t s
 	return image_at(&exe->image, address, size);
 }
 
+/* Reads `count` little-endian values of `size` bytes at `address` into
+   `out`, as 32-bit values. */
+static bool read_values(const XwauGameExe* exe, uint32_t address, size_t size, size_t count, uint32_t* out) {
+	const uint8_t* bytes = XwauGameExe_At(exe, address, size * count);
+	if (!bytes)
+		return false;
+	for (size_t i = 0; i < count; ++i) {
+		uint32_t value = 0;
+		for (size_t b = 0; b < size; ++b)
+			value |= (uint32_t)bytes[size * i + b] << (8 * b);
+		out[i] = value;
+	}
+	return true;
+}
+
+bool XwauGameExe_ReadProjectiles(const XwauGameExe* exe, XwauProjectileTables* out) {
+	enum { N = XWAU_GAME_PROJECTILE_TYPES, H = XWAU_GAME_HOMING_RATES };
+
+	uint32_t   v[12][H];
+	const bool ok = read_values(exe, 0x5B64B8u, 4, N, v[0]) && read_values(exe, 0x5B6528u, 2, N, v[1]) &&
+					read_values(exe, 0x5B6560u, 2, N, v[2]) && read_values(exe, 0x5B6598u, 2, N, v[3]) &&
+					read_values(exe, 0x5B65D0u, 2, N, v[4]) && read_values(exe, 0x5B6608u, 1, N, v[5]) &&
+					read_values(exe, 0x5B6628u, 2, N, v[6]) && read_values(exe, 0x5B6660u, 1, N, v[7]) &&
+					read_values(exe, 0x5B6680u, 2, N, v[8]) && read_values(exe, 0x5B6770u, 1, N, v[9]) &&
+					read_values(exe, 0x5B6790u, 2, H, v[10]) && read_values(exe, 0x5B67E8u, 2, H, v[11]);
+	if (!ok)
+		return false;
+	for (int i = 0; i < N; ++i) {
+		out->damage[i]             = (int32_t)v[0][i];
+		out->speed[i]              = (uint16_t)v[1][i];
+		out->lifetime_seconds[i]   = (uint16_t)v[2][i];
+		out->lifetime_fractions[i] = (uint16_t)v[3][i];
+		out->launch_offset[i]      = (int16_t)(uint16_t)v[4][i];
+		out->warhead_class[i]      = (uint8_t)v[5][i];
+		out->score[i]              = (uint16_t)v[6][i];
+		out->side[i]               = (uint8_t)v[7][i];
+		out->side_model[i]         = (uint16_t)v[8][i];
+		out->homing_profile[i]     = (uint8_t)v[9][i];
+	}
+	for (int i = 0; i < H; ++i) {
+		out->homing_turn_rates[i]  = (uint16_t)v[10][i];
+		out->homing_speed_rates[i] = (uint16_t)v[11][i];
+	}
+	return true;
+}
+
 /* ---- Lists --------------------------------------------------------------- */
 
 /* Reads a FlightModels list the way the game does: lines end at '\r' or

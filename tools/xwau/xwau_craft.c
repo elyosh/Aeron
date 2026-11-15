@@ -1991,6 +1991,12 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	   units of the stats profiles depend on it. */
 	XwauGameTables* tables = XwauGameTables_Load(xwau_root);
 	const char*     models[XWAU_GAME_OBJECT_TYPES];
+	/* The weapon stats fall back on the mod's projectile tables, as
+	   hook_weapon_rate does. */
+	XwauProjectileTables mod_projectiles;
+	XwauStockValues      craft_stock = *stock_values;
+	if (tables && tables->exe && XwauGameExe_ReadProjectiles(tables->exe, &mod_projectiles))
+		craft_stock.projectiles = &mod_projectiles;
 	XwauStatsGenus  genus = { 0 };
 
 	ok = (!tables || XwauObjects_ImportedModels(stock_tables, tables, models)) &&
@@ -2161,7 +2167,7 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 
 		surfaces += XwauMat_SurfaceRuleCount(mat) != 0 || illumination;
 		if (!PathFormat(path, sizeof path, "%s/%s.yaml", craft_dir, key) || !MakeDirs(craft_dir) ||
-			!write_craft_file(path, game_names, stock_values, &hud, &glows, weapons, &stats, &shield, &sound,
+			!write_craft_file(path, game_names, &craft_stock, &hud, &glows, weapons, &stats, &shield, &sound,
 							  &strengths, &gunner, &lock, &jamming, &dock, &hyperspace, &attack, &pulse, &fov,
 							  mat, illumination, cockpits)) {
 			XwauAiAttack_Free(&attack);
