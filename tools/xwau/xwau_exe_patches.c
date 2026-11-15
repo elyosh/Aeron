@@ -24,7 +24,8 @@ typedef struct Patch {
 	Part              parts[MAX_PARTS];
 } Patch;
 
-/* From XWAU's "Classic EXE patches" list. */
+/* From XWAU's "Classic EXE patches" list, except the two-launcher patch,
+   which TFTC's executables have but the list doesn't. */
 static const Patch g_patches[] = {
 	{ "Beam system for rebel starfighters",
 	  XWAU_EXE_PATCHES_CRAFT,
@@ -64,6 +65,14 @@ static const Patch g_patches[] = {
 		  8,
 		  { 0xC6, 0x84, 0x19, 0x8C, 0x01, 0x00, 0x00, 0x01 },
 		  { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 } } } },
+	{ "Jamming beam always completely shuts down turrets",
+	  XWAU_EXE_PATCHES_FLIGHT,
+	  offsetof(XwauExePatches, one_jamming_beam_stops_turrets),
+	  { { 0x4E184A, 6, { 0x81, 0xF9, 0x00, 0x80, 0x02, 0x00 }, { 0x81, 0xF9, 0xFF, 0xFF, 0x00, 0x00 } } } },
+	{ "first launcher of craft with two launcher types loads advanced missiles",
+	  XWAU_EXE_PATCHES_FLIGHT,
+	  offsetof(XwauExePatches, two_launcher_advanced_missiles),
+	  { { 0x41BC0E, 2, { 0x1F, 0x01 }, { 0x24, 0x01 } } } },
 };
 
 /* Whether `patch` is applied. Reports bytes that are neither the stock nor

@@ -1168,10 +1168,12 @@ static const struct {
 	unsigned address, size;
 } g_fakeSections[] = {
 	{ 0x404000, 0x1000 },  /* the ejection patches */
+	{ 0x41B000, 0x1000 },  /* the two-launcher patch */
 	{ 0x41C000, 0x1000 },  /* the beam test */
 	{ 0x43D000, 0x1000 },  /* three sound switches */
 	{ 0x458000, 0x2000 },  /* the hangar launch switch */
 	{ 0x4A8000, 0x1000 },  /* the AI warhead patch */
+	{ 0x4E1000, 0x1000 },  /* the jamming patch */
 	{ 0x579000, 0x1000 },  /* the skirmish ejection patch */
 	{ 0x5B0000, 0x50000 }, /* the craft type table, the craft records and the object type table */
 };
@@ -1237,6 +1239,8 @@ static void fake_rule_patches(FakeExe* exe, bool shared, bool tftc_only) {
 		  true,
 		  { 0xC6, 0x84, 0x19, 0x8C, 0x01, 0x00, 0x00, 0x01 },
 		  { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 } },
+		{ 0x4E184A, 6, true, { 0x81, 0xF9, 0x00, 0x80, 0x02, 0x00 }, { 0x81, 0xF9, 0xFF, 0xFF, 0x00, 0x00 } },
+		{ 0x41BC0E, 2, true, { 0x1F, 0x01 }, { 0x24, 0x01 } },
 	};
 
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
@@ -2637,26 +2641,34 @@ static void test_exe_patches(const char* scratch) {
 	snprintf(game, sizeof game, "%s/exe_patches_game", scratch);
 	MakeDirs(game);
 	snprintf(settings, sizeof settings, "%s/exe_patches.yaml", scratch);
-	static const char* const rules[6] = {
-		"  no_pilot_ejections: true\n",   "  no_escape_pod_ejections: true\n",
-		"  ejected_craft_team_9: true\n", "  ejected_craft_skip_setup: true\n",
-		"  skirmish_ejections: true\n",   "  ai_warheads_attack_on_hit: true\n"
+	static const char* const rules[8] = {
+		"  no_pilot_ejections: true\n",
+		"  no_escape_pod_ejections: true\n",
+		"  ejected_craft_team_9: true\n",
+		"  ejected_craft_skip_setup: true\n",
+		"  skirmish_ejections: true\n",
+		"  ai_warheads_attack_on_hit: true\n",
+		"  one_jamming_beam_stops_turrets: true\n",
+		"  two_launcher_advanced_missiles: true\n",
 	};
 
 	/* The rules expected for each exe. */
 	static const struct {
 		bool        shared, tftcOnly;
-		bool        expected[6];
+		bool        expected[8];
 		const char* what;
 	} cases[] = {
 		{ false,
 		  false,
-		  { false, false, false, false, false, false },
+		  { false, false, false, false, false, false, false, false },
 		  "exe patches: the stock exe gets no rules" },
-		{ true, true, { true, true, true, true, true, true }, "exe patches: TFTC's exe gets all six rules" },
+		{ true,
+		  true,
+		  { true, true, true, true, true, true, true, true },
+		  "exe patches: TFTC's exe gets all eight rules" },
 		{ true,
 		  false,
-		  { false, false, true, true, true, false },
+		  { false, false, true, true, true, false, false, false },
 		  "exe patches: XWAU 2025's exe gets the three rules for ejected craft" },
 	};
 
@@ -2667,7 +2679,7 @@ static void test_exe_patches(const char* scratch) {
 		fake_exe_write(&exe, game);
 		char* text = flight_settings_text(game, settings);
 		bool  ok   = text != NULL;
-		for (int r = 0; ok && r < 6; ++r)
+		for (int r = 0; ok && r < 8; ++r)
 			ok = (strstr(text, rules[r]) != NULL) == cases[c].expected[r];
 		check(ok, cases[c].what);
 		free(text);

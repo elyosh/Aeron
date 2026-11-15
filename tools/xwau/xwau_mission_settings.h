@@ -141,8 +141,9 @@ void XwauSettingsConfig_Free(XwauSettingsConfig* config);
  * hook_crafts_count's overlapping_fly_by_sounds, and hook_pilot's
  * hangar_droid_parts_from_model, and hook_hyperspace's
  * ai_arrival_stops_before_point, which the hook does in both of its modes.
- * The ejection rules and
- * ai_warheads_attack_on_hit come from the patches of the mod's executable
+ * The ejection rules, ai_warheads_attack_on_hit,
+ * one_jamming_beam_stops_turrets and two_launcher_advanced_missiles come
+ * from the patches of the mod's executable
  * (xwau_exe_patches.h). Returns whether it wrote anything.
  */
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config);

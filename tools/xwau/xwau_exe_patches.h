@@ -15,8 +15,8 @@
  *     can carry a beam (mission.c:6624-6627).
  *
  * The flight settings phase, which writes rules (xwau_mission_settings.h).
- * TFTC's executables have all six patches, and XWAU 2025's only the ones at
- * 0x404481, 0x404EEB and 0x5797B6:
+ * TFTC's executables have all eight patches, and XWAU 2025's only the ones
+ * at 0x404481, 0x404EEB and 0x5797B6:
  *   - 0x4042F4: no pilot ejects from a fighter;
  *   - 0x40434B: no escape pod ejects from a transport, starship or
  *     platform;
@@ -25,7 +25,14 @@
  *     speed and direction that every ejected craft starts with;
  *   - 0x5797B6: the craft of a skirmish mission can eject;
  *   - 0x4A82E2: an AI warhead marks its target as attacked when it hits,
- *     not when it's launched.
+ *     not when it's launched;
+ *   - 0x4E184A: one jamming beam stops a craft's turrets, instead of three;
+ *   - 0x41BC0E: the first launcher of a craft with two launcher types loads
+ *     advanced missiles instead of missiles.
+ *
+ * TFTC's executables also fix XwaAIComponentGoneOrder, which reads through
+ * a null pointer in the original. The port always has that fix, so the
+ * importer doesn't look for it.
  */
 
 #include <stdbool.h>
@@ -47,6 +54,8 @@ typedef struct XwauExePatches {
 	bool ejected_craft_skip_setup;
 	bool skirmish_ejections;
 	bool ai_warheads_attack_on_hit;
+	bool one_jamming_beam_stops_turrets;
+	bool two_launcher_advanced_missiles;
 } XwauExePatches;
 
 /* Reads the patches of `group` in `exe`. The patches of the other group stay
