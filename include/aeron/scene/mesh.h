@@ -82,6 +82,13 @@ typedef struct AeronSceneMeshCpuVertex {
 typedef struct AeronSceneMesh {
 	AeronBuffer* vbo; /* merged AeronGltfVertex stream, then the levels' added vertices */
 	AeronBuffer* ibo; /* uint32 indices */
+	/* The opaque range's triangles for the shadow pass, which only reads a
+	 * vertex's position, component and primitive: each corner uses the first
+	 * vertex with the same three, so that vertices split by normals or UVs
+	 * are shaded once, and the triangles are in vertex cache order.
+	 * opaque_index_count indices from 0. NULL if it couldn't be built: the
+	 * shadow pass then draws from ibo. */
+	AeronBuffer* shadow_ibo;
 	uint32_t     vertex_count;
 	uint32_t     index_count;
 	/* Stable opaque, alpha-mask, and alpha-blend ranges, each ending with

@@ -1216,7 +1216,11 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		if (mesh != bound_mesh) {
 			bound_mesh = mesh;
 			Aeron_BindVertexBuffer(pass, 0, mesh->vbo, 0);
-			Aeron_BindIndexBuffer(pass, mesh->ibo, AERON_INDEX_FORMAT_UINT32, 0);
+			/* The opaque range has its own copy, which shares vertices that
+			 * differ only by normal or UV (AeronSceneMesh.shadow_ibo). The
+			 * mask range's alpha test needs the UVs. */
+			Aeron_BindIndexBuffer(pass, !masked && mesh->shadow_ibo ? mesh->shadow_ibo : mesh->ibo,
+								  AERON_INDEX_FORMAT_UINT32, 0);
 			Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, mesh->tag_group_buffer);
 			if (masked) {
 				Aeron_BindTextureSampler(

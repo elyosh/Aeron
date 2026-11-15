@@ -848,13 +848,15 @@ set_target_properties(aeron_cgltf PROPERTIES
     C_EXTENSIONS OFF
 )
 
-# meshoptimizer's simplifier, for the generated levels of detail. Its output
-# goes into cooked files, so it is built without contracting floating-point
-# operations, like flight_data.c.
+# meshoptimizer: the simplifier, for the generated levels of detail, and the
+# index generator and vertex cache optimizer, for the scene's shadow index
+# buffers (mesh.c). The simplifier's output goes into cooked files, so it is
+# built without contracting floating-point operations, like flight_data.c.
 add_library(aeron_meshoptimizer STATIC
     third_party/meshoptimizer/allocator.cpp
     third_party/meshoptimizer/indexgenerator.cpp
     third_party/meshoptimizer/simplifier.cpp
+    third_party/meshoptimizer/vcacheoptimizer.cpp
 )
 target_include_directories(aeron_meshoptimizer PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/meshoptimizer
@@ -1061,6 +1063,7 @@ target_link_libraries(aeron_scene
     PRIVATE
         aeron_yaml
         aeron_fsr3
+        aeron_meshoptimizer
         ${AERON_ZSTD}
 )
 

@@ -9,14 +9,20 @@
 #include "aeron/scene/image_cache.h"
 #include "aeron/scene/ktx2_reader.h"
 #include "aeron/scene/probe_set.h"
+#include "meshoptimizer.h"
 
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 typedef char AeronPbrMaterialEntrySizeCheck[sizeof(AeronPbrMaterialEntry) == 176 ? 1 : -1];
 typedef char AeronPbrScreenRectSizeCheck[sizeof(AeronPbrScreenRect) == 96 ? 1 : -1];
+/* The shadow vertex map reads a vertex's component and primitive as one
+ * stream. */
+typedef char AeronGltfVertexShadowKeyCheck
+	[offsetof(AeronGltfVertex, prim_id) == offsetof(AeronGltfVertex, component) + sizeof(float) ? 1 : -1];
 
 static const char* channel_name(int c) {
 	static const char* names[AERON_GLTF_CHANNEL_COUNT] = { "base_color", "normal", "metallic_rough",
@@ -37,9 +43,10 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	if (!m) {
 		return;
 	}
-	/* A level shares everything but its index buffer with this mesh. */
+	/* A level shares everything but its index buffers with this mesh. */
 	for (uint32_t level = 0; level < m->lod_count; level++) {
 		Aeron_DestroyBuffer(m->lods[level]->ibo);
+		Aeron_DestroyBuffer(m->lods[level]->shadow_ibo);
 		free(m->lods[level]);
 	}
 	if (m->vbo) {
@@ -48,6 +55,7 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	if (m->ibo) {
 		Aeron_DestroyBuffer(m->ibo);
 	}
+	Aeron_DestroyBuffer(m->shadow_ibo);
 	Aeron_DestroyBuffer(m->material_buffer);
 	Aeron_DestroyBuffer(m->variant_buffer);
 	Aeron_DestroyBuffer(m->tag_group_buffer);
@@ -731,12 +739,89 @@ static bool mesh_light_variants(AeronSceneMesh* s, const AeronSceneMeshVariants*
 	return true;
 }
 
+/* ---- Shadow index buffers ---- */
+
+/* For each of the model's vertices, level 0's and the levels' added ones,
+ * the first vertex with the same position, component and primitive: the
+ * vertices that the shadow pass can't tell apart. NULL when out of memory or
+ * without vertices. */
+static uint32_t* shadow_vertex_map(const AeronGltfModel* model) {
+	const size_t count = (size_t)model->vertex_count + model->lod_vertex_count;
+	if (count == 0 || !model->vertices) {
+		return NULL;
+	}
+	uint32_t* remap = malloc(sizeof(uint32_t) * count);
+	uint32_t* first = malloc(sizeof(uint32_t) * count);
+	if (!remap || !first) {
+		free(remap);
+		free(first);
+		return NULL;
+	}
+	const struct meshopt_Stream streams[2] = {
+		{ model->vertices[0].pos, sizeof model->vertices[0].pos, sizeof(AeronGltfVertex) },
+		{ &model->vertices[0].component, sizeof(float) + sizeof(uint32_t), sizeof(AeronGltfVertex) },
+	};
+	/* remap numbers the distinct vertices; `first` first holds, for each
+	 * number, the first vertex that has it. */
+	const size_t distinct = meshopt_generateVertexRemapMulti(remap, NULL, count, count, streams, 2);
+	for (size_t k = 0; k < distinct; k++) {
+		first[k] = UINT32_MAX;
+	}
+	for (size_t v = 0; v < count; v++) {
+		if (first[remap[v]] == UINT32_MAX) {
+			first[remap[v]] = (uint32_t)v;
+		}
+	}
+	for (size_t v = 0; v < count; v++) {
+		remap[v] = first[remap[v]];
+	}
+	free(first);
+	return remap;
+}
+
+/* Uploads the shadow pass's copy of `count` indices: each one replaced
+ * through `map` (shadow_vertex_map), then the triangles reordered for the
+ * vertex cache. The order doesn't matter in a depth-only pass. NULL when
+ * there is no map or it can't be built; the shadow pass then draws from the
+ * mesh's own indices. */
+static AeronBuffer* shadow_indices(AeronCommandBuffer* cmd, const uint32_t* map, size_t vertex_count,
+								   const uint32_t* indices, uint32_t count, const char* buffer_name) {
+	if (!map || count == 0) {
+		return NULL;
+	}
+	uint32_t*    mapped  = malloc(sizeof(uint32_t) * count);
+	uint32_t*    ordered = malloc(sizeof(uint32_t) * count);
+	AeronBuffer* ibo     = NULL;
+	if (mapped && ordered) {
+		for (uint32_t i = 0; i < count; i++) {
+			mapped[i] = map[indices[i]];
+		}
+		meshopt_optimizeVertexCache(ordered, mapped, count, vertex_count);
+		const uint32_t bytes = count * (uint32_t)sizeof(uint32_t);
+		ibo = Aeron_CreateBuffer(&(AeronBufferDesc) { .usage = AERON_BUFFER_USAGE_INDEX, .size = bytes });
+		const AeronBufferUploadDesc upload = { .buffer = ibo, .data = ordered, .size = bytes };
+		if (ibo && Aeron_UploadBufferBatchCmd(cmd, &upload, 1)) {
+			Aeron_GpuDebugNameBuffer(ibo, buffer_name);
+		} else {
+			Aeron_DestroyBuffer(ibo);
+			ibo = NULL;
+		}
+	}
+	if (!ibo) {
+		Aeron_LogWarn("aeron.scene", "%s failed to load; shadows use the full indices", buffer_name);
+	}
+	free(mapped);
+	free(ordered);
+	return ibo;
+}
+
 /* Builds a mesh for each of the model's levels of detail. It shares this
- * mesh's buffers, textures and materials, and has its own index buffer and
+ * mesh's buffers, textures and materials, and has its own index buffers and
  * ranges. If a level fails, it and the coarser ones are left out with a
- * warning, and the model keeps more detail than it needs. */
+ * warning, and the model keeps more detail than it needs. `shadow_map` is
+ * the model's shadow_vertex_map, or NULL. */
 static void build_lods(AeronCommandBuffer* cmd, AeronSceneMesh* s, const AeronGltfModel* model,
-					   const char* name) {
+					   const char* name, const uint32_t* shadow_map) {
 	for (uint32_t level = 0; level < model->lod_count && level < AERON_GLTF_MAX_LODS; level++) {
 		const AeronGltfLod*   lod   = &model->lods[level];
 		const uint32_t        bytes = lod->index_count * (uint32_t)sizeof(uint32_t);
@@ -760,6 +845,10 @@ static void build_lods(AeronCommandBuffer* cmd, AeronSceneMesh* s, const AeronGl
 		Aeron_GpuDebugNameBuffer(ibo, buffer_name);
 		*copy                           = *s;
 		copy->ibo                       = ibo;
+		snprintf(buffer_name, sizeof buffer_name, "%s.lod%u.shadow_indices", name, level + 1);
+		copy->shadow_ibo =
+			shadow_indices(cmd, shadow_map, (size_t)model->vertex_count + model->lod_vertex_count,
+						   model->lod_indices + lod->index_offset, lod->ranges[0], buffer_name);
 		copy->index_count               = lod->index_count;
 		copy->opaque_index_count        = lod->ranges[0];
 		copy->opaque_screen_index_count = lod->ranges[1];
@@ -1204,7 +1293,15 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 	s->bound_max[1] = flight_model->bounds.max.y;
 	s->bound_max[2] = flight_model->bounds.max.z;
 	/* Last, so that the levels copy the finished mesh. */
-	build_lods(cmd, s, model, name);
+	uint32_t* shadow_map = s->vbo ? shadow_vertex_map(model) : NULL;
+	if (s->vbo) {
+		char buffer_name[512];
+		snprintf(buffer_name, sizeof buffer_name, "%s.shadow_indices", name);
+		s->shadow_ibo = shadow_indices(cmd, shadow_map, (size_t)model->vertex_count + model->lod_vertex_count,
+									   model->indices, s->opaque_index_count, buffer_name);
+	}
+	build_lods(cmd, s, model, name, shadow_map);
+	free(shadow_map);
 	if (status) {
 		*status = AERON_SCENE_MESH_CREATE_SUCCESS;
 	}
