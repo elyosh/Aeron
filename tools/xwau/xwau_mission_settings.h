@@ -38,9 +38,8 @@
  *
  * Without hook_mission_tie.dll, there are no settings, and without
  * hook_engine_sound.dll, there are no abort sound regions. The import
- * doesn't convert IsMissionRanksModifierEnabled, and counts it as
- * unsupported. It does the same for order of battle texts that aren't ASCII,
- * since the game may show them differently.
+ * counts order of battle texts that aren't ASCII as unsupported, since the
+ * game may show them differently.
  */
 
 #include <stdbool.h>
@@ -105,6 +104,9 @@ typedef struct XwauSettingsConfig {
 	bool      pilot_hangar_droids;
 	bool      warhead_collision_damage;
 	bool      damage_through_shields;
+	/* hook_mission_tie's IsMissionRanksModifierEnabled: the difficulty
+	 * changes the AI ranks at mission load, as in the original game. */
+	bool      ranks_modifier;
 	long long target_method;
 	bool      target_only_not_inspected;
 	/* The regions of FlightModels/Interdiction.txt, else of the
@@ -126,7 +128,8 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out);
 void XwauSettingsConfig_Free(XwauSettingsConfig* config);
 
 /* Writes the `rules` and `mission_settings` sections of flight/flight.yaml.
- * The rules are hook_mission_tie's, hook_opt_limit's
+ * The rules are hook_mission_tie's (with no_difficulty_rank_changes when
+ * IsMissionRanksModifierEnabled is 0), hook_opt_limit's
  * classic_hide_destroyed_engine_glows, hook_weapon_color's
  * weapon_iff_swap, hook_mission_tie's ai_attack_uses_max_speed_cache and
  * hook_weapon_rate's fire_needs_decharge_rate,

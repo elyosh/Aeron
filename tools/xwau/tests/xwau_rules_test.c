@@ -2282,6 +2282,17 @@ static void test_mission_settings(const char* scratch) {
 								  "  warhead_collision_damage: false\n"
 								  "  hyperspace_regions: {3: {arrival_sound: abort}}\n"),
 		  "mission settings: the hook's rules, and the global settings as defaults");
+	snprintf(path, sizeof path, "%s/Hook_Mission_Tie.cfg", game);
+	write_file(path, "IsWarheadCollisionDamagesEnabled = 0\nTargetCraftKeyMethod = 1\n"
+					 "IsMissionRanksModifierEnabled = 0\n");
+	size_t settings_size = 0;
+	char*  settings_text = XwauFlightSettings_Write(game, &g_names, &g_stock, settings)
+							   ? ReadWholeFile(settings, &settings_size)
+							   : NULL;
+	check(settings_text && strstr(settings_text, "  no_difficulty_rank_changes: true\n"),
+		  "mission settings: a ranks modifier turned off keeps the ranks at every difficulty");
+	free(settings_text);
+	write_file(path, "IsWarheadCollisionDamagesEnabled = 0\nTargetCraftKeyMethod = 1\n");
 
 	XwauMissions* missions = XwauMissions_Load(game, false);
 	check(missions && XwauMissionFiles_Write(game, missions, stock, out, &g_names, kDesignScale),

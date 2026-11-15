@@ -22,6 +22,7 @@
 #define TIE_FLIGHT_GROUP_NAME 20
 #define TIE_FLIGHT_GROUP_CRAFT 0x6B
 #define TIE_FLIGHT_GROUP_CRAFT_COUNT 0x6C
+#define TIE_FLIGHT_GROUP_RANK 0x72
 #define TIE_FLIGHT_GROUP_MARKINGS 0x73
 /* The header's mission type byte. */
 #define TIE_MISSION_TYPE 0x23AC
@@ -500,9 +501,37 @@ XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count) {
 		g->craft                       = record[TIE_FLIGHT_GROUP_CRAFT];
 		g->craft_count                 = record[TIE_FLIGHT_GROUP_CRAFT_COUNT];
 		g->markings                    = record[TIE_FLIGHT_GROUP_MARKINGS];
+		g->rank                        = record[TIE_FLIGHT_GROUP_RANK];
 	}
 	fclose(f);
 	return out;
+}
+
+void XwauTie_ReportRanks(const char* game, const char* dir_name) {
+	char dir[1024];
+	if (!Xwau_FindDir(game, dir_name, dir, sizeof dir))
+		return;
+	size_t count   = 0;
+	char** entries = ListDir(dir, true, &count);
+	for (size_t i = 0; i < count; ++i) {
+		char path[1100];
+		if (!EndsWithNoCase(entries[i], ".tie") || !PathFormat(path, sizeof path, "%s/%s", dir, entries[i]))
+			continue;
+		size_t              group_count = 0;
+		XwauTieFlightGroup* groups      = XwauTie_FlightGroups(path, &group_count);
+		size_t              above = 0, first = 0;
+		for (size_t g = 0; groups && g < group_count; ++g)
+			if (groups[g].rank > 5 && above++ == 0)
+				first = g;
+		if (above)
+			Report(path,
+				   "%zu flight group%s an AI rank above 5, such as %s (rank %d). The game only has "
+				   "ranks 0 to 5, so their craft use values from past the end of the rank tables, as in "
+				   "the original game",
+				   above, above == 1 ? " has" : "s have", groups[first].name, groups[first].rank);
+		free(groups);
+	}
+	FreeList(entries, count);
 }
 
 int XwauTie_MissionType(const char* path) {

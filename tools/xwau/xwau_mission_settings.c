@@ -100,9 +100,7 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 		XwauSection_IntOr(&settings, "TargetCraftKeySelectOnlyNotInspected", 0) != 0;
 	out->damage_through_shields =
 		XwauSection_IntOr(&settings, "CanShootThroughtShieldOnHardDifficulty", 0) != 0;
-	/* The importer doesn't know what the ranks modifier does in XWAU. */
-	if (out->mission_tie && XwauSection_IntOr(&settings, "IsMissionRanksModifierEnabled", 0) != 0)
-		ReportUnsupported("the hook_mission_tie key IsMissionRanksModifierEnabled");
+	out->ranks_modifier = XwauSection_IntOr(&settings, "IsMissionRanksModifierEnabled", 1) != 0;
 	XwauSection_Free(&settings);
 	XwauSection interdiction;
 	if (!XwauSection_ReadGlobal(game, "Interdiction", XWAU_RULES_CPP, &interdiction))
@@ -179,6 +177,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("rules:\n", f);
 	if (config->mission_tie)
 		fputs("  reset_combat_music_at_mission_load: true\n  hangar_red_alert_any_mothership: true\n", f);
+	if (config->mission_tie && !config->ranks_modifier)
+		fputs("  no_difficulty_rank_changes: true\n", f);
 	if (config->opt_limit_engine_glows)
 		fputs("  classic_hide_destroyed_engine_glows: true\n", f);
 	if (config->weapon_switch)

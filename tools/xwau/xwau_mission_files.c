@@ -1105,6 +1105,7 @@ bool XwauMissionFiles_Write(const char* game, const XwauMissions* missions, cons
 	XwauGameTables* tables = ok ? XwauGameTables_Load(game) : NULL;
 	for (size_t d = 0; ok && d < sizeof kMissionDirs / sizeof kMissionDirs[0]; ++d) {
 		XwauLines names;
+		XwauTie_ReportRanks(game, kMissionDirs[d]);
 		ok = XwauMissions_Names(game, kMissionDirs[d], &names);
 		/* The missions of the lists too: some settings have defaults by
 		   mission number, also for missions that the mod doesn't change. */

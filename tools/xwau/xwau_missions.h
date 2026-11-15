@@ -87,11 +87,18 @@ typedef struct XwauTieFlightGroup {
 	int  craft;       /* craft type */
 	int  craft_count; /* the number of craft in each wave */
 	int  markings;
+	int  rank; /* the AI rank (groupAI), from 0 to 5 in the game */
 } XwauTieFlightGroup;
 
 /* Reads the flight groups of the .TIE file `path`. Returns NULL when it
  * cannot be read. */
 XwauTieFlightGroup* XwauTie_FlightGroups(const char* path, size_t* count);
+
+/* Reports each mission of folder `dir` (Missions, Melee or Combat) that has
+ * flight groups with an AI rank above 5. The game only has ranks 0 to 5, and
+ * the craft of such a flight group use values that the original reads past
+ * the end of its rank tables. */
+void XwauTie_ReportRanks(const char* game, const char* dir);
 
 /* The mission type of an XWA .TIE: 5 for a Death Star mission. */
 #define XWAU_TIE_MISSION_TYPE_DEATH_STAR 5
