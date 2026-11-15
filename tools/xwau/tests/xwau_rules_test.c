@@ -1167,6 +1167,7 @@ typedef struct FakeExe {
 static const struct {
 	unsigned address, size;
 } g_fakeSections[] = {
+	{ 0x402000, 0x1000 },  /* the turret patch */
 	{ 0x404000, 0x1000 },  /* the ejection patches */
 	{ 0x41B000, 0x1000 },  /* the two-launcher patch */
 	{ 0x41C000, 0x1000 },  /* the beam test */
@@ -1241,6 +1242,7 @@ static void fake_rule_patches(FakeExe* exe, bool shared, bool tftc_only) {
 		  { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 } },
 		{ 0x4E184A, 6, true, { 0x81, 0xF9, 0x00, 0x80, 0x02, 0x00 }, { 0x81, 0xF9, 0xFF, 0xFF, 0x00, 0x00 } },
 		{ 0x41BC0E, 2, true, { 0x1F, 0x01 }, { 0x24, 0x01 } },
+		{ 0x40215A, 2, false, { 0xA8, 0x01 }, { 0xEB, 0x27 } },
 	};
 
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
@@ -2663,7 +2665,7 @@ static void test_exe_patches(const char* scratch) {
 	snprintf(game, sizeof game, "%s/exe_patches_game", scratch);
 	MakeDirs(game);
 	snprintf(settings, sizeof settings, "%s/exe_patches.yaml", scratch);
-	static const char* const rules[8] = {
+	static const char* const rules[9] = {
 		"  no_pilot_ejections: true\n",
 		"  no_escape_pod_ejections: true\n",
 		"  ejected_craft_team_9: true\n",
@@ -2672,26 +2674,27 @@ static void test_exe_patches(const char* scratch) {
 		"  ai_warheads_attack_on_hit: true\n",
 		"  one_jamming_beam_stops_turrets: true\n",
 		"  two_launcher_advanced_missiles: true\n",
+		"  no_turret_idle_spin: true\n",
 	};
 
 	/* The rules expected for each exe. */
 	static const struct {
 		bool        shared, tftcOnly;
-		bool        expected[8];
+		bool        expected[9];
 		const char* what;
 	} cases[] = {
 		{ false,
 		  false,
-		  { false, false, false, false, false, false, false, false },
+		  { false, false, false, false, false, false, false, false, false },
 		  "exe patches: the stock exe gets no rules" },
 		{ true,
 		  true,
-		  { true, true, true, true, true, true, true, true },
-		  "exe patches: TFTC's exe gets all eight rules" },
+		  { true, true, true, true, true, true, true, true, true },
+		  "exe patches: TFTC's exe gets all nine rules" },
 		{ true,
 		  false,
-		  { false, false, true, true, true, false, false, false },
-		  "exe patches: XWAU 2025's exe gets the three rules for ejected craft" },
+		  { false, false, true, true, true, false, false, false, true },
+		  "exe patches: XWAU 2025's exe gets the rules for ejected craft and the turret rule" },
 	};
 
 	for (size_t c = 0; c < sizeof cases / sizeof cases[0]; ++c) {
@@ -2701,7 +2704,7 @@ static void test_exe_patches(const char* scratch) {
 		fake_exe_write(&exe, game);
 		char* text = flight_settings_text(game, settings);
 		bool  ok   = text != NULL;
-		for (int r = 0; ok && r < 8; ++r)
+		for (int r = 0; ok && r < 9; ++r)
 			ok = (strstr(text, rules[r]) != NULL) == cases[c].expected[r];
 		check(ok, cases[c].what);
 		free(text);

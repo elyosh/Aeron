@@ -15,8 +15,8 @@
  *     can carry a beam (mission.c:6624-6627).
  *
  * The flight settings phase, which writes rules (xwau_mission_settings.h).
- * TFTC's executables have all eight patches, and XWAU 2025's only the ones
- * at 0x404481, 0x404EEB and 0x5797B6:
+ * TFTC's executables have all nine patches, and XWAU 2025's only the ones
+ * at 0x404481, 0x404EEB, 0x5797B6 and 0x40215A:
  *   - 0x4042F4: no pilot ejects from a fighter;
  *   - 0x40434B: no escape pod ejects from a transport, starship or
  *     platform;
@@ -28,7 +28,9 @@
  *     not when it's launched;
  *   - 0x4E184A: one jamming beam stops a craft's turrets, instead of three;
  *   - 0x41BC0E: the first launcher of a craft with two launcher types loads
- *     advanced missiles instead of missiles.
+ *     advanced missiles instead of missiles;
+ *   - 0x40215A: a rotary gun turret without a target doesn't turn, and
+ *     doesn't call GameRand.
  *
  * TFTC's executables also fix XwaAIComponentGoneOrder, which reads through
  * a null pointer in the original. The port always has that fix, so the
@@ -56,6 +58,7 @@ typedef struct XwauExePatches {
 	bool ai_warheads_attack_on_hit;
 	bool one_jamming_beam_stops_turrets;
 	bool two_launcher_advanced_missiles;
+	bool no_turret_idle_spin;
 } XwauExePatches;
 
 /* Reads the patches of `group` in `exe`. The patches of the other group stay

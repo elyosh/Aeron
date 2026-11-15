@@ -25,7 +25,8 @@ typedef struct Patch {
 } Patch;
 
 /* From XWAU's "Classic EXE patches" list, except the two-launcher patch,
-   which TFTC's executables have but the list doesn't. */
+   which TFTC's executables have but the list doesn't, and the turret patch,
+   which XWAU's installer applies. */
 static const Patch g_patches[] = {
 	{ "Beam system for rebel starfighters",
 	  XWAU_EXE_PATCHES_CRAFT,
@@ -69,6 +70,10 @@ static const Patch g_patches[] = {
 	  XWAU_EXE_PATCHES_FLIGHT,
 	  offsetof(XwauExePatches, one_jamming_beam_stops_turrets),
 	  { { 0x4E184A, 6, { 0x81, 0xF9, 0x00, 0x80, 0x02, 0x00 }, { 0x81, 0xF9, 0xFF, 0xFF, 0x00, 0x00 } } } },
+	{ "Disable gun turret random rotation",
+	  XWAU_EXE_PATCHES_FLIGHT,
+	  offsetof(XwauExePatches, no_turret_idle_spin),
+	  { { 0x40215A, 2, { 0xA8, 0x01 }, { 0xEB, 0x27 } } } },
 	{ "first launcher of craft with two launcher types loads advanced missiles",
 	  XWAU_EXE_PATCHES_FLIGHT,
 	  offsetof(XwauExePatches, two_launcher_advanced_missiles),
