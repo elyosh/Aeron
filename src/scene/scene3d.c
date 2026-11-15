@@ -520,15 +520,13 @@ int AeronScene_PrepareResources(AeronScene3D* s, AeronCullMode mesh_cull) {
 
 /* ---- per-frame ---- */
 
-int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
-	if (!s || !camera || !scene_prepare_mode(s)) {
-		return 0;
-	}
-	/* Snapshot the previous frame's orientation before overwriting the
-	 * camera; the motion-blur camera fill uses it to skip itself when the
-	 * camera barely rotated (its output would be sub-pixel). */
-	memcpy(s->mb_prev_ori, s->camera.ori, sizeof s->mb_prev_ori);
-	s->output_camera = *camera;
+/* Makes `index` the current view. It copies the view's state into the
+ * scene's camera, motion and cluster fields, and builds the view-projection
+ * matrices. */
+static void scene_view_enter(AeronScene3D* s, int index) {
+	const AeronSceneViewState* state = &s->views[index];
+	s->current_view                  = index;
+	s->output_camera                 = state->camera;
 	if (s->output_camera.viewport.width <= 0 || s->output_camera.viewport.height <= 0) {
 		s->output_camera.viewport = (AeronRectI) { 0, 0, s->output_w, s->output_h };
 	}
@@ -551,6 +549,32 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 		proj[6] -= 2.0f * s->temporal_jitter[1] / (float)s->camera.viewport.height;
 	}
 	scene_mat4_mul(s->jittered_view_proj, proj, view);
+	memcpy(s->mb_prev_ori, state->mb_prev_ori, sizeof s->mb_prev_ori);
+	/* When the caller gave no previous view-projection, use the current one,
+	 * so the camera has no velocity. */
+	memcpy(s->mb_prev_view_proj,
+		   state->mb_prev_view_proj_set ? state->mb_prev_view_proj : s->unjittered_view_proj,
+		   sizeof s->mb_prev_view_proj);
+	s->cluster_far_z             = state->cluster_far_z;
+	s->cluster_near_z            = state->cluster_near_z;
+	s->cluster_far_shrink_frames = state->cluster_far_shrink_frames;
+}
+
+int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
+	if (!s || !camera || !scene_prepare_mode(s)) {
+		return 0;
+	}
+	AeronSceneViewState* state = &s->views[0];
+	/* Save the previous frame's camera orientation before the camera is
+	 * replaced. The motion-blur camera fill compares it with the new one and
+	 * skips itself when the camera barely turned, because the result would be
+	 * smaller than a pixel. */
+	memcpy(state->mb_prev_ori, state->camera.ori, sizeof state->mb_prev_ori);
+	state->camera                = *camera;
+	state->mb_prev_view_proj_set = 0;
+	s->view_count                = 1;
+	s->frame_prepared            = 0;
+	scene_view_enter(s, 0);
 	s->instance_count       = 0;
 	s->emission_frame_valid = 0;
 	s->instances_dropped    = 0;
@@ -588,9 +612,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->overlay_frame_ready  = 0;
 	s->storage_ready        = 0;
 	s->after_meshes_fn      = NULL;
-	s->after_meshes_user    = NULL;
-	/* Default motion context: prev = current (zero camera velocity). */
-	memcpy(s->mb_prev_view_proj, s->unjittered_view_proj, sizeof s->mb_prev_view_proj);
+	s->after_meshes_user     = NULL;
 	s->mb_velocity_regen     = 0;
 	s->scene_rt_out          = s->color_rt;
 	s->scene_rt_out_borrowed = 0;
@@ -1009,10 +1031,16 @@ void AeronScene_SetMotionContext(AeronScene3D* s, const float prev_view_proj[16]
 	if (!s) {
 		return;
 	}
+	/* Store the motion context in the view's state, and also in the scene's
+	 * fields, because this view is the current one. */
+	AeronSceneViewState* state = &s->views[s->current_view];
 	if (prev_ori) {
+		memcpy(state->mb_prev_ori, prev_ori, sizeof state->mb_prev_ori);
 		memcpy(s->mb_prev_ori, prev_ori, sizeof s->mb_prev_ori);
 	}
+	state->mb_prev_view_proj_set = prev_view_proj != NULL;
 	if (prev_view_proj) {
+		memcpy(state->mb_prev_view_proj, prev_view_proj, sizeof state->mb_prev_view_proj);
 		memcpy(s->mb_prev_view_proj, prev_view_proj, sizeof s->mb_prev_view_proj);
 	} else {
 		memcpy(s->mb_prev_view_proj, s->unjittered_view_proj, sizeof s->mb_prev_view_proj);
@@ -1158,17 +1186,13 @@ void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light) {
 		return;
 	for (int i = 0; i < 3; ++i)
 		dir[i] /= length;
-	float t0[3], t1[3];
-	sky_sun_basis(s, dir, t0, t1);
 	const float deg = (float)(SKY_SUN_PI / 180.0);
-	/* One output pixel, as a tangent at the view centre. */
-	const float pixel = s->camera.viewport.height > 0
-							? 2.0f * tanf(s->camera.v_half_rad) / (float)s->camera.viewport.height
-							: 1e-3f;
 
 	if (light->visual == AERON_ENV_SUN_SPRITE) {
 		if (!light->sprite || !(light->angular_size_degrees > 0.0f))
 			return;
+		float t0[3], t1[3];
+		sky_sun_basis(s, dir, t0, t1);
 		const float             half  = tanf(0.5f * light->angular_size_degrees * deg);
 		const float             scale = light->sprite_strength;
 		AeronSceneBillboardDesc desc;
@@ -1207,9 +1231,40 @@ void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light) {
 	}
 	if (!(sky_sun_max3(irradiance) > 0.0f) || !isfinite(sky_sun_max3(center)))
 		return;
+
+	AeronSceneSkySun* sun = &s->sky_suns[s->sky_sun_count++];
+	memset(sun, 0, sizeof *sun);
+	memcpy(sun->direction, dir, sizeof sun->direction);
+	sun->angle = angle;
+	memcpy(sun->irradiance, irradiance, sizeof sun->irradiance);
+	memcpy(sun->center, center, sizeof sun->center);
+	sun->display_max_radiance = light->display_max_radiance;
+	sun->glow_strength        = light->glow_strength;
+	sun->glow_radius          = tanf(light->glow_radius_degrees * deg);
+}
+
+/* The values needed to draw a sun disc in the current view. */
+typedef struct SkySunDraw {
+	float tangent0[3];
+	float tangent1[3];
+	float half_extent;
+	float disc[4]; /* centre radiance rgb, limb-darkening coefficient */
+	float glow[3]; /* peak glow radiance */
+	float radius;
+	float glow_radius;
+} SkySunDraw;
+
+static void sky_sun_resolve(const AeronScene3D* s, const AeronSceneSkySun* sun, SkySunDraw* out) {
+	memset(out, 0, sizeof *out);
+	sky_sun_basis(s, sun->direction, out->tangent0, out->tangent1);
+	/* The size of one output pixel as a tangent, at the centre of the view. */
+	const float pixel     = s->camera.viewport.height > 0
+								? 2.0f * tanf(s->camera.v_half_rad) / (float)s->camera.viewport.height
+								: 1e-3f;
+	float       center[3] = { sun->center[0], sun->center[1], sun->center[2] };
 	/* Keep the flux when the disc is below a pixel or brighter than the
 	 * target can hold: widen it and lower its radiance by the area ratio. */
-	float radius = tanf(angle);
+	float radius = tanf(sun->angle);
 	if (radius < 0.75f * pixel) {
 		const float ratio = radius / (0.75f * pixel);
 		for (int i = 0; i < 3; ++i)
@@ -1219,7 +1274,7 @@ void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light) {
 	/* Display cap: the disc keeps its size and is drawn no brighter than
 	 * the cap after the exposure; only its appearance changes, not the
 	 * light it casts. */
-	const float display_max = light->display_max_radiance / s->exposure;
+	const float display_max = sun->display_max_radiance / s->exposure;
 	if (display_max > 0.0f && sky_sun_max3(center) > display_max) {
 		const float ratio = display_max / sky_sun_max3(center);
 		for (int i = 0; i < 3; ++i)
@@ -1232,27 +1287,20 @@ void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light) {
 			center[i] /= ratio;
 		radius *= sqrtf(ratio);
 	}
-
-	AeronSceneSkySun* sun = &s->sky_suns[s->sky_sun_count++];
-	memset(sun, 0, sizeof *sun);
-	memcpy(sun->direction, dir, sizeof sun->direction);
-	memcpy(sun->tangent0, t0, sizeof sun->tangent0);
-	memcpy(sun->tangent1, t1, sizeof sun->tangent1);
-	memcpy(sun->disc, center, sizeof center);
-	sun->disc[3]            = SKY_SUN_LIMB_DARKENING;
-	sun->radius             = radius;
-	sun->glow_radius        = 0.0f;
-	const float glow_radius = tanf(light->glow_radius_degrees * deg);
-	if (light->glow_strength > 0.0f && glow_radius > radius) {
+	memcpy(out->disc, center, sizeof center);
+	out->disc[3]     = SKY_SUN_LIMB_DARKENING;
+	out->radius      = radius;
+	out->glow_radius = 0.0f;
+	if (sun->glow_strength > 0.0f && sun->glow_radius > radius) {
 		/* The glow (1 - t)^2 from R to G integrates to glow_strength times
 		 * the disc's irradiance: its area integral is 2 pi w (R/3 + w/12). */
-		const float w        = glow_radius - radius;
+		const float w        = sun->glow_radius - radius;
 		const float integral = (float)(2.0 * SKY_SUN_PI) * w * (radius / 3.0f + w / 12.0f);
 		for (int i = 0; i < 3; ++i)
-			sun->glow[i] = fminf(light->glow_strength * irradiance[i] / integral, SKY_SUN_MAX_RADIANCE);
-		sun->glow_radius = glow_radius;
+			out->glow[i] = fminf(sun->glow_strength * sun->irradiance[i] / integral, SKY_SUN_MAX_RADIANCE);
+		out->glow_radius = sun->glow_radius;
 	}
-	sun->half_extent = fmaxf(sun->radius, sun->glow_radius) * 1.05f + 2.0f * pixel;
+	out->half_extent = fmaxf(out->radius, out->glow_radius) * 1.05f + 2.0f * pixel;
 }
 
 static int scene_draw_sky_suns(AeronScene3D* s, AeronRenderPass* pass) {
@@ -1291,7 +1339,8 @@ static int scene_draw_sky_suns(AeronScene3D* s, AeronRenderPass* pass) {
 		return 0;
 	Aeron_BindGraphicsPipeline(pass, s->sky_sun_pipe);
 	for (int i = 0; i < s->sky_sun_count; ++i) {
-		const AeronSceneSkySun* sun = &s->sky_suns[i];
+		SkySunDraw sun;
+		sky_sun_resolve(s, &s->sky_suns[i], &sun);
 
 		struct {
 			float view_proj[16];
@@ -1303,15 +1352,14 @@ static int scene_draw_sky_suns(AeronScene3D* s, AeronRenderPass* pass) {
 		memset(&vsu, 0, sizeof vsu);
 		memcpy(vsu.view_proj, s->jittered_view_proj, sizeof vsu.view_proj);
 		for (int c = 0; c < 3; ++c) {
-			vsu.center[c]   = s->camera.pos[c] + sun->direction[c];
-			vsu.tangent0[c] = sun->tangent0[c];
-			vsu.tangent1[c] = sun->tangent1[c];
+			vsu.center[c]   = s->camera.pos[c] + s->sky_suns[i].direction[c];
+			vsu.tangent0[c] = sun.tangent0[c];
+			vsu.tangent1[c] = sun.tangent1[c];
 		}
-		vsu.tangent0[3] = sun->half_extent;
+		vsu.tangent0[3] = sun.half_extent;
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsu, sizeof vsu);
-		float fsu[12] = { sun->disc[0], sun->disc[1],     sun->disc[2], sun->disc[3],
-						  sun->glow[0], sun->glow[1],     sun->glow[2], 0.0f,
-						  sun->radius,  sun->glow_radius, 0.0f,         0.0f };
+		float fsu[12] = { sun.disc[0], sun.disc[1], sun.disc[2], sun.disc[3],     sun.glow[0], sun.glow[1],
+						  sun.glow[2], 0.0f,        sun.radius,  sun.glow_radius, 0.0f,        0.0f };
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, fsu, sizeof fsu);
 		Aeron_Draw(pass, 6, 0);
 	}
@@ -1516,6 +1564,22 @@ void AeronScene_GetLodStats(const AeronScene3D* s, AeronSceneLodStats* out) {
 			*out = s->lod_stats;
 		}
 	}
+}
+
+void AeronScene_GetFrameStats(const AeronScene3D* s, AeronSceneFrameStats* out) {
+	if (out) {
+		memset(out, 0, sizeof *out);
+		if (s) {
+			*out = s->frame_stats;
+		}
+	}
+}
+
+/* Returns the number of draw calls recorded so far in this host frame. */
+static uint32_t scene_recorded_draws(void) {
+	AeronRenderDataStats stats;
+	Aeron_GetRenderDataStats(&stats);
+	return stats.draw_count;
 }
 
 void AeronScene_SetEmissionMinWidth(AeronScene3D* s, float min_width_px) {
@@ -2682,18 +2746,62 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		s->mesh_tables_dropped_logged = 1;
 	}
 
-	const uint32_t  light_count = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
-	AeronSceneLight merged[AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS];
-	uint32_t        group_of[AERON_SCENE_MAX_LIGHTS];
-	float           merge_centers[AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS][3];
-	float           merge_distances[AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS];
+	/* Spot lights are merged in world space, so this is done once for all
+	 * views. */
 	s->grouped_spot_light_count = 0;
 	s->merged_spot_light_count  = 0;
-	if (s->cluster_desc.merge_spot_lights && light_count > 1) {
+	if (s->cluster_desc.merge_spot_lights && s->light_count > 1) {
 		s->merged_spot_light_count =
-			scene_merge_spot_lights(s, AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS, merged,
-									group_of, merge_centers, merge_distances);
+			scene_merge_spot_lights(s, AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS, s->spot_merged,
+									s->spot_group_of, s->spot_merge_centers, s->spot_merge_distances);
 	}
+
+	const uint32_t table_bytes = s->mesh_table_vec4_count * (uint32_t)sizeof *s->mesh_table_staging;
+	if (!scene_storage_ensure_buffer(&s->mesh_table_buffer, &s->mesh_table_buffer_cap, table_bytes,
+									 "scene.mesh_tables")) {
+		scene_storage_report_failure(s, "scene.mesh_tables", table_bytes);
+		return 0;
+	}
+	const uint32_t screen_bytes = (uint32_t)sizeof s->screen_frame;
+	if (!scene_storage_ensure_buffer(&s->screen_frame_buffer, &s->screen_frame_buffer_cap, screen_bytes,
+									 "scene.screen_frame")) {
+		scene_storage_report_failure(s, "scene.screen_frame", screen_bytes);
+		return 0;
+	}
+	const uint32_t record_bytes = record_count * (uint32_t)sizeof *s->instance_record_staging;
+	if (record_bytes > 0 &&
+		!scene_storage_ensure_buffer(&s->instance_record_buffer, &s->instance_record_buffer_cap, record_bytes,
+									 "scene.instance_records")) {
+		scene_storage_report_failure(s, "scene.instance_records", record_bytes);
+		return 0;
+	}
+	AeronBufferUploadDesc uploads[3] = {
+		{ s->mesh_table_buffer, 0, s->mesh_table_staging, table_bytes },
+		{ s->screen_frame_buffer, 0, &s->screen_frame, screen_bytes },
+	};
+	uint32_t upload_count = 2;
+	if (record_bytes > 0) {
+		uploads[upload_count++] = (AeronBufferUploadDesc) { s->instance_record_buffer, 0,
+															s->instance_record_staging, record_bytes };
+	}
+	s->storage_ready = Aeron_UploadBufferBatchCmd(cmd, uploads, upload_count);
+	if (!s->storage_ready) {
+		scene_storage_report_failure(s, "scene.dynamic_storage", table_bytes);
+	} else {
+		s->storage_error_logged = 0;
+	}
+	return s->storage_ready;
+}
+
+int AeronSceneStorage_PrepareView(AeronScene3D* s, AeronCommandBuffer* cmd) {
+	if (!s || !cmd || !s->storage_ready) {
+		return 0;
+	}
+	const uint32_t         light_count = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
+	const AeronSceneLight* merged      = s->spot_merged;
+	const uint32_t*        group_of    = s->spot_group_of;
+	const float (*merge_centers)[3]    = s->spot_merge_centers;
+	const float* merge_distances       = s->spot_merge_distances;
 	/* The scene's lights, then the merged ones. */
 	const uint32_t point_count = light_count + s->merged_spot_light_count;
 	if (point_count > 0 &&
@@ -2843,15 +2951,9 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		memset(s->point_light_staging, 0, sizeof *s->point_light_staging);
 	}
 
-	const uint32_t table_bytes = s->mesh_table_vec4_count * (uint32_t)sizeof *s->mesh_table_staging;
 	const uint32_t point_bytes =
 		(s->point_light_count ? s->point_light_count : 1u) * (uint32_t)sizeof *s->point_light_staging;
 	const uint32_t cluster_light_bytes = s->point_light_count * (uint32_t)sizeof *s->cluster_light_staging;
-	if (!scene_storage_ensure_buffer(&s->mesh_table_buffer, &s->mesh_table_buffer_cap, table_bytes,
-									 "scene.mesh_tables")) {
-		scene_storage_report_failure(s, "scene.mesh_tables", table_bytes);
-		return 0;
-	}
 	if (!scene_storage_ensure_buffer(&s->point_light_buffer, &s->point_light_buffer_cap, point_bytes,
 									 "scene.point_lights")) {
 		scene_storage_report_failure(s, "scene.point_lights", point_bytes);
@@ -2864,40 +2966,20 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		scene_storage_report_failure(s, "scene.cluster_lights", cluster_light_bytes);
 		return 0;
 	}
-	const uint32_t screen_bytes = (uint32_t)sizeof s->screen_frame;
-	if (!scene_storage_ensure_buffer(&s->screen_frame_buffer, &s->screen_frame_buffer_cap, screen_bytes,
-									 "scene.screen_frame")) {
-		scene_storage_report_failure(s, "scene.screen_frame", screen_bytes);
-		return 0;
-	}
-	const uint32_t record_bytes = record_count * (uint32_t)sizeof *s->instance_record_staging;
-	if (record_bytes > 0 &&
-		!scene_storage_ensure_buffer(&s->instance_record_buffer, &s->instance_record_buffer_cap, record_bytes,
-									 "scene.instance_records")) {
-		scene_storage_report_failure(s, "scene.instance_records", record_bytes);
-		return 0;
-	}
-	AeronBufferUploadDesc uploads[5] = {
-		{ s->mesh_table_buffer, 0, s->mesh_table_staging, table_bytes },
+	AeronBufferUploadDesc uploads[2] = {
 		{ s->point_light_buffer, 0, s->point_light_staging, point_bytes },
-		{ s->screen_frame_buffer, 0, &s->screen_frame, screen_bytes },
 	};
-	uint32_t upload_count = 3;
+	uint32_t upload_count = 1;
 	if (cluster_light_bytes > 0) {
 		uploads[upload_count++] = (AeronBufferUploadDesc) { s->cluster_light_buffer, 0,
 															s->cluster_light_staging, cluster_light_bytes };
 	}
-	if (record_bytes > 0) {
-		uploads[upload_count++] = (AeronBufferUploadDesc) { s->instance_record_buffer, 0,
-															s->instance_record_staging, record_bytes };
+	if (!Aeron_UploadBufferBatchCmd(cmd, uploads, upload_count)) {
+		s->storage_ready = 0;
+		scene_storage_report_failure(s, "scene.light_storage", point_bytes + cluster_light_bytes);
+		return 0;
 	}
-	s->storage_ready = Aeron_UploadBufferBatchCmd(cmd, uploads, upload_count);
-	if (!s->storage_ready) {
-		scene_storage_report_failure(s, "scene.dynamic_storage", table_bytes + point_bytes);
-	} else {
-		s->storage_error_logged = 0;
-	}
-	return s->storage_ready;
+	return 1;
 }
 
 uint32_t AeronSceneStorage_ShadowTableBase(const AeronScene3D* s, uint16_t encoded_caster,
@@ -3069,15 +3151,40 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
 	return 1;
 }
 
-int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
+/* Which features the frame uses. This depends on the scene's settings and
+ * on what was submitted. */
+typedef struct SceneFrameNeeds {
+	int temporal;
+	int ssao;
+	int mb;
+	int pbr;
+} SceneFrameNeeds;
+
+static SceneFrameNeeds scene_frame_needs(const AeronScene3D* s) {
+	SceneFrameNeeds needs;
+	needs.temporal = s->temporal_active_mode != AERON_TEMPORAL_OFF;
+	needs.ssao     = s->post.ssao_quality > 0 && s->post.ssao_intensity > 0.0f;
+	needs.mb       = s->post.mb_quality > 0;
+	needs.pbr = s->instance_count > 0 || s->shadow_only_count > 0 || needs.temporal || needs.ssao || needs.mb;
+	return needs;
+}
+
+int AeronScene_PrepareFrame(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!s || !cmd) {
 		return 0;
 	}
+	s->frame_prepared        = 0;
 	s->scene_rt_out          = s->color_rt;
 	s->scene_rt_out_borrowed = 0;
 	s->screen_layer_active   = 0;
 	s->emission_frame        = s->emission;
 	s->emission_frame_valid  = 0;
+	memset(&s->frame_stats, 0, sizeof s->frame_stats);
+	s->frame_stats.instances      = (uint32_t)s->instance_count;
+	s->frame_stats.shadow_casters = (uint32_t)s->shadow_only_count;
+	s->frame_stats.lights         = (uint32_t)s->light_count;
+	s->frame_stats.billboards     = (uint32_t)s->bb_count;
+	s->frame_stats.view_count     = (uint32_t)s->view_count;
 
 	/* With MSAA, the colour pass has its own depth, so the prepass can leave
 	 * instances out; FSR needs every instance's depth and motion. */
@@ -3087,53 +3194,80 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	/* Load the PBR shaders before preparing the storage. Preparing the
 	 * storage decides which instances the emission shader draws, and that
 	 * needs the shader to be loaded (AeronScenePbr_EmissionAvailable). */
-	const int temporal_requested = s->temporal_active_mode != AERON_TEMPORAL_OFF;
-	const int ssao_requested     = s->post.ssao_quality > 0 && s->post.ssao_intensity > 0.0f;
-	const int mb_requested       = s->post.mb_quality > 0;
-	const int pbr_required       = s->instance_count > 0 || s->shadow_only_count > 0 || temporal_requested ||
-								   ssao_requested || mb_requested;
-	const int pbr_ok             = !pbr_required || AeronScenePbr_Ensure(s);
-	if (!pbr_ok) {
+	const SceneFrameNeeds needs = scene_frame_needs(s);
+	if (needs.pbr && !AeronScenePbr_Ensure(s)) {
 		return scene_render_failure(s, cmd, "Scene PBR resource preparation failed");
 	}
 
-	/* Batched billboards: build + upload this frame's VB (copy pass —
-	 * must precede the render passes below). */
+	/* Uploads need copy passes, so they are recorded before the render
+	 * passes. */
 	if (!AeronSceneStorage_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene storage preparation failed");
 	}
+	s->frame_stats.visible_instances[0] = (uint32_t)s->camera_order_count;
 	if (s->bb_count > 0 && !AeronSceneBb3d_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene billboard preparation failed");
-	}
-	if (!AeronSceneLensFlare_Prepare(s, cmd)) {
-		return scene_render_failure(s, cmd, "Scene lens flare preparation failed");
 	}
 	if (s->overlay_vertex_count > 0 && !AeronSceneMeshOverlay_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene mesh-overlay preparation failed");
 	}
+	const uint32_t draws_before_shadows = scene_recorded_draws();
 	if (!AeronSceneDirectionalShadow_Prepare(s) || !AeronSceneDirectionalShadow_Render(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene directional-shadow preparation failed");
 	}
+	s->frame_stats.shadow_draws = scene_recorded_draws() - draws_before_shadows;
+	/* Update the probe occlusion grid before the views are rendered. Their
+	 * visibility and colour passes read it, and so does the hangar floor's
+	 * mirrored view. */
+	if (needs.pbr) {
+		AeronSceneProbeOcclusion_Update(s, cmd);
+	}
+	/* Submit the shadow passes now, so the GPU can start on them while the
+	 * views are recorded. */
+	(void)Aeron_FlushCommandBuffer(cmd);
+	s->frame_prepared = 1;
+	return 1;
+}
 
-	if (pbr_required && !AeronSceneClusteredLights_Build(s, cmd)) {
+int AeronScene_RenderView(AeronScene3D* s, AeronCommandBuffer* cmd, int view) {
+	if (!s || !cmd) {
+		return 0;
+	}
+	if (!s->frame_prepared || view < 0 || view >= s->view_count) {
+		return scene_render_failure(s, cmd, "AeronScene_RenderView needs a prepared frame and a valid view");
+	}
+	const uint32_t draws_at_start = scene_recorded_draws();
+	scene_view_enter(s, view);
+	s->scene_rt_out             = s->color_rt;
+	s->scene_rt_out_borrowed    = 0;
+	s->screen_layer_active      = 0;
+	s->emission_frame_valid     = 0;
+	const SceneFrameNeeds needs = scene_frame_needs(s);
+
+	if (!AeronSceneStorage_PrepareView(s, cmd)) {
+		return scene_render_failure(s, cmd, "Scene light preparation failed");
+	}
+	if (!AeronSceneLensFlare_Prepare(s, cmd)) {
+		return scene_render_failure(s, cmd, "Scene lens flare preparation failed");
+	}
+	if (needs.pbr && !AeronSceneClusteredLights_Build(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene clustered-light preparation failed");
 	}
-	/* Before the visibility pass and the colour passes, which read them;
-	 * the mirrored view's ships take the occlusion grid's light. */
-	if (pbr_required) {
-		AeronSceneProbeOcclusion_Update(s, cmd);
+	/* The cluster build can change the depth range. Save it for the view's
+	 * next frame. */
+	s->views[view].cluster_far_z             = s->cluster_far_z;
+	s->views[view].cluster_near_z            = s->cluster_near_z;
+	s->views[view].cluster_far_shrink_frames = s->cluster_far_shrink_frames;
+	if (needs.pbr) {
 		AeronScenePlanarReflection_Render(s, cmd);
 	}
-	/* The GPU starts on the shadows while the rest is recorded. */
-	(void)Aeron_FlushCommandBuffer(cmd);
-	s->temporal_active = temporal_requested;
-	if (temporal_requested &&
-		(!s->normal_rt || !AeronSceneTemporal_Ensure(s) ||
-		 !AeronScenePbr_Pipeline(s, AERON_PBR_PIPE_PREPASS_TEMPORAL, AERON_CULL_NONE))) {
+	s->temporal_active = needs.temporal;
+	if (needs.temporal && (!s->normal_rt || !AeronSceneTemporal_Ensure(s) ||
+						   !AeronScenePbr_Pipeline(s, AERON_PBR_PIPE_PREPASS_TEMPORAL, AERON_CULL_NONE))) {
 		return scene_render_failure(s, cmd, "Scene temporal resource preparation failed");
 	}
-	const int ssao_active = ssao_requested;
-	if (ssao_requested &&
+	const int ssao_active = needs.ssao;
+	if (needs.ssao &&
 		(!s->normal_rt || !s->pbr_pipes[AERON_PBR_PIPE_PREPASS][AERON_CULL_NONE] ||
 		 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] || !AeronScenePost_EnsureSsao(s))) {
 		return scene_render_failure(s, cmd, "Scene SSAO resource preparation failed");
@@ -3157,15 +3291,15 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return scene_render_failure(s, cmd, "Scene shadow visibility resource preparation failed");
 	}
 	const int visibility_active = ssao_active || screen_shadow_active;
-	const int mb_active         = mb_requested;
-	if (mb_requested && (!s->normal_rt || !s->pbr_pipes[AERON_PBR_PIPE_PREPASS_VEL][AERON_CULL_NONE] ||
-						 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] ||
-						 !AeronScenePost_EnsureMb(s) || !s->mb_camera_fill_pipeline)) {
+	const int mb_active         = needs.mb;
+	if (needs.mb && (!s->normal_rt || !s->pbr_pipes[AERON_PBR_PIPE_PREPASS_VEL][AERON_CULL_NONE] ||
+					 !s->pbr_pipes[AERON_PBR_PIPE_FORWARD][AERON_CULL_NONE] || !AeronScenePost_EnsureMb(s) ||
+					 !s->mb_camera_fill_pipeline)) {
 		return scene_render_failure(s, cmd, "Scene motion-blur resource preparation failed");
 	}
 	const int msaa_active    = s->sample_count != AERON_SAMPLE_COUNT_1;
 	const int prepass_active = visibility_active || mb_active || s->temporal_active || msaa_active;
-	s->screen_layer_active   = pbr_ok && scene_screen_layer_wanted(s);
+	s->screen_layer_active   = scene_screen_layer_wanted(s);
 	const int mb_regen       = mb_active && s->mb_velocity_regen;
 	const int velocity_write = mb_regen || s->temporal_active;
 	if (mb_regen) {
@@ -3394,28 +3528,24 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			}
 			AeronSceneInternal_BindFrameUniforms(s, pass);
 		}
-		if (pbr_ok) {
-			Aeron_GpuDebugMarker(cmd, "PBR instances");
-			if (!AeronScenePbr_DrawInstances(s, cmd, pass, AERON_PBR_PIPE_MESH,
-											 /*depth_only=*/0, /*velocity=*/0, NULL)) {
-				Aeron_EndRenderPass(pass);
-				return scene_render_failure(s, cmd, "Scene PBR mesh recording failed");
-			}
-			Aeron_GpuDebugMarker(cmd, "PBR back-face fill");
-			if (!AeronScenePbr_DrawBackfaceFill(s, pass)) {
-				Aeron_EndRenderPass(pass);
-				return scene_render_failure(s, cmd, "Scene PBR back-face fill recording failed");
-			}
+		Aeron_GpuDebugMarker(cmd, "PBR instances");
+		if (!AeronScenePbr_DrawInstances(s, cmd, pass, AERON_PBR_PIPE_MESH,
+										 /*depth_only=*/0, /*velocity=*/0, NULL)) {
+			Aeron_EndRenderPass(pass);
+			return scene_render_failure(s, cmd, "Scene PBR mesh recording failed");
+		}
+		Aeron_GpuDebugMarker(cmd, "PBR back-face fill");
+		if (!AeronScenePbr_DrawBackfaceFill(s, pass)) {
+			Aeron_EndRenderPass(pass);
+			return scene_render_failure(s, cmd, "Scene PBR back-face fill recording failed");
 		}
 		run_hook(s, AERON_SCENE_HOOK_AFTER_OPAQUE, cmd, pass);
 		Aeron_GpuDebugMarker(cmd, "Mesh overlays");
 		AeronSceneMeshOverlay_Draw(s, pass, NULL);
-		if (pbr_ok) {
-			Aeron_GpuDebugMarker(cmd, "PBR transparent instances");
-			if (!AeronScenePbr_DrawTransparentInstances(s, pass, AERON_PBR_PIPE_MESH, NULL, /*layer=*/0)) {
-				Aeron_EndRenderPass(pass);
-				return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
-			}
+		Aeron_GpuDebugMarker(cmd, "PBR transparent instances");
+		if (!AeronScenePbr_DrawTransparentInstances(s, pass, AERON_PBR_PIPE_MESH, NULL, /*layer=*/0)) {
+			Aeron_EndRenderPass(pass);
+			return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
 		}
 		scene_run_after_meshes(s, cmd, pass, s->color_rt);
 		Aeron_GpuDebugMarker(cmd, "Overlay billboards");
@@ -3442,9 +3572,24 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!scene_finalize_output(s, cmd, mb_active, mb_regen, ssao_active)) {
 		return 0;
 	}
-	s->emission_frame_valid = 1;
+	s->emission_frame_valid         = 1;
+	s->frame_stats.view_draws[view] = scene_recorded_draws() - draws_at_start;
 	return 1;
 }
+
+int AeronScene_EndFrame(AeronScene3D* s, AeronCommandBuffer* cmd) {
+	if (!s || !cmd || !s->frame_prepared) {
+		return 0;
+	}
+	s->frame_prepared = 0;
+	return 1;
+}
+
+int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
+	return AeronScene_PrepareFrame(s, cmd) && AeronScene_RenderView(s, cmd, 0) && AeronScene_EndFrame(s, cmd);
+}
+
+int AeronScene_CurrentView(const AeronScene3D* s) { return s ? s->current_view : 0; }
 
 /* ---- accessors ---- */
 

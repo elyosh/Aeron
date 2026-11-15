@@ -31,6 +31,11 @@ typedef struct AeronRenderDataStats {
 	uint32_t immediate_upload_submission_count;
 	uint32_t largest_upload_bytes;
 	uint32_t failed_command_buffer_count;
+	uint32_t draw_count;
+	uint32_t render_pass_count;
+	/* Number of command buffers submitted. A flush counts as one, and so does
+	 * the presentation. */
+	uint32_t command_buffer_submission_count;
 } AeronRenderDataStats;
 
 /* One 8-bit-per-channel palette entry used by indexed pixel frames and surfaces. */

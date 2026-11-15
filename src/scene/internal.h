@@ -77,15 +77,17 @@ enum {
 
 /* One prepared sky-sun disc: quad placement (gnomonic tangent plane) and
  * fragment radiances, all in tangent-of-angle units. */
+/* A sun disc added with AeronScene_AddSkySun. The disc's size on screen, its
+ * tangents and its radiance depend on the view, so sky_sun_resolve computes
+ * them when the disc is drawn. */
 typedef struct AeronSceneSkySun {
 	float direction[3];
-	float tangent0[3];
-	float tangent1[3];
-	float half_extent;
-	float disc[4]; /* centre radiance rgb, limb-darkening coefficient */
-	float glow[3]; /* peak glow radiance */
-	float radius;
-	float glow_radius;
+	float angle;         /* angular radius, in radians */
+	float irradiance[3]; /* light that the disc casts on surfaces */
+	float center[3];     /* centre radiance of the disc at its true size */
+	float display_max_radiance;
+	float glow_strength;
+	float glow_radius; /* tangent of the glow's angular radius */
 } AeronSceneSkySun;
 
 /* One AeronScene_SetFrameUniformData blob (copied at submit). */
@@ -440,6 +442,24 @@ typedef struct AeronSceneShadowFitHistory {
 	uint16_t shrink_frames[2];
 } AeronSceneShadowFitHistory;
 
+/* The state the scene stores for each view. Scene code doesn't read it
+ * directly: it reads the scene's own camera, view-projection, motion and
+ * cluster fields. scene_view_enter copies a view's state into those fields
+ * before the view is rendered. */
+typedef struct AeronSceneViewState {
+	AeronSceneCamera camera;
+	/* Set by AeronScene_SetMotionContext. mb_prev_view_proj_set is zero when
+	 * the caller gave no previous view-projection. */
+	float mb_prev_view_proj[16];
+	int   mb_prev_view_proj_set;
+	float mb_prev_ori[4];
+	/* The depth range of the light cluster grid. It is kept between frames
+	 * because the range only shrinks after several frames. */
+	float    cluster_far_z;
+	float    cluster_near_z;
+	uint32_t cluster_far_shrink_frames;
+} AeronSceneViewState;
+
 struct AeronScene3D {
 	AeronRenderTarget* color_rt;
 	AeronDepthTarget*  depth_rt;
@@ -466,6 +486,8 @@ struct AeronScene3D {
 	int   lod_tint;
 	/* The levels chosen in the last frame (AeronScene_GetLodStats). */
 	AeronSceneLodStats lod_stats;
+	/* Counts for the last frame (AeronScene_GetFrameStats). */
+	AeronSceneFrameStats frame_stats;
 	/* The current settings of emission_only instances. */
 	AeronSceneEmissionParams emission;
 	/* A copy of `emission` taken by AeronScene_Render. The bloom draw
@@ -474,6 +496,15 @@ struct AeronScene3D {
 	 * AeronScene_Render to the next AeronScene_Begin. */
 	AeronSceneEmissionParams emission_frame;
 	int                      emission_frame_valid;
+
+	/* The frame's views. The camera fields below, the motion context
+	 * (mb_prev_*) and the cluster depth range (cluster_far_z, cluster_near_z,
+	 * cluster_far_shrink_frames) hold the state of views[current_view]. */
+	AeronSceneViewState views[AERON_MAX_VIEWS];
+	int                 view_count;
+	int                 current_view;
+	/* Nonzero between AeronScene_PrepareFrame and AeronScene_EndFrame. */
+	int frame_prepared;
 
 	AeronSceneCamera camera;        /* render-resolution viewport */
 	AeronSceneCamera output_camera; /* caller's output-resolution viewport */
@@ -600,6 +631,14 @@ struct AeronScene3D {
 	 * lights in them, and the merged lights added. */
 	uint32_t                   grouped_spot_light_count;
 	uint32_t                   merged_spot_light_count;
+	/* The result of merging the spot lights, computed once per frame: the
+	 * merged lights, the group each scene light belongs to (UINT32_MAX for
+	 * none), and the centre and merge distance of each group.
+	 * AeronSceneStorage_PrepareView reads them for each view. */
+	AeronSceneLight            spot_merged[AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS];
+	uint32_t                   spot_group_of[AERON_SCENE_MAX_LIGHTS];
+	float                      spot_merge_centers[AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS][3];
+	float                      spot_merge_distances[AERON_SCENE_MAX_SHADED_LIGHTS - AERON_SCENE_MAX_LIGHTS];
 	uint32_t                   point_light_staging_cap;
 	AeronSceneClusterLightGPU* cluster_light_staging;
 	uint32_t                   cluster_light_staging_cap;
@@ -967,7 +1006,12 @@ AeronTexture*       AeronSceneInternal_WhiteArrayTexture(void);
  * roughness, (A, B) with F = F0 * A + B. Generated once on the CPU. */
 AeronTexture*              AeronSceneInternal_BrdfLutTexture(void);
 const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void);
+/* Prepares and uploads the data that all views of the frame share. It
+ * builds the mesh tables, culls the instances, picks their levels of detail,
+ * sorts them, builds the batches and merges the spot lights. */
 int                        AeronSceneStorage_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+/* Sorts and uploads the lights for the current view. */
+int                        AeronSceneStorage_PrepareView(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void                       AeronSceneStorage_Release(struct AeronScene3D* s);
 /* float4 base of a shadow caster's mesh table, and its packed component count. */
 uint32_t AeronSceneStorage_ShadowTableBase(const struct AeronScene3D* s, uint16_t encoded_caster,

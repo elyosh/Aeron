@@ -1904,6 +1904,7 @@ int Aeron_Present(void) {
 							 error && error[0] ? error : "<no SDL error provided>");
 		return 0;
 	}
+	g_aeron.render_data_stats.command_buffer_submission_count++;
 	g_aeron.presented_frames++;
 	if (swapchain_texture) {
 		Aeron_NotePacingPresent(acquire_wait_us, gpu_done, Aeron_NowUs());
@@ -2679,18 +2680,27 @@ static void Aeron_SettleReadbacks(AeronCommandBuffer* command_buffer, AeronShare
 	command_buffer->readback_slot_count = 0;
 }
 
+/* Returns nonzero when the GPU has finished the command buffer that holds
+ * the copy of `slot`. It checks the fence without waiting, so a slow copy
+ * never delays a frame: the copy is collected on a later call instead.
+ * SDL_QueryGPUFence gives the wrong answer on Metal before SDL 3.4.16. There,
+ * the function waits for the fence instead. */
+static int Aeron_ReadbackDone(const AeronReadbackSlot* slot) {
+	if (g_aeron.fence_query_reliable) {
+		return SDL_QueryGPUFence(g_aeron.gpu_device, slot->fence->fence);
+	}
+	return SDL_WaitForGPUFences(g_aeron.gpu_device, true, &slot->fence->fence, 1);
+}
+
 /* Keeps the newest finished copy and frees the slots the GPU is done with.
- * A copy is read once two more frames have been presented since its
- * command buffer was submitted. With one or two frames in flight, the start
- * of the second frame after it waited for the present two frames back,
- * which the GPU ran after the copy, so the fence wait returns at once. It
- * waits instead of using SDL_QueryGPUFence, which gives the opposite answer
- * on Metal before SDL 3.4.16. */
+ * A copy is collected two presented frames after its command buffer was
+ * submitted, at the earliest. By then the frame loop has waited for a
+ * present that the GPU ran after the copy, so the copy is normally finished. */
 static void Aeron_CollectReadback(AeronBufferReadback* readback) {
 	for (int i = 0; i < AERON_READBACK_SLOTS; ++i) {
 		AeronReadbackSlot* slot = &readback->slots[i];
 		if (slot->state != AERON_READBACK_IN_FLIGHT || g_aeron.presented_frames < slot->submitted_frame + 2 ||
-			!SDL_WaitForGPUFences(g_aeron.gpu_device, true, &slot->fence->fence, 1))
+			!Aeron_ReadbackDone(slot))
 			continue;
 		if (slot->serial > readback->newest_serial) {
 			const void* mapped = SDL_MapGPUTransferBuffer(g_aeron.gpu_device, slot->transfer, false);
@@ -2835,6 +2845,8 @@ static int Aeron_SubmitSdlCommandBuffer(AeronCommandBuffer* command_buffer, int 
 			Aeron_CommandBufferFail(command_buffer, "SDL_SubmitGPUCommandBuffer failed: %s",
 									error && error[0] ? error : "<no SDL error provided>");
 			ok = 0;
+		} else {
+			g_aeron.render_data_stats.command_buffer_submission_count++;
 		}
 	}
 	if (command_buffer->upload_chunk_count > 0) {
@@ -4609,6 +4621,7 @@ AeronRenderPass* Aeron_BeginRenderPass(const AeronRenderPassDesc* desc) {
 		return NULL;
 	}
 	pass->owner->render_pass_active = 1;
+	g_aeron.render_data_stats.render_pass_count++;
 
 	if (desc->viewport.width > 0 && desc->viewport.height > 0) {
 		viewport.x         = (float)desc->viewport.x;
@@ -5030,6 +5043,7 @@ void Aeron_Draw(AeronRenderPass* pass, uint32_t vertex_count, uint32_t first_ver
 		return;
 	}
 
+	g_aeron.render_data_stats.draw_count++;
 	SDL_DrawGPUPrimitives(pass->render_pass, vertex_count, 1, first_vertex, 0);
 }
 
@@ -5039,6 +5053,7 @@ void Aeron_DrawIndexed(AeronRenderPass* pass, uint32_t index_count, uint32_t fir
 		return;
 	}
 
+	g_aeron.render_data_stats.draw_count++;
 	SDL_DrawGPUIndexedPrimitives(pass->render_pass, index_count, 1, first_index, vertex_offset, 0);
 }
 
@@ -5048,6 +5063,7 @@ void Aeron_DrawInstanced(AeronRenderPass* pass, uint32_t vertex_count, uint32_t 
 		return;
 	}
 
+	g_aeron.render_data_stats.draw_count++;
 	SDL_DrawGPUPrimitives(pass->render_pass, vertex_count, instance_count, first_vertex, 0);
 }
 
@@ -5057,6 +5073,7 @@ void Aeron_DrawIndexedInstanced(AeronRenderPass* pass, uint32_t index_count, uin
 		return;
 	}
 
+	g_aeron.render_data_stats.draw_count++;
 	SDL_DrawGPUIndexedPrimitives(pass->render_pass, index_count, instance_count, first_index, vertex_offset,
 								 0);
 }

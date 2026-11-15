@@ -117,7 +117,7 @@ float4 main(VSOut input, bool is_front : SV_IsFrontFace) : SV_Target {
 		N_face = face_cross * rsqrt(face_sq);
 		N_face = dot(N_face, N) < 0.0f ? -N_face : N_face;
 	}
-	float3 V      = normalize(fs_camera_pos_world - input.world_pos);
+	float3 V      = normalize(fs_cluster_camera_position - input.world_pos);
 	float3 L      = fs_directional_dir;
 	float3 N_spec = normalize(lerp(N_face, N, smoothstep(0.0f, 0.2f, dot(N, V))));
 

@@ -309,7 +309,7 @@ uint anim_layer_frame(uint4 anim, uint layer, out uint flipbook, out uint next, 
 /* The distance from the camera to `world_pos`, in metres. */
 float anim_detail_distance(float3 world_pos)
 {
-    return length(fs_camera_pos_world - world_pos) * fs_anim.z;
+    return length(fs_cluster_camera_position - world_pos) * fs_anim.z;
 }
 
 /* A layer's fade: 1 at the camera, 0 at its fade distance (params.y:
@@ -916,9 +916,9 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #if AERON_PBR_PROBES
     /* The floor's mirrored view (planar_reflection.c) looks from its own
      * camera. */
-    float3 eye = fs_planar_eye.w != 0.0f ? fs_planar_eye.xyz : fs_camera_pos_world;
+    float3 eye = fs_planar_eye.w != 0.0f ? fs_planar_eye.xyz : fs_cluster_camera_position;
 #else
-    float3 eye = fs_camera_pos_world;
+    float3 eye = fs_cluster_camera_position;
 #endif
     float3 V = normalize(eye - i.world_pos);
     float3 L = fs_directional_dir;

@@ -1002,6 +1002,7 @@ add_library(aeron_scene STATIC
     src/scene/probe_occlusion.c
     src/scene/planar_reflection.c
     src/scene/world.c
+    src/scene/view_rig.c
     src/scene/settings.c
     src/scene/environment.c
     src/scene/probe_set.c
@@ -1247,6 +1248,22 @@ if(AERON_BUILD_TOOLS)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
     file(RELATIVE_PATH TEXTURE_TEST_SHADER_DIR "${CMAKE_BINARY_DIR}" "${AERON_SHADER_OUTPUT_DIR}")
     target_compile_definitions(aeron_texture_layers_test PRIVATE TEST_SHADER_DIR="${TEXTURE_TEST_SHADER_DIR}")
+
+    # Tests the view rig math: fields of view, view cameras, surround setups.
+    # It needs no window and no GPU.
+    add_executable(aeron_view_rig_test tests/view_rig_test.c src/scene/view_rig.c)
+    target_include_directories(aeron_view_rig_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    set_target_properties(aeron_view_rig_test PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    if(MSVC)
+        target_compile_options(aeron_view_rig_test PRIVATE /W4 /fp:precise)
+    else()
+        target_compile_options(aeron_view_rig_test PRIVATE -Wall -Wextra -Wpedantic -ffp-contract=off)
+        target_link_libraries(aeron_view_rig_test PRIVATE m)
+    endif()
 
     # Tests the audio mixer and the DirectSound shim without an audio device:
     # distance attenuation, panning and buffer cursors. With --bench, it

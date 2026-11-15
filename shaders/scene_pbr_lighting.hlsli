@@ -53,7 +53,9 @@ cbuffer PbrLightFS : register(AERON_PBR_LIGHT_UNIFORM_REGISTER, space3)
     float2 reserved_ssao_rt; /* formerly the AO target size (now fs_render_size) */
     float ssao_direct;
     float spec_geom_adapt;
-    float3 fs_camera_pos_world;   float _pad_fs_cam;
+    /* Unused. This was the camera position; the shaders now read
+     * fs_cluster_camera_position. */
+    float4 reserved_camera_pos;
     /* Engine ships `light_world` (propagation direction); the snapshot
      * negates it on the way in so `fs_directional_dir` arrives as the
      * "to-light" direction (surface → light) — the standard L for

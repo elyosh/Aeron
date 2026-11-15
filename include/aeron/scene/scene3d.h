@@ -19,6 +19,7 @@
 
 #include "aeron/render.h"
 #include "aeron/scene/mesh.h"
+#include "aeron/scene/view_rig.h"
 #include "aeron/temporal.h"
 
 #ifdef __cplusplus
@@ -550,6 +551,27 @@ typedef struct AeronSceneLodStats {
 } AeronSceneLodStats;
 void AeronScene_GetLodStats(const AeronScene3D* scene, AeronSceneLodStats* out);
 
+/* Counts for the last rendered frame, used by benchmarks. The instances
+ * drawn and the draw calls are counted for each view. A scene with one
+ * camera has one view. */
+typedef struct AeronSceneFrameStats {
+	/* What the caller submitted for the frame. */
+	uint32_t instances;
+	uint32_t shadow_casters;
+	uint32_t lights;
+	uint32_t billboards;
+	/* Draw calls for the shadow maps. The views share the shadow maps, so
+	 * these are counted once. */
+	uint32_t shadow_draws;
+	uint32_t view_count;
+	/* Mesh instances left in each view after culling. */
+	uint32_t visible_instances[AERON_MAX_VIEWS];
+	/* Draw calls for each view, without the shadow maps. */
+	uint32_t view_draws[AERON_MAX_VIEWS];
+} AeronSceneFrameStats;
+
+void AeronScene_GetFrameStats(const AeronScene3D* scene, AeronSceneFrameStats* out);
+
 /* The minimum width on screen, in render pixels, of emission_only
  * instances, such as laser bolts; 0 turns it off. The width is measured
  * across the bounds' two shorter axes, keeping the one that looks wider. A
@@ -861,6 +883,23 @@ AeronTexture* AeronScene_ScreenLayer(AeronScene3D* scene);
  * Opens the scene pass with shared color and reversed-Z depth clears,
  * runs the in-pass hooks, then closes it and runs BEFORE_POST. */
 int AeronScene_Render(AeronScene3D* scene, AeronCommandBuffer* cmd);
+
+/* AeronScene_Render in three steps, to render one frame into several views.
+ * Call AeronScene_PrepareFrame once: it uploads the frame's data and renders
+ * the shadow maps, which all views share. Then call AeronScene_RenderView
+ * for each view, and AeronScene_EndFrame at the end. Each function returns
+ * zero after it recorded a sticky command-buffer failure.
+ *
+ * The views share their render targets. So AeronScene_SceneRt,
+ * AeronScene_DepthRt, AeronScene_ScreenLayer and AeronScene_DrawEmissionBloom
+ * give a view's results only until the next AeronScene_RenderView starts. */
+int AeronScene_PrepareFrame(AeronScene3D* scene, AeronCommandBuffer* cmd);
+int AeronScene_RenderView(AeronScene3D* scene, AeronCommandBuffer* cmd, int view);
+int AeronScene_EndFrame(AeronScene3D* scene, AeronCommandBuffer* cmd);
+/* Returns the index of the view that AeronScene_RenderView is rendering, so
+ * a pass hook can tell the views apart. AeronScene_ViewProj and
+ * AeronScene_JitteredViewProj return the matrices of this view. */
+int AeronScene_CurrentView(const AeronScene3D* scene);
 
 /* Borrowed views for layer submission / game-side hook passes. */
 AeronTexture*      AeronScene_ColorTexture(AeronScene3D* scene);
