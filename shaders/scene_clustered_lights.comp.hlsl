@@ -89,8 +89,25 @@ void build_bin(uint bin) {
 	g_data[AERON_CLUSTER_BIN_WORDS * bin + 2u] = bin_range(tube_start, fs_cluster_point_count, near_z, far_z, none);
 }
 
+/* Whether a spot light's cone lies wholly outside a plane: `offset` is the
+ * signed distance of the light from the plane, positive inside, and `facing`
+ * the cosine between the light's direction and the plane's inward normal.
+ * The cone holds the points within the light's range and outer angle. The
+ * one farthest inside is the apex, or the point at full range on the side of
+ * the cone nearest the normal, at the angle between the two less the outer
+ * angle. */
+bool spot_outside_plane(float offset, float facing, float range, float cos_outer, float sin_outer) {
+	float reach = facing >= cos_outer
+					  ? 1.0f
+					  : facing * cos_outer + sqrt(max(1.0f - facing * facing, 0.0f)) * sin_outer;
+	return offset + range * max(reach, 0.0f) < 0.0f;
+}
+
 /* A light reaches a tile if it is in front of the near plane and inside
- * the tile's four side planes through the camera, expanded by a pixel. */
+ * the tile's four side planes through the camera, expanded by a pixel. A
+ * spot light must also have part of its cone inside each of them: its
+ * bounding sphere holds the whole cone, which is much larger than the part
+ * the light shines into. */
 void build_tile(uint tile_index) {
 	uint  tile_x       = tile_index % fs_cluster_grid_x;
 	uint  tile_y       = tile_index / fs_cluster_grid_x;
@@ -111,19 +128,44 @@ void build_tile(uint tile_index) {
 								  (fs_cluster_proj_y_offset - ndc_top) * fs_cluster_tan_v_half,
 								  (fs_cluster_proj_y_offset - ndc_bottom) * fs_cluster_tan_v_half);
 	float4 plane_lengths = sqrt(1.0f + slopes * slopes);
+	uint   tube_start    = min(fs_cluster_kind_starts >> 16u, fs_cluster_point_count);
+	uint   spot_start    = min(fs_cluster_kind_starts & 0xffffu, tube_start);
 
 	uint base = clustered_light_mask_base(tile_index);
 	for (uint word = 0u; word < fs_cluster_mask_words; ++word) {
 		uint bits = 0u;
 		uint end  = min(32u, fs_cluster_point_count - (word << 5u));
 		for (uint bit = 0u; bit < end; ++bit) {
-			float4 light = g_lights[(word << 5u) + bit].bound;
+			uint   index = (word << 5u) + bit;
+			float4 light = g_lights[index].bound;
 			float3 p     = light.xyz;
 			float  r     = light.w;
 			float4 side  = float4(p.x - slopes.x * p.z, slopes.y * p.z - p.x, p.y - slopes.z * p.z,
 								  slopes.w * p.z - p.y);
-			if (p.z + r >= fs_cluster_near_z && all(side >= -r * plane_lengths))
-				bits |= 1u << bit;
+			if (!(p.z + r >= fs_cluster_near_z && all(side >= -r * plane_lengths)))
+				continue;
+			if (index >= spot_start && index < tube_start) {
+				float4 spot      = g_lights[index].spot_position_range;
+				float4 direction = g_lights[index].spot_direction_cos;
+				float  cos_outer = direction.w;
+				float  sin_outer = sqrt(max(1.0f - cos_outer * cos_outer, 0.0f));
+				/* The side planes go through the camera, so the same
+				 * expressions give the direction's components along their
+				 * normals. */
+				float4 offset = float4(spot.x - slopes.x * spot.z, slopes.y * spot.z - spot.x,
+									   spot.y - slopes.z * spot.z, slopes.w * spot.z - spot.y) /
+								plane_lengths;
+				float4 facing = float4(direction.x - slopes.x * direction.z, slopes.y * direction.z - direction.x,
+									   direction.y - slopes.z * direction.z, slopes.w * direction.z - direction.y) /
+								plane_lengths;
+				if (spot_outside_plane(spot.z - fs_cluster_near_z, direction.z, spot.w, cos_outer, sin_outer) ||
+					spot_outside_plane(offset.x, facing.x, spot.w, cos_outer, sin_outer) ||
+					spot_outside_plane(offset.y, facing.y, spot.w, cos_outer, sin_outer) ||
+					spot_outside_plane(offset.z, facing.z, spot.w, cos_outer, sin_outer) ||
+					spot_outside_plane(offset.w, facing.w, spot.w, cos_outer, sin_outer))
+					continue;
+			}
+			bits |= 1u << bit;
 		}
 		g_data[base + word] = bits;
 	}
