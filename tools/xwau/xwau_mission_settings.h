@@ -114,7 +114,7 @@ typedef struct XwauSettingsConfig {
 	size_t interdiction_count;
 	/* hook_interdictor, hook_hyperspace and ddraw's interdiction. */
 	XwauHyperspaceModes hyperspace;
-	/* The ejection patches of the mod's XWINGALLIANCE.EXE.
+	/* The patches of the mod's XWINGALLIANCE.EXE that become rules.
 	 * XwauSettingsConfig_Read doesn't read them: XwauFlightSettings_Write
 	 * does, with the formations, so that the executable is read once. */
 	XwauExePatches exe_patches;
@@ -136,9 +136,9 @@ void XwauSettingsConfig_Free(XwauSettingsConfig* config);
  * gunner_weapon_select_in_seat, gunner_warheads_need_cockpit_hardpoint
  * and, with UnlimitedTurretLaser = 1, gunner_fires_selected_group,
  * hook_crafts_count's overlapping_fly_by_sounds, and hook_pilot's
- * hangar_droid_parts_from_model. The ejection rules come from the patches
- * of the mod's executable (xwau_exe_patches.h). Returns whether it wrote
- * anything.
+ * hangar_droid_parts_from_model. The ejection rules and
+ * ai_warheads_attack_on_hit come from the patches of the mod's executable
+ * (xwau_exe_patches.h). Returns whether it wrote anything.
  */
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config);
 

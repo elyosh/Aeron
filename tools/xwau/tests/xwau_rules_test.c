@@ -1170,6 +1170,7 @@ static const struct {
 	{ 0x41C000, 0x1000 },  /* the beam test */
 	{ 0x43D000, 0x1000 },  /* three sound switches */
 	{ 0x458000, 0x2000 },  /* the hangar launch switch */
+	{ 0x4A8000, 0x1000 },  /* the AI warhead patch */
 	{ 0x579000, 0x1000 },  /* the skirmish ejection patch */
 	{ 0x5B0000, 0x50000 }, /* the craft type table, the craft records and the object type table */
 };
@@ -1197,15 +1198,15 @@ static void put32(unsigned char* p, unsigned value) {
 	put16(p + 2, value >> 16);
 }
 
-/* Writes the bytes at the addresses of the ejection patches. `disabled`
-   applies the first two patches, which turn off pilots and pods, and
-   `patched` the other three. TFTC's exe has all five, and XWAU 2025's only
-   the other three. */
-static void fake_ejection_patches(FakeExe* exe, bool patched, bool disabled) {
+/* Writes the bytes at the addresses of the patches that become rules.
+   `shared` applies the three patches that TFTC's and XWAU 2025's exes both
+   have, and `tftc_only` the three that only TFTC's has: no pilots, no pods,
+   and AI warheads that mark their target when they hit. */
+static void fake_rule_patches(FakeExe* exe, bool shared, bool tftc_only) {
 	static const struct {
 		unsigned      address;
 		size_t        size;
-		bool          disabling;
+		bool          tftcOnly;
 		unsigned char stock[8], patched[8];
 	} parts[] = {
 		{ 0x4042F4, 6, true, { 0x38, 0x1D, 0x18, 0x33, 0x77, 0x00 }, { 0xEB, 0xEB, 0x90, 0x90, 0x90, 0x90 } },
@@ -1230,10 +1231,15 @@ static void fake_ejection_patches(FakeExe* exe, bool patched, bool disabled) {
 		  false,
 		  { 0xC6, 0x84, 0x29, 0xC9, 0x0D, 0x00, 0x00, 0x16 },
 		  { 0xC6, 0x84, 0x29, 0xC9, 0x0D, 0x00, 0x00, 0x00 } },
+		{ 0x4A82E2,
+		  8,
+		  true,
+		  { 0xC6, 0x84, 0x19, 0x8C, 0x01, 0x00, 0x00, 0x01 },
+		  { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 } },
 	};
 
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
-		const bool apply = parts[i].disabling ? disabled : patched;
+		const bool apply = parts[i].tftcOnly ? tftc_only : shared;
 		memcpy(fake_at(exe, parts[i].address), apply ? parts[i].patched : parts[i].stock, parts[i].size);
 	}
 }
@@ -1280,7 +1286,7 @@ static void fake_exe_init(FakeExe* exe) {
 	/* Every object type has no list row. */
 	for (int t = 0; t < 557; ++t)
 		put16(fake_at(exe, 0x5FB240 + 24 * t + 20), 0xFFFF);
-	fake_ejection_patches(exe, false, false);
+	fake_rule_patches(exe, false, false);
 }
 
 /* Gives object type `t` row `row` of Spacecraft0.LST and craft record `record`. */
@@ -2598,39 +2604,37 @@ static void test_exe_patches(const char* scratch) {
 	snprintf(game, sizeof game, "%s/exe_patches_game", scratch);
 	MakeDirs(game);
 	snprintf(settings, sizeof settings, "%s/exe_patches.yaml", scratch);
-	static const char* const rules[5] = { "  no_pilot_ejections: true\n", "  no_escape_pod_ejections: true\n",
-										  "  ejected_craft_team_9: true\n",
-										  "  ejected_craft_skip_setup: true\n",
-										  "  skirmish_ejections: true\n" };
+	static const char* const rules[6] = {
+		"  no_pilot_ejections: true\n",   "  no_escape_pod_ejections: true\n",
+		"  ejected_craft_team_9: true\n", "  ejected_craft_skip_setup: true\n",
+		"  skirmish_ejections: true\n",   "  ai_warheads_attack_on_hit: true\n"
+	};
 
 	/* The rules expected for each exe. */
 	static const struct {
-		bool        patched, disabled;
-		bool        expected[5];
+		bool        shared, tftcOnly;
+		bool        expected[6];
 		const char* what;
 	} cases[] = {
 		{ false,
 		  false,
-		  { false, false, false, false, false },
-		  "exe patches: the stock exe gets no ejection rules" },
-		{ true,
-		  true,
-		  { true, true, true, true, true },
-		  "exe patches: TFTC's exe gets all five ejection rules" },
+		  { false, false, false, false, false, false },
+		  "exe patches: the stock exe gets no rules" },
+		{ true, true, { true, true, true, true, true, true }, "exe patches: TFTC's exe gets all six rules" },
 		{ true,
 		  false,
-		  { false, false, true, true, true },
+		  { false, false, true, true, true, false },
 		  "exe patches: XWAU 2025's exe gets the three rules for ejected craft" },
 	};
 
 	for (size_t c = 0; c < sizeof cases / sizeof cases[0]; ++c) {
 		FakeExe exe;
 		fake_exe_init(&exe);
-		fake_ejection_patches(&exe, cases[c].patched, cases[c].disabled);
+		fake_rule_patches(&exe, cases[c].shared, cases[c].tftcOnly);
 		fake_exe_write(&exe, game);
 		char* text = flight_settings_text(game, settings);
 		bool  ok   = text != NULL;
-		for (int r = 0; ok && r < 5; ++r)
+		for (int r = 0; ok && r < 6; ++r)
 			ok = (strstr(text, rules[r]) != NULL) == cases[c].expected[r];
 		check(ok, cases[c].what);
 		free(text);
@@ -2640,13 +2644,13 @@ static void test_exe_patches(const char* scratch) {
 	   other patches still give their rules. */
 	FakeExe exe;
 	fake_exe_init(&exe);
-	fake_ejection_patches(&exe, true, true);
+	fake_rule_patches(&exe, true, true);
 	memcpy(fake_at(&exe, 0x404693), "\x8A\x81\x98\x00\x00\x00", 6);
 	memcpy(fake_at(&exe, 0x40434B), "\x90\x90\x90\x90\x90", 5);
 	fake_exe_write(&exe, game);
 	char* text = flight_settings_text(game, settings);
 	check(text && strstr(text, rules[0]) && !strstr(text, rules[1]) && !strstr(text, rules[2]) &&
-			  strstr(text, rules[3]) && strstr(text, rules[4]),
+			  strstr(text, rules[3]) && strstr(text, rules[4]) && strstr(text, rules[5]),
 		  "exe patches: a patch with unknown code or with only some of its parts is left out");
 	free(text);
 }

@@ -165,10 +165,10 @@ static void write_ints(FILE* f, const int* values, size_t count) {
 
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config) {
 	const XwauExePatches* patches   = &config->exe_patches;
-	const bool            ejections = patches->no_pilot_ejections || patches->no_escape_pod_ejections ||
+	const bool            exe_rules = patches->no_pilot_ejections || patches->no_escape_pod_ejections ||
 									  patches->ejected_craft_team_9 || patches->ejected_craft_skip_setup ||
-									  patches->skirmish_ejections;
-	const bool rules = ejections || config->mission_tie || config->opt_limit_engine_glows ||
+									  patches->skirmish_ejections || patches->ai_warheads_attack_on_hit;
+	const bool rules = exe_rules || config->mission_tie || config->opt_limit_engine_glows ||
 					   config->weapon_switch || config->mission_tie_stats || config->weapon_rate_fire_check ||
 					   config->weapon_rate_rack_check || config->starship_ambient ||
 					   config->weapon_rate_slot_cap || config->gunner_seats ||
@@ -228,6 +228,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  ejected_craft_skip_setup: true\n", f);
 	if (patches->skirmish_ejections)
 		fputs("  skirmish_ejections: true\n", f);
+	if (patches->ai_warheads_attack_on_hit)
+		fputs("  ai_warheads_attack_on_hit: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const unsigned abort =

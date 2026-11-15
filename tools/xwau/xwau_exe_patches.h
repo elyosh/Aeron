@@ -14,16 +14,18 @@
  *   - 0x41C6BF: the X-wing, Y-wing, A-wing, B-wing, Z-95 and TIE Fighter
  *     can carry a beam (mission.c:6624-6627).
  *
- * The flight settings phase, which writes the ejection rules
- * (xwau_mission_settings.h). TFTC's executables have all five patches, and
- * XWAU 2025's the last three:
+ * The flight settings phase, which writes rules (xwau_mission_settings.h).
+ * TFTC's executables have all six patches, and XWAU 2025's only the ones at
+ * 0x404481, 0x404EEB and 0x5797B6:
  *   - 0x4042F4: no pilot ejects from a fighter;
  *   - 0x40434B: no escape pod ejects from a transport, starship or
  *     platform;
  *   - 0x404481 and 0x404693: pods and pilots are on team 9;
  *   - 0x404EEB: pods don't get their AI plan, and pilots keep the random
  *     speed and direction that every ejected craft starts with;
- *   - 0x5797B6: the craft of a skirmish mission can eject.
+ *   - 0x5797B6: the craft of a skirmish mission can eject;
+ *   - 0x4A82E2: an AI warhead marks its target as attacked when it hits,
+ *     not when it's launched.
  */
 
 #include <stdbool.h>
@@ -44,6 +46,7 @@ typedef struct XwauExePatches {
 	bool ejected_craft_team_9;
 	bool ejected_craft_skip_setup;
 	bool skirmish_ejections;
+	bool ai_warheads_attack_on_hit;
 } XwauExePatches;
 
 /* Reads the patches of `group` in `exe`. The patches of the other group stay
