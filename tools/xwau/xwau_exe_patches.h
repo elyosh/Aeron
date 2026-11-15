@@ -32,12 +32,29 @@
  *   - 0x40215A: a rotary gun turret without a target doesn't turn, and
  *     doesn't call GameRand.
  *
+ * TFTC-C's executable also has 12 patches of the Classic list that the
+ * others don't. Each gives the rule of the same name, except the Mag Pulse
+ * patch, which gives `mag_pulse.drain_only`:
+ *   - 0x4A820A: no_top_ai_dual_warheads;
+ *   - 0x4A9069: no_turret_warhead_self_defense;
+ *   - 0x4A624B: no_turret_warhead_escort_defense;
+ *   - 0x412280: no_explosion_splash_damage;
+ *   - 0x40EA21: a Mag Pulse hit on a player only drains its lasers;
+ *   - 0x408E91: no_engine_wash;
+ *   - 0x490499: ai_shields_charge_to_full;
+ *   - 0x4A6A9C, 0x4A6AB6 and 0x4A6AD0: player_attacker_limit_by_difficulty;
+ *   - 0x4FA660: no_throttle_turn_rate;
+ *   - 0x4FA70E and 0x4FA713: no_energy_turn_rate;
+ *   - 0x4A784B: no_ai_laser_convergence;
+ *   - 0x4FC0D3 and 0x41BA49: no_player_laser_convergence.
+ *
  * TFTC's executables also fix XwaAIComponentGoneOrder, which reads through
  * a null pointer in the original. The port always has that fix, so the
  * importer doesn't look for it.
  */
 
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "xwau_game_tables.h"
 
@@ -59,10 +76,27 @@ typedef struct XwauExePatches {
 	bool one_jamming_beam_stops_turrets;
 	bool two_launcher_advanced_missiles;
 	bool no_turret_idle_spin;
+	bool no_top_ai_dual_warheads;
+	bool no_turret_warhead_self_defense;
+	bool no_turret_warhead_escort_defense;
+	bool no_explosion_splash_damage;
+	bool mag_pulse_drain_only;
+	bool no_engine_wash;
+	bool ai_shields_charge_to_full;
+	bool player_attacker_limit_by_difficulty;
+	bool no_throttle_turn_rate;
+	bool no_energy_turn_rate;
+	bool no_ai_laser_convergence;
+	bool no_player_laser_convergence;
 } XwauExePatches;
 
 /* Reads the patches of `group` in `exe`. The patches of the other group stay
  * false. Without an executable (NULL), there are none. */
 void XwauExePatches_Read(const XwauGameExe* exe, XwauExePatchGroup group, XwauExePatches* out);
+/* Returns whether `patches` has a patch that gives a rule. */
+bool XwauExePatches_AnyRule(const XwauExePatches* patches);
+/* Writes the rules of the patches in `patches`, one `  <rule>: true` line
+ * each. */
+void XwauExePatches_WriteRules(FILE* f, const XwauExePatches* patches);
 
 #endif /* AERON_XWAU_EXE_PATCHES_H */

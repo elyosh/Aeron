@@ -720,8 +720,8 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 							 write_projectiles(f, names, &mod_projectiles, stock->projectiles);
 	XwauGameExe_Free(exe);
 	bool       ai_attack, mag_pulse, warhead_lock;
-	const bool weapon_lock_ok =
-		XwauWeaponLock_WriteFlightSettings(f, game, names, &ai_attack, &mag_pulse, &warhead_lock);
+	const bool weapon_lock_ok = XwauWeaponLock_WriteFlightSettings(
+		f, game, names, config.exe_patches.mag_pulse_drain_only, &ai_attack, &mag_pulse, &warhead_lock);
 	XwauSettingsConfig_Free(&config);
 	const bool        ok        = !ferror(f) && fclose(f) == 0 && weapon_lock_ok;
 	char              what[512] = "";

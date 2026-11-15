@@ -113,10 +113,13 @@ void XwauMagPulse_Write(FILE* f, const XwauMagPulse* pulse, bool global);
 /* Writes the `ai_attack`, `mag_pulse` and `warhead_lock` sections of
  * flight/flight.yaml for the installation `game`. `ai_attack` gets the AI
  * laser ranges by rank whenever the DLL reads [AttackBreakDistance], since
- * the hook then uses them even with no data. Sets `ai_attack`, `mag_pulse`
- * and `warhead_lock` to whether each section was written. Returns false
- * when out of memory. */
-bool XwauWeaponLock_WriteFlightSettings(FILE* f, const char* game, const XwauNames* names, bool* ai_attack,
-										bool* mag_pulse, bool* warhead_lock);
+ * the hook then uses them even with no data. `exe_drain_only` is whether
+ * the mod's executable has the Mag Pulse patch, which gives
+ * `drain_only: true` when the DLL doesn't read [WeaponLockBehaviors]. Sets
+ * `ai_attack`, `mag_pulse` and `warhead_lock` to whether each section was
+ * written. Returns false when out of memory. */
+bool XwauWeaponLock_WriteFlightSettings(FILE* f, const char* game, const XwauNames* names,
+										bool exe_drain_only, bool* ai_attack, bool* mag_pulse,
+										bool* warhead_lock);
 
 #endif /* AERON_XWAU_WEAPON_LOCK_H */

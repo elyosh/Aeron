@@ -383,11 +383,19 @@ static bool write_global_lock(FILE* f, const char* game, const XwauNames* names)
 	return true;
 }
 
-bool XwauWeaponLock_WriteFlightSettings(FILE* f, const char* game, const XwauNames* names, bool* ai_attack,
-										bool* mag_pulse, bool* warhead_lock) {
+bool XwauWeaponLock_WriteFlightSettings(FILE* f, const char* game, const XwauNames* names,
+										bool exe_drain_only, bool* ai_attack, bool* mag_pulse,
+										bool* warhead_lock) {
 	XwauWeaponLockFeatures features;
 	*ai_attack = *mag_pulse = *warhead_lock = false;
-	if (!XwauWeaponLock_Features(game, &features))
+	const bool dll                          = XwauWeaponLock_Features(game, &features);
+	/* The weapon lock behaviors hook sets the patched byte from its own
+	   setting on each hit, so the exe's patch only counts without it. */
+	if (exe_drain_only && !features.mag_pulse) {
+		fputs("mag_pulse: {drain_only: true}\n", f);
+		*mag_pulse = true;
+	}
+	if (!dll)
 		return true;
 	if (features.attack_break) {
 		/* The hook's laser ranges by rank, which it uses even with no

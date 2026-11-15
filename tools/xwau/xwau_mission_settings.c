@@ -163,11 +163,7 @@ static void write_ints(FILE* f, const int* values, size_t count) {
 
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config) {
 	const XwauExePatches* patches   = &config->exe_patches;
-	const bool            exe_rules = patches->no_pilot_ejections || patches->no_escape_pod_ejections ||
-									  patches->ejected_craft_team_9 || patches->ejected_craft_skip_setup ||
-									  patches->skirmish_ejections || patches->ai_warheads_attack_on_hit ||
-									  patches->one_jamming_beam_stops_turrets ||
-									  patches->two_launcher_advanced_missiles || patches->no_turret_idle_spin;
+	const bool            exe_rules = XwauExePatches_AnyRule(patches);
 	const bool rules =
 		exe_rules || config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch ||
 		config->mission_tie_stats || config->weapon_rate_fire_check || config->weapon_rate_rack_check ||
@@ -222,24 +218,7 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  overlapping_fly_by_sounds: true\n", f);
 	if (config->pilot_hangar_droids)
 		fputs("  hangar_droid_parts_from_model: true\n", f);
-	if (patches->no_pilot_ejections)
-		fputs("  no_pilot_ejections: true\n", f);
-	if (patches->no_escape_pod_ejections)
-		fputs("  no_escape_pod_ejections: true\n", f);
-	if (patches->ejected_craft_team_9)
-		fputs("  ejected_craft_team_9: true\n", f);
-	if (patches->ejected_craft_skip_setup)
-		fputs("  ejected_craft_skip_setup: true\n", f);
-	if (patches->skirmish_ejections)
-		fputs("  skirmish_ejections: true\n", f);
-	if (patches->ai_warheads_attack_on_hit)
-		fputs("  ai_warheads_attack_on_hit: true\n", f);
-	if (patches->one_jamming_beam_stops_turrets)
-		fputs("  one_jamming_beam_stops_turrets: true\n", f);
-	if (patches->two_launcher_advanced_missiles)
-		fputs("  two_launcher_advanced_missiles: true\n", f);
-	if (patches->no_turret_idle_spin)
-		fputs("  no_turret_idle_spin: true\n", f);
+	XwauExePatches_WriteRules(f, patches);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const unsigned abort =

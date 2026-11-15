@@ -1169,12 +1169,17 @@ static const struct {
 } g_fakeSections[] = {
 	{ 0x402000, 0x1000 },  /* the turret patch */
 	{ 0x404000, 0x1000 },  /* the ejection patches */
+	{ 0x408000, 0x1000 },  /* TFTC-C's engine wash patch */
+	{ 0x40E000, 0x1000 },  /* TFTC-C's Mag Pulse patch */
+	{ 0x412000, 0x1000 },  /* TFTC-C's splash damage patch */
 	{ 0x41B000, 0x1000 },  /* the two-launcher patch */
 	{ 0x41C000, 0x1000 },  /* the beam test */
 	{ 0x43D000, 0x1000 },  /* three sound switches */
 	{ 0x458000, 0x2000 },  /* the hangar launch switch */
-	{ 0x4A8000, 0x1000 },  /* the AI warhead patch */
+	{ 0x490000, 0x1000 },  /* TFTC-C's AI shield patch */
+	{ 0x4A6000, 0x4000 },  /* TFTC-C's AI patches and the AI warhead patch */
 	{ 0x4E1000, 0x1000 },  /* the jamming patch */
+	{ 0x4FA000, 0x3000 },  /* TFTC-C's player turn rate and convergence patches */
 	{ 0x579000, 0x1000 },  /* the skirmish ejection patch */
 	{ 0x5B0000, 0x50000 }, /* the craft type table, the craft records and the object type table */
 };
@@ -1251,6 +1256,39 @@ static void fake_rule_patches(FakeExe* exe, bool shared, bool tftc_only) {
 	}
 }
 
+/* Writes the stock or patched bytes of the patches that only TFTC-C's exe
+   has. */
+static void fake_classic_patches(FakeExe* exe, bool apply) {
+	static const struct {
+		unsigned    address;
+		size_t      size;
+		const char *stock, *patched;
+	} parts[] = {
+		{ 0x4A820A, 2, "\x75\x18", "\xEB\x18" },
+		{ 0x4A9069, 6, "\x0F\x85\xE1\x00\x00\x00", "\x90\xE9\xE1\x00\x00\x00" },
+		{ 0x4A624B, 6, "\x0F\x84\xAE\x01\x00\x00", "\xE9\xAF\x01\x00\x00\x90" },
+		{ 0x412280, 3, "\x83\xEC\x40", "\xC3\x90\x90" },
+		{ 0x40EA21, 2, "\x74\x65", "\xEB\x65" },
+		{ 0x408E91, 6, "\x0F\x8E\x83\x00\x00\x00", "\xE9\x84\x00\x00\x00\x90" },
+		{ 0x490499, 3, "\xC1\xE0\x02", "\xC1\xE0\x01" },
+		{ 0x4A6A9C, 12, "\x66\x48\x66\xF7\xD8\x1B\xC0\x24\xA0\x83\xC0\x64",
+		  "\xB8\x04\x00\x00\x00\xEB\x05\x90\x90\x90\x90\x90" },
+		{ 0x4A6AB6, 12, "\x66\x48\x66\xF7\xD8\x1B\xC0\x24\xFB\x83\xC0\x08",
+		  "\xB8\x03\x00\x00\x00\xEB\x05\x90\x90\x90\x90\x90" },
+		{ 0x4A6AD0, 12, "\x66\x48\x66\xF7\xD8\x1B\xC0\x24\xFE\x83\xC0\x04",
+		  "\xB8\x02\x00\x00\x00\xEB\x05\x90\x90\x90\x90\x90" },
+		{ 0x4FA660, 7, "\x66\x3D\x55\x55\x73\x09\x8D", "\xB9\xFF\xFF\x00\x00\xEB\x1E" },
+		{ 0x4FA70E, 5, "\xBF\x04\x00\x00\x00", "\xBF\x00\x00\x00\x00" },
+		{ 0x4FA713, 2, "\x2B\xF8", "\x90\x90" },
+		{ 0x4A784B, 7, "\x8A\x84\x40\x8D\xB4\x5B\x00", "\xB0\x00\x90\x90\x90\x90\x90" },
+		{ 0x4FC0D3, 7, "\x8A\x84\x40\x8D\xB4\x5B\x00", "\xB0\x00\x90\x90\x90\x90\x90" },
+		{ 0x41BA49, 2, "\x74\x0E", "\xEB\x0E" },
+	};
+
+	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i)
+		memcpy(fake_at(exe, parts[i].address), apply ? parts[i].patched : parts[i].stock, parts[i].size);
+}
+
 /* Writes `tables` at the addresses of the projectile tables. */
 static void fake_projectiles(FakeExe* exe, const XwauProjectileTables* t) {
 	for (int i = 0; i < XWAU_GAME_PROJECTILE_TYPES; ++i) {
@@ -1314,6 +1352,7 @@ static void fake_exe_init(FakeExe* exe) {
 	for (int t = 0; t < 557; ++t)
 		put16(fake_at(exe, 0x5FB240 + 24 * t + 20), 0xFFFF);
 	fake_rule_patches(exe, false, false);
+	fake_classic_patches(exe, false);
 	fake_projectiles(exe, &kStockProjectiles);
 }
 
@@ -2676,6 +2715,19 @@ static void test_exe_patches(const char* scratch) {
 		"  two_launcher_advanced_missiles: true\n",
 		"  no_turret_idle_spin: true\n",
 	};
+	static const char* const classic_rules[11] = {
+		"  no_top_ai_dual_warheads: true\n",
+		"  no_turret_warhead_self_defense: true\n",
+		"  no_turret_warhead_escort_defense: true\n",
+		"  no_explosion_splash_damage: true\n",
+		"  no_engine_wash: true\n",
+		"  ai_shields_charge_to_full: true\n",
+		"  player_attacker_limit_by_difficulty: true\n",
+		"  no_throttle_turn_rate: true\n",
+		"  no_energy_turn_rate: true\n",
+		"  no_ai_laser_convergence: true\n",
+		"  no_player_laser_convergence: true\n",
+	};
 
 	/* The rules expected for each exe. */
 	static const struct {
@@ -2706,7 +2758,27 @@ static void test_exe_patches(const char* scratch) {
 		bool  ok   = text != NULL;
 		for (int r = 0; ok && r < 9; ++r)
 			ok = (strstr(text, rules[r]) != NULL) == cases[c].expected[r];
-		check(ok, cases[c].what);
+		for (int r = 0; ok && r < 11; ++r)
+			ok = !strstr(text, classic_rules[r]);
+		check(ok && !strstr(text, "mag_pulse"), cases[c].what);
+		free(text);
+	}
+	/* TFTC-C's exe has the TFTC patches and 12 more. Without a
+	   hook_weapon_lock, its Mag Pulse patch gives drain_only. */
+	{
+		FakeExe exe;
+		fake_exe_init(&exe);
+		fake_rule_patches(&exe, true, true);
+		fake_classic_patches(&exe, true);
+		fake_exe_write(&exe, game);
+		char* text = flight_settings_text(game, settings);
+		bool  ok   = text != NULL;
+		for (int r = 0; ok && r < 9; ++r)
+			ok = strstr(text, rules[r]) != NULL;
+		for (int r = 0; ok && r < 11; ++r)
+			ok = strstr(text, classic_rules[r]) != NULL;
+		check(ok && strstr(text, "\nmag_pulse: {drain_only: true}\n"),
+			  "exe patches: TFTC-C's exe gets 20 rules and drain_only");
 		free(text);
 	}
 	/* The exe has only one of the two parts of the team patch, and unknown
