@@ -166,19 +166,21 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 	const bool            exe_rules = patches->no_pilot_ejections || patches->no_escape_pod_ejections ||
 									  patches->ejected_craft_team_9 || patches->ejected_craft_skip_setup ||
 									  patches->skirmish_ejections || patches->ai_warheads_attack_on_hit;
-	const bool rules = exe_rules || config->mission_tie || config->opt_limit_engine_glows ||
-					   config->weapon_switch || config->mission_tie_stats || config->weapon_rate_fire_check ||
-					   config->weapon_rate_rack_check || config->starship_ambient ||
-					   config->weapon_rate_slot_cap || config->gunner_seats ||
-					   config->weapon_rate_mesh_filter || config->weapon_rate_hardpoint_types ||
-					   config->weapon_rate_rearm_statuses || config->jamming || config->weapon_type ||
-					   config->crafts_count_sounds || config->pilot_hangar_droids;
+	const bool rules =
+		exe_rules || config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch ||
+		config->mission_tie_stats || config->weapon_rate_fire_check || config->weapon_rate_rack_check ||
+		config->starship_ambient || config->weapon_rate_slot_cap || config->gunner_seats ||
+		config->weapon_rate_mesh_filter || config->weapon_rate_hardpoint_types ||
+		config->weapon_rate_rearm_statuses || config->jamming || config->weapon_type ||
+		config->crafts_count_sounds || config->pilot_hangar_droids || config->hyperspace.hyperspace;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
 		fputs("  reset_combat_music_at_mission_load: true\n  hangar_red_alert_any_mothership: true\n", f);
 	if (config->mission_tie && !config->ranks_modifier)
 		fputs("  no_difficulty_rank_changes: true\n", f);
+	if (config->hyperspace.hyperspace)
+		fputs("  ai_arrival_stops_before_point: true\n", f);
 	if (config->opt_limit_engine_glows)
 		fputs("  classic_hide_destroyed_engine_glows: true\n", f);
 	if (config->weapon_switch)

@@ -3709,6 +3709,8 @@ static void test_hyperspace(const char* scratch) {
 	size_t size = 0;
 	char*  text =
 		XwauFlightSettings_Write(game, &g_names, &g_stock, settings) ? ReadWholeFile(settings, &size) : NULL;
+	check(text && strstr(text, "  ai_arrival_stops_before_point: true\n"),
+		  "hyperspace: the hook changes the AI arrival test, also with short mode off");
 	check(text && strstr(text, "mission_settings:\n  use_hyperspace_speeds: false\n") &&
 			  strstr(text, "hyperspace:\n  arrival_speed_mglt: 12743.111\n  departure_speed_mglt: 12743.111\n"
 						   "  departure_acceleration_mglt: 127431.111\n  arrival_braking_seconds: 0.5\n"),
