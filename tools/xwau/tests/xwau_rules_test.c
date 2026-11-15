@@ -2195,6 +2195,28 @@ static void test_weapon_stats(const char* scratch) {
 		  "weapon profiles: a profile that the model doesn't have is logged, and the import goes on");
 	ClearReportFatal();
 	XwauWeaponStats_FreeChoices(&choices);
+
+	/* The modifier sections of a model. The .txt file wins over its section,
+	   an empty section isn't a set, and a key that isn't a number is left
+	   out. */
+	snprintf(path, sizeof path, "%s/FlightModels/Factors.ini", game);
+	write_file(path, "[WeaponStatsModifiers_Veteran]\nFireRate = 0.5\nFireRatio = 0.5\nFoo = 2\n"
+					 "[WeaponStatsModifiers_Player_Ace]\n"
+					 "[WeaponStatsModifiers_Player]\nPower = 1.1\n"
+					 "[WeaponStatsModifiers]\nscore = 3\nRange = x\n");
+	snprintf(path, sizeof path, "%s/FlightModels/FactorsWeaponStatsModifiers.txt", game);
+	write_file(path, "Speed = 2\n");
+	check(XwauWeaponStats_Read(game, "Factors", &stats) && XwauWeaponStats_Any(&stats),
+		  "weapon factors: a model with only modifier sections has weapon values");
+	f = fopen(out, "wb");
+	XwauWeaponStats_Write(f, &g_names, &g_stock, "  ", &stats);
+	fclose(f);
+	check(same_file(out, "  factors:\n"
+						 "    all: {speed: 2}\n"
+						 "    player: {power: 1.10000002}\n"
+						 "    veteran: {fire_rate: 0.5, fire_ratio: 0.5}\n"),
+		  "weapon factors: each section with lines is a set, with its float32 factors");
+	XwauWeaponStats_Free(&stats);
 }
 
 static void test_warhead_pools(const char* scratch) {

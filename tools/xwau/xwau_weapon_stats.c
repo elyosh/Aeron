@@ -93,6 +93,18 @@ static const char* const kLinkingNames[LINKING_KEYS] = { "laser_link", "prevent_
 														 "prevent_ai_ion_when_not_disabling",
 														 "prevent_player_linked_lasers_ion" };
 
+/* The keys of [WeaponStatsModifiers*], and their names in the model file. */
+static const char* const kFactorKeys[XWAU_WEAPON_STATS_FACTORS] = {
+	"Score",     "Speed", "Power",        "PowerSpeedPercent", "FireRate",
+	"FireRatio", "Range", "DechargeRate", "RechargeRate"
+};
+static const char* const kFactorNames[XWAU_WEAPON_STATS_FACTORS] = {
+	"score",      "speed", "power",         "power_speed_percent", "fire_rate",
+	"fire_ratio", "range", "decharge_rate", "recharge_rate"
+};
+static const char* const kRankKeys[XWAU_WEAPON_STATS_RANKS] = { "_Novice", "_Officer", "_Veteran",
+																"_Ace",    "_TopAce",  "_SuperAce" };
+
 static const char* const kChoiceSections[XWAU_WEAPON_STATS_GROUPS] = { "WeaponProfiles", "WarheadProfiles",
 																	   "EnergyProfiles", "LinkingProfiles" };
 static const char* const kChoiceKeys[XWAU_WEAPON_STATS_GROUPS]  = { "WeaponProfile_fg_", "WarheadProfile_fg_",
@@ -438,6 +450,26 @@ bool XwauWeaponStats_Read(const char* game, const char* model, XwauWeaponStats* 
 		XwauSection_Free(&section);
 	}
 	XwauWeaponStats_Free(&unset);
+	/* The factor sets, in the order of XwauWeaponStatsFactors: all, player,
+	   each rank, then each rank of a player's craft. */
+	for (int at = 0; ok && model && at < XWAU_WEAPON_STATS_FACTOR_SETS; ++at) {
+		char        name[80];
+		XwauSection section;
+		const int   rank   = at < 2 ? -1 : (at - 2) % XWAU_WEAPON_STATS_RANKS;
+		const bool  player = at == 1 || at >= 2 + XWAU_WEAPON_STATS_RANKS;
+		snprintf(name, sizeof name, "WeaponStatsModifiers%s%s", player ? "_Player" : "",
+				 rank < 0 ? "" : kRankKeys[rank]);
+		ok = XwauSection_ReadModel(game, model, name, XWAU_RULES_CPP, &section);
+		if (!ok)
+			break;
+		XwauWeaponStatsFactors* factors = &out->factors[at];
+		factors->present                = section.lines.count != 0;
+		out->has_factors |= factors->present;
+		for (int key = 0; factors->present && key < XWAU_WEAPON_STATS_FACTORS; ++key)
+			factors->set[key] =
+				XwauSection_Float(&section, kFactorKeys[key], &factors->value[key]) == XWAU_VALUE_SET;
+		XwauSection_Free(&section);
+	}
 	/* The game looks for each part of a duration in the model first, then in
 	   the global section. Keep the global parts, so that a model's duration
 	   can use them. */
@@ -484,7 +516,9 @@ void XwauWeaponStats_Free(XwauWeaponStats* stats) {
 	memset(stats, 0, sizeof *stats);
 }
 
-bool XwauWeaponStats_Any(const XwauWeaponStats* stats) { return stats->count || stats->has_hardpoint_kinds; }
+bool XwauWeaponStats_Any(const XwauWeaponStats* stats) {
+	return stats->count || stats->has_hardpoint_kinds || stats->has_factors;
+}
 
 /* ---- Writing
    -------------------------------------------------------------- */
@@ -688,6 +722,30 @@ void XwauWeaponStats_Write(FILE* f, const XwauNames* names, const XwauStockValue
 					else
 						fprintf(f, "%s: %s", kLinkingNames[index], v->value ? "true" : "false");
 				}
+			}
+			fputs("}\n", f);
+		}
+	}
+	if (stats->has_factors) {
+		fprintf(f, "%sfactors:\n", indent);
+		for (int at = 0; at < XWAU_WEAPON_STATS_FACTOR_SETS; ++at) {
+			const XwauWeaponStatsFactors* factors = &stats->factors[at];
+			if (!factors->present)
+				continue;
+			const int rank = at < 2 ? -1 : (at - 2) % XWAU_WEAPON_STATS_RANKS;
+			if (at == 0)
+				fprintf(f, "%s  all: {", indent);
+			else if (at == 1)
+				fprintf(f, "%s  player: {", indent);
+			else
+				fprintf(f, "%s  %s%s: {", indent, at >= 2 + XWAU_WEAPON_STATS_RANKS ? "player_" : "",
+						XwauNames_Name(&names->ranks, rank));
+			bool first = true;
+			for (int key = 0; key < XWAU_WEAPON_STATS_FACTORS; ++key) {
+				if (!factors->set[key])
+					continue;
+				fprintf(f, "%s%s: %.9g", first ? "" : ", ", kFactorNames[key], (double)factors->value[key]);
+				first = false;
 			}
 			fputs("}\n", f);
 		}

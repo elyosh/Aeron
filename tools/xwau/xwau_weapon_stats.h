@@ -74,6 +74,19 @@
  * the hook doesn't read and lines without a key. A profile name longer than
  * 47 characters makes the import fail.
  *
+ * [WeaponStatsModifiers] multiplies some stats of a model's craft, after
+ * the hook has worked them out, stock values included. The hook reads
+ * [WeaponStatsModifiers_Player_<Rank>] and [WeaponStatsModifiers_Player] for
+ * a player's craft, then [WeaponStatsModifiers_<Rank>], then
+ * [WeaponStatsModifiers], each from FlightModels/<Model><Section>.txt or the
+ * model's .ini, and uses the first one with lines. <Rank> is the flight
+ * group's rank: Novice, Officer, Veteran, Ace, TopAce or SuperAce. The keys
+ * are float32 factors: Score, Speed, Power, PowerSpeedPercent, FireRate,
+ * FireRatio, Range, DechargeRate and RechargeRate. A key that isn't set
+ * counts as 1. The hook reads these sections even with
+ * EnableWeaponStatsProfiles = 0. They go into `factors`, as `player_<rank>`,
+ * `player`, `<rank>` and `all`.
+ *
  * A mission picks a profile for a flight group with WeaponProfile_fg_<N> in
  * <mission>_WeaponProfiles.txt, or else in the [WeaponProfiles] section of
  * <mission>.ini. Without either, the hook reads
@@ -99,7 +112,21 @@ enum {
 	XWAU_WEAPON_STATS_GROUPS
 };
 
-enum { XWAU_WEAPON_STATS_HARDPOINT_TYPES = 40, XWAU_WEAPON_STATS_NAME_MAX = 48 };
+enum {
+	XWAU_WEAPON_STATS_HARDPOINT_TYPES = 40,
+	XWAU_WEAPON_STATS_NAME_MAX        = 48,
+	XWAU_WEAPON_STATS_RANKS           = 6,
+	/* all, player, each rank, then each rank of a player's craft */
+	XWAU_WEAPON_STATS_FACTOR_SETS = 2 + 2 * XWAU_WEAPON_STATS_RANKS,
+	XWAU_WEAPON_STATS_FACTORS     = 9
+};
+
+/* One [WeaponStatsModifiers*] section. */
+typedef struct XwauWeaponStatsFactors {
+	bool  present; /* the section has lines */
+	bool  set[XWAU_WEAPON_STATS_FACTORS];
+	float value[XWAU_WEAPON_STATS_FACTORS];
+} XwauWeaponStatsFactors;
 
 /* One value read from a section. */
 typedef struct XwauWeaponStatsValue {
@@ -127,6 +154,9 @@ typedef struct XwauWeaponStats {
 	   them when the model doesn't set a part. */
 	XwauWeaponStatsValue* global_durations;
 	size_t                global_duration_count;
+	/* For a model, its [WeaponStatsModifiers*] sections. */
+	XwauWeaponStatsFactors factors[XWAU_WEAPON_STATS_FACTOR_SETS];
+	bool                   has_factors;
 } XwauWeaponStats;
 
 /* Reads the sections of model `model` ("TieFighter") in the installation
