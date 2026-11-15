@@ -16,7 +16,8 @@
  *     265 records of 987 bytes, packed, with 4-byte pointers);
  *   - FlightModels/Spacecraft0.LST and Equipment0.LST;
  *   - the four sound switches that pick an engine or launch sound case by
- *     object type, and the test that takes the beam away from six craft.
+ *     object type.
+ * The patch that lets six craft carry a beam is read by xwau_exe_patches.h.
  *
  * The mod's tables first get the [ExeCraftValues] sections of its models, as
  * hook_mission_tie applies them at each mission load. For each object type

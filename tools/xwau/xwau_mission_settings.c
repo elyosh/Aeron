@@ -73,6 +73,7 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	   motion. Older builds of the hook, without the droid hooks, don't have
 	   it. */
 	out->pilot_hangar_droids = Xwau_DllHasText(game, "hook_pilot.dll", "890DFC0D9100");
+	XwauExePatches_Read(game, XWAU_EXE_PATCHES_FLIGHT, &out->exe_patches);
 	XwauSection settings;
 	if (Xwau_FindFile(game, "hook_weapon_type.dll", path, sizeof path)) {
 		out->weapon_type          = true;
@@ -164,8 +165,12 @@ static void write_ints(FILE* f, const int* values, size_t count) {
 }
 
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config) {
-	const bool rules = config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch ||
-					   config->mission_tie_stats || config->weapon_rate_fire_check ||
+	const XwauExePatches* patches   = &config->exe_patches;
+	const bool            ejections = patches->no_pilot_ejections || patches->no_escape_pod_ejections ||
+									  patches->ejected_craft_team_9 || patches->ejected_craft_skip_setup ||
+									  patches->skirmish_ejections;
+	const bool rules = ejections || config->mission_tie || config->opt_limit_engine_glows ||
+					   config->weapon_switch || config->mission_tie_stats || config->weapon_rate_fire_check ||
 					   config->weapon_rate_rack_check || config->starship_ambient ||
 					   config->weapon_rate_slot_cap || config->gunner_seats ||
 					   config->weapon_rate_mesh_filter || config->weapon_rate_hardpoint_types ||
@@ -214,6 +219,16 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  overlapping_fly_by_sounds: true\n", f);
 	if (config->pilot_hangar_droids)
 		fputs("  hangar_droid_parts_from_model: true\n", f);
+	if (patches->no_pilot_ejections)
+		fputs("  no_pilot_ejections: true\n", f);
+	if (patches->no_escape_pod_ejections)
+		fputs("  no_escape_pod_ejections: true\n", f);
+	if (patches->ejected_craft_team_9)
+		fputs("  ejected_craft_team_9: true\n", f);
+	if (patches->ejected_craft_skip_setup)
+		fputs("  ejected_craft_skip_setup: true\n", f);
+	if (patches->skirmish_ejections)
+		fputs("  skirmish_ejections: true\n", f);
 	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
 	const bool shields      = config->mission_tie && config->damage_through_shields;
 	const unsigned abort =

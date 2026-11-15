@@ -1130,6 +1130,7 @@ if(AERON_BUILD_TOOLS)
         tools/xwau/xwau_concourse.c
         tools/xwau/xwau_config.c
         tools/xwau/xwau_dat.c
+        tools/xwau/xwau_exe_patches.c
         tools/xwau/xwau_game_tables.c
         tools/xwau/xwau_mat.c
         tools/xwau/xwau_mission_tie.c

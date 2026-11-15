@@ -8,6 +8,7 @@
 
 #include "util.h"
 #include "xwau_config.h"
+#include "xwau_exe_patches.h"
 #include "xwau_game_tables.h"
 #include "xwau_gunner_seats.h"
 
@@ -555,17 +556,6 @@ static bool sound_jumps_match(const XwauGameTables* stock, const XwauGameTables*
 	return true;
 }
 
-/* Whether the mod's code jumps past the beam test, as XWAU's does: `jmp` from
-   XWAU_GAME_BEAM_TEST to XWAU_GAME_BEAM_TEST_END instead of the stock `jz`. */
-static int beam_test_skipped(const XwauGameTables* stock, const XwauGameTables* mod) {
-	if (memcmp(stock->beam, mod->beam, 2) == 0)
-		return 0;
-	if (mod->beam[0] == 0xEB && XWAU_GAME_BEAM_TEST + 2 + mod->beam[1] == XWAU_GAME_BEAM_TEST_END)
-		return 1;
-	ReportUnsupported("unknown changes to the beam test of XWINGALLIANCE.EXE");
-	return 0;
-}
-
 typedef struct Counts {
 	int files, models, typeFields, records, sounds, beams, names, craftTypes, remaps;
 } Counts;
@@ -1037,7 +1027,9 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 	const bool sounds_comparable = sound_jumps_match(stock, mod);
 	if (!sounds_comparable)
 		ReportUnsupported("changes to the object type sound cases of XWINGALLIANCE.EXE");
-	const int beam = beam_test_skipped(stock, mod);
+	XwauExePatches patches;
+	XwauExePatches_Read(mod_root, XWAU_EXE_PATCHES_CRAFT, &patches);
+	const bool beam = patches.craft_beams;
 
 	NewCraftRows new_craft_rows = { { NULL, NULL } };
 	Change*      changes        = calloc(OBJECT_TYPE_COUNT, sizeof *changes);

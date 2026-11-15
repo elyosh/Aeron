@@ -1143,8 +1143,8 @@ static void test_text(const char* scratch) {
 
 /* ---- Object files ------------------------------------------------------------ */
 
-/* A small XWINGALLIANCE.EXE: a PE file whose four sections hold the addresses
-   that the object files read, and nothing else. */
+/* A small XWINGALLIANCE.EXE: a PE file whose sections hold the addresses
+   that the importer reads, and nothing else. */
 typedef struct FakeExe {
 	unsigned char* data;
 	size_t         size;
@@ -1153,15 +1153,19 @@ typedef struct FakeExe {
 static const struct {
 	unsigned address, size;
 } g_fakeSections[] = {
+	{ 0x404000, 0x1000 },  /* the ejection patches */
 	{ 0x41C000, 0x1000 },  /* the beam test */
 	{ 0x43D000, 0x1000 },  /* three sound switches */
 	{ 0x458000, 0x2000 },  /* the hangar launch switch */
+	{ 0x579000, 0x1000 },  /* the skirmish ejection patch */
 	{ 0x5B0000, 0x50000 }, /* the craft type table, the craft records and the object type table */
 };
 
+#define FAKE_SECTIONS (sizeof g_fakeSections / sizeof g_fakeSections[0])
+
 static unsigned char* fake_at(FakeExe* exe, unsigned address) {
 	size_t raw = 0x400;
-	for (size_t i = 0; i < 4; ++i) {
+	for (size_t i = 0; i < FAKE_SECTIONS; ++i) {
 		if (address >= g_fakeSections[i].address &&
 			address < g_fakeSections[i].address + g_fakeSections[i].size)
 			return exe->data + raw + (address - g_fakeSections[i].address);
@@ -1180,9 +1184,50 @@ static void put32(unsigned char* p, unsigned value) {
 	put16(p + 2, value >> 16);
 }
 
+/* Writes the bytes at the addresses of the ejection patches. `disabled`
+   applies the first two patches, which turn off pilots and pods, and
+   `patched` the other three. TFTC's exe has all five, and XWAU 2025's only
+   the other three. */
+static void fake_ejection_patches(FakeExe* exe, bool patched, bool disabled) {
+	static const struct {
+		unsigned      address;
+		size_t        size;
+		bool          disabling;
+		unsigned char stock[8], patched[8];
+	} parts[] = {
+		{ 0x4042F4, 6, true, { 0x38, 0x1D, 0x18, 0x33, 0x77, 0x00 }, { 0xEB, 0xEB, 0x90, 0x90, 0x90, 0x90 } },
+		{ 0x40434B, 5, true, { 0xE8, 0xC0, 0x0A, 0x09, 0x00 }, { 0xEB, 0x94, 0x90, 0x90, 0x90 } },
+		{ 0x404481,
+		  7,
+		  false,
+		  { 0x8A, 0x0C, 0x45, 0xF1, 0xDC, 0x80, 0x00 },
+		  { 0xB1, 0x09, 0x90, 0x90, 0x90, 0x90, 0x90 } },
+		{ 0x404693,
+		  6,
+		  false,
+		  { 0x8A, 0x81, 0x98, 0x00, 0x00, 0x00 },
+		  { 0xB0, 0x09, 0x90, 0x90, 0x90, 0x90 } },
+		{ 0x404EEB,
+		  6,
+		  false,
+		  { 0x0F, 0x87, 0xF4, 0x00, 0x00, 0x00 },
+		  { 0x90, 0xE9, 0xF4, 0x00, 0x00, 0x00 } },
+		{ 0x5797B6,
+		  8,
+		  false,
+		  { 0xC6, 0x84, 0x29, 0xC9, 0x0D, 0x00, 0x00, 0x16 },
+		  { 0xC6, 0x84, 0x29, 0xC9, 0x0D, 0x00, 0x00, 0x00 } },
+	};
+
+	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
+		const bool apply = parts[i].disabling ? disabled : patched;
+		memcpy(fake_at(exe, parts[i].address), apply ? parts[i].patched : parts[i].stock, parts[i].size);
+	}
+}
+
 static void fake_exe_init(FakeExe* exe) {
 	exe->size = 0x400;
-	for (size_t i = 0; i < 4; ++i)
+	for (size_t i = 0; i < FAKE_SECTIONS; ++i)
 		exe->size += g_fakeSections[i].size;
 	exe->data        = calloc(1, exe->size);
 	unsigned char* d = exe->data;
@@ -1190,11 +1235,11 @@ static void fake_exe_init(FakeExe* exe) {
 	d[1]             = 'Z';
 	put32(d + 0x3C, 0x40);
 	memcpy(d + 0x40, "PE\0\0", 4);
-	put16(d + 0x40 + 6, 4);
+	put16(d + 0x40 + 6, (unsigned)FAKE_SECTIONS);
 	put16(d + 0x40 + 20, 224);
 	put32(d + 0x40 + 24 + 28, 0x400000);
 	size_t raw = 0x400;
-	for (size_t i = 0; i < 4; ++i) {
+	for (size_t i = 0; i < FAKE_SECTIONS; ++i) {
 		unsigned char* section = d + 0x40 + 24 + 224 + 40 * i;
 		put32(section + 8, g_fakeSections[i].size);
 		put32(section + 12, g_fakeSections[i].address - 0x400000);
@@ -1222,6 +1267,7 @@ static void fake_exe_init(FakeExe* exe) {
 	/* Every object type has no list row. */
 	for (int t = 0; t < 557; ++t)
 		put16(fake_at(exe, 0x5FB240 + 24 * t + 20), 0xFFFF);
+	fake_ejection_patches(exe, false, false);
 }
 
 /* Gives object type `t` row `row` of Spacecraft0.LST and craft record `record`. */
@@ -2532,6 +2578,66 @@ static char* flight_settings_text(const char* game, const char* settings) {
 																		: NULL;
 }
 
+/* ---- Exe patches ------------------------------------------------------------- */
+
+static void test_exe_patches(const char* scratch) {
+	char game[1024], settings[1300];
+	snprintf(game, sizeof game, "%s/exe_patches_game", scratch);
+	MakeDirs(game);
+	snprintf(settings, sizeof settings, "%s/exe_patches.yaml", scratch);
+	static const char* const rules[5] = { "  no_pilot_ejections: true\n", "  no_escape_pod_ejections: true\n",
+										  "  ejected_craft_team_9: true\n",
+										  "  ejected_craft_skip_setup: true\n",
+										  "  skirmish_ejections: true\n" };
+
+	/* The rules expected for each exe. */
+	static const struct {
+		bool        patched, disabled;
+		bool        expected[5];
+		const char* what;
+	} cases[] = {
+		{ false,
+		  false,
+		  { false, false, false, false, false },
+		  "exe patches: the stock exe gets no ejection rules" },
+		{ true,
+		  true,
+		  { true, true, true, true, true },
+		  "exe patches: TFTC's exe gets all five ejection rules" },
+		{ true,
+		  false,
+		  { false, false, true, true, true },
+		  "exe patches: XWAU 2025's exe gets the three rules for ejected craft" },
+	};
+
+	for (size_t c = 0; c < sizeof cases / sizeof cases[0]; ++c) {
+		FakeExe exe;
+		fake_exe_init(&exe);
+		fake_ejection_patches(&exe, cases[c].patched, cases[c].disabled);
+		fake_exe_write(&exe, game);
+		char* text = flight_settings_text(game, settings);
+		bool  ok   = text != NULL;
+		for (int r = 0; ok && r < 5; ++r)
+			ok = (strstr(text, rules[r]) != NULL) == cases[c].expected[r];
+		check(ok, cases[c].what);
+		free(text);
+	}
+	/* The exe has only one of the two parts of the team patch, and unknown
+	   code where the pod patch goes. Both patches are left out, and the
+	   other patches still give their rules. */
+	FakeExe exe;
+	fake_exe_init(&exe);
+	fake_ejection_patches(&exe, true, true);
+	memcpy(fake_at(&exe, 0x404693), "\x8A\x81\x98\x00\x00\x00", 6);
+	memcpy(fake_at(&exe, 0x40434B), "\x90\x90\x90\x90\x90", 5);
+	fake_exe_write(&exe, game);
+	char* text = flight_settings_text(game, settings);
+	check(text && strstr(text, rules[0]) && !strstr(text, rules[1]) && !strstr(text, rules[2]) &&
+			  strstr(text, rules[3]) && strstr(text, rules[4]),
+		  "exe patches: a patch with unknown code or with only some of its parts is left out");
+	free(text);
+}
+
 /* ---- hook_hangars craft selection --------------------------------------------- */
 
 static void test_hangar_crafts(const char* scratch) {
@@ -3617,6 +3723,7 @@ int main(void) {
 	test_game_files(scratch);
 	test_mission_files(scratch);
 	test_flight_settings(scratch);
+	test_exe_patches(scratch);
 	test_object_limits(scratch);
 	test_hangar_crafts(scratch);
 	test_weapon_lock(scratch);

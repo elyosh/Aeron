@@ -15,7 +15,7 @@
  *   - the craft records (0x5BB480), 265 records of 987 bytes, packed, with
  *     4-byte pointers;
  *   - the four sound switches that pick an engine or launch sound case by
- *     object type, and the test that takes the beam away from six craft.
+ *     object type.
  *
  * An object type's model is the name of its list row, in lower case and
  * without the folder and the extension. Its list is its textureGroup (0 for
@@ -40,11 +40,6 @@ enum {
 	XWAU_GAME_SOUND_CASES = 65,
 };
 
-/* The `jz` of the first object type test that takes the beam away from six
-   craft (mission.c:6624-6627). XWAU replaces it with a jump past the test. */
-#define XWAU_GAME_BEAM_TEST 0x41C6BFu
-#define XWAU_GAME_BEAM_TEST_END 0x41C6EAu
-
 typedef struct XwauGameTables {
 	uint8_t  types[XWAU_GAME_OBJECT_TYPES][XWAU_GAME_OBJECT_TYPE_SIZE];
 	uint8_t  records[XWAU_GAME_RECORDS][XWAU_GAME_RECORD_SIZE];
@@ -54,8 +49,6 @@ typedef struct XwauGameTables {
 	uint8_t  soundCases[XWAU_GAME_SOUND_SWITCHES][XWAU_GAME_SOUND_CASES];
 	uint8_t* soundJumps[XWAU_GAME_SOUND_SWITCHES];
 	size_t   soundJumpSize[XWAU_GAME_SOUND_SWITCHES];
-	/* The two bytes at XWAU_GAME_BEAM_TEST. */
-	uint8_t beam[2];
 	char**  rows[2]; /* the model names of the two lists, by row */
 	size_t  rowCount[2];
 } XwauGameTables;
@@ -91,8 +84,8 @@ typedef struct XwauStockValues {
 /* Reads the tables of the game at `root`. Returns NULL, with a report, when
  * a file is missing or can't be read. */
 XwauGameTables* XwauGameTables_Load(const char* root);
-/* Creates the tables of the stock game. The sound switches and the beam test
- * are those of XWA 2.02, and the lists come from the folder `flight_models`.
+/* Creates the tables of the stock game. The sound switches are those of
+ * XWA 2.02, and the lists come from the folder `flight_models`.
  * The caller fills in the object types, craft types and craft records.
  * Returns NULL and reports the problem when a list can't be read. */
 XwauGameTables* XwauGameTables_CreateStock(const char* flight_models);
@@ -111,5 +104,16 @@ const char* XwauGameTables_RowModel(const XwauGameTables* tables, int object_typ
 /* The model of the object type that `craft_type` maps to, or "" when it has
  * none. */
 const char* XwauGameTables_CraftModel(const XwauGameTables* tables, int craft_type);
+
+/* The XWINGALLIANCE.EXE of a game, to read its code. */
+typedef struct XwauGameExe XwauGameExe;
+
+/* Reads the XWINGALLIANCE.EXE at `root`. Returns NULL when there is none,
+ * and NULL with a report when it isn't a Windows executable. */
+XwauGameExe* XwauGameExe_Load(const char* root);
+void         XwauGameExe_Free(XwauGameExe* exe);
+/* The `size` bytes at address `address`, or NULL when they aren't in the
+ * data of a section. */
+const uint8_t* XwauGameExe_At(const XwauGameExe* exe, uint32_t address, size_t size);
 
 #endif /* AERON_XWAU_GAME_TABLES_H */

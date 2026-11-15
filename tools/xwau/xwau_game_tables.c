@@ -55,8 +55,6 @@ static const uint32_t g_stockSoundJumps[XWAU_GAME_SOUND_SWITCHES][24] = {
 	  0x458F0D, 0x458ECF, 0x458EAD, 0x458F2C, 0x458EEE, 0x458EAD, 0x458F2C, 0x458F0D,
 	  0x458EAD, 0x458ECF, 0x458F2C, 0x458EAD, 0x458EAD, 0x458F2C, 0x458F2C, 0x458F48 },
 };
-/* The stock bytes at XWAU_GAME_BEAM_TEST, a `jz` instruction. */
-static const uint8_t g_stockBeamTest[2] = { 0x74, 0x1E };
 
 static const char* const g_listNames[2] = { "Spacecraft0.LST", "Equipment0.LST" };
 
@@ -107,6 +105,40 @@ static const uint8_t* image_at(const Image* image, uint32_t address, size_t size
 			return image->data + raw + (rva - start);
 	}
 	return NULL;
+}
+
+struct XwauGameExe {
+	char     path[1100];
+	uint8_t* data;
+	Image    image;
+};
+
+XwauGameExe* XwauGameExe_Load(const char* root) {
+	XwauGameExe* exe = calloc(1, sizeof *exe);
+	if (!exe)
+		return NULL;
+	size_t size = 0;
+	if (!Xwau_FindFile(root, "XWINGALLIANCE.EXE", exe->path, sizeof exe->path) ||
+		!(exe->data = (uint8_t*)ReadWholeFile(exe->path, &size))) {
+		free(exe);
+		return NULL;
+	}
+	if (!image_open(exe->data, size, &exe->image)) {
+		Report(exe->path, "isn't a Windows executable");
+		XwauGameExe_Free(exe);
+		return NULL;
+	}
+	return exe;
+}
+
+void XwauGameExe_Free(XwauGameExe* exe) {
+	if (exe)
+		free(exe->data);
+	free(exe);
+}
+
+const uint8_t* XwauGameExe_At(const XwauGameExe* exe, uint32_t address, size_t size) {
+	return image_at(&exe->image, address, size);
 }
 
 /* ---- Lists --------------------------------------------------------------- */
@@ -221,10 +253,8 @@ XwauGameTables* XwauGameTables_CreateStock(const char* flight_models) {
 			for (int b = 0; b < 4; ++b)
 				tables->soundJumps[s][4 * i + b] = (uint8_t)(g_stockSoundJumps[s][i] >> (8 * b));
 	}
-	if (ok) {
-		memcpy(tables->beam, g_stockBeamTest, sizeof tables->beam);
+	if (ok)
 		ok = read_lists(flight_models, tables);
-	}
 	if (!ok) {
 		XwauGameTables_Free(tables);
 		return NULL;
@@ -245,8 +275,7 @@ static XwauGameTables* load_files(const char* exe, const char* flight_models) {
 	uint8_t craft[2 * XWAU_GAME_CRAFT_TYPES];
 	ok = ok && read_table(&image, exe, OBJECT_TYPE_TABLE, tables->types, sizeof tables->types) &&
 		 read_table(&image, exe, RECORD_TABLE, tables->records, sizeof tables->records) &&
-		 read_table(&image, exe, CRAFT_TYPE_TABLE, craft, sizeof craft) &&
-		 read_table(&image, exe, XWAU_GAME_BEAM_TEST, tables->beam, sizeof tables->beam);
+		 read_table(&image, exe, CRAFT_TYPE_TABLE, craft, sizeof craft);
 	for (int i = 0; ok && i < XWAU_GAME_SOUND_SWITCHES; ++i)
 		ok = read_sound_switch(&image, exe, i, tables);
 	if (ok)
