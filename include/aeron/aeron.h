@@ -118,7 +118,29 @@ int Aeron_SetWindowAspectRatio(int aspect_width, int aspect_height);
 /* Adjusts an ordinary window to the requested aspect while keeping it inside
  * the current display's usable bounds. Fixed-size states are left unchanged. */
 int Aeron_ResizeWindowToAspect(int aspect_width, int aspect_height);
-/* Switches the host window between windowed and fullscreen modes. */
+
+typedef enum AeronWindowMode {
+	AERON_WINDOW_WINDOWED = 0,
+	AERON_WINDOW_FULLSCREEN,
+	/* A borderless window over every display of the row that the window's
+	 * display is in: the displays next to each other with the same top and
+	 * height. */
+	AERON_WINDOW_SPAN,
+} AeronWindowMode;
+
+/* Changes the window mode. Span falls back to fullscreen, with a log
+ * message, when the row has one display, when its displays differ in pixel
+ * density, or when the system doesn't place the window as asked. Returns
+ * zero when the mode couldn't be applied at all. */
+int Aeron_SetWindowMode(AeronWindowMode mode);
+/* Returns the mode the window is in now. This can differ from the mode last
+ * asked for: span can fall back, and the user can enter or leave fullscreen
+ * with the system's own controls. */
+AeronWindowMode Aeron_WindowMode(void);
+/* Writes the parts of the window that each display shows, in window pixels,
+ * from left to right. Returns how many it wrote, at most `capacity`. */
+int Aeron_GetWindowDisplayRects(AeronRectI* out, int capacity);
+/* Same as Aeron_SetWindowMode with fullscreen or windowed. */
 int Aeron_SetFullscreen(int fullscreen);
 /* Returns nonzero while the host window is fullscreen. */
 int Aeron_Fullscreen(void);

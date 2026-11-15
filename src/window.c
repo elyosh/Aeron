@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include <limits.h>
+#include <math.h>
 
 static int Aeron_CalculateAspectWidth(int height, int aspect_width, int aspect_height, int* out_width) {
 	int64_t width;
@@ -157,7 +158,7 @@ static int Aeron_ApplyWindowAspectRatio(void) {
 		return 0;
 	}
 	flags = SDL_GetWindowFlags(g_aeron.window);
-	if (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) {
+	if ((flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) || g_aeron.window_spanned) {
 		g_aeron.window_aspect_pending = 1;
 		return 1;
 	}
@@ -242,25 +243,200 @@ int Aeron_ResizeWindowToAspect(int aspect_width, int aspect_height) {
 	return 1;
 }
 
-int Aeron_SetFullscreen(int fullscreen) {
-	int current;
+/* Finds the row of displays that `display` is in: the displays next to each
+ * other that have the same top and height. Writes the rectangle that covers
+ * them. Returns how many displays the row has, or zero when the displays
+ * don't all have the same pixel density. */
+static int Aeron_FindDisplayRow(SDL_DisplayID display, SDL_Rect* out) {
+	SDL_Rect row;
+	if (!SDL_GetDisplayBounds(display, &row)) {
+		return 0;
+	}
+	int            display_count = 0;
+	SDL_DisplayID* displays      = SDL_GetDisplays(&display_count);
+	if (!displays) {
+		return 0;
+	}
+	const SDL_DisplayMode* mode    = SDL_GetDesktopDisplayMode(display);
+	const float            density = mode ? mode->pixel_density : 1.0f;
+	int                    count   = 1;
+	int                    same    = 1;
+	/* Each pass adds the displays that touch the row's left or right edge. */
+	for (int grown = 1; grown;) {
+		grown = 0;
+		for (int i = 0; i < display_count; ++i) {
+			SDL_Rect bounds;
+			if (!SDL_GetDisplayBounds(displays[i], &bounds) || bounds.y != row.y || bounds.h != row.h) {
+				continue;
+			}
+			if (bounds.x + bounds.w != row.x && bounds.x != row.x + row.w) {
+				continue;
+			}
+			const SDL_DisplayMode* other = SDL_GetDesktopDisplayMode(displays[i]);
+			if ((other ? other->pixel_density : 1.0f) != density) {
+				same = 0;
+			}
+			if (bounds.x < row.x) {
+				row.x = bounds.x;
+			}
+			row.w += bounds.w;
+			count++;
+			grown = 1;
+		}
+	}
+	SDL_free(displays);
+	*out = row;
+	return same ? count : 0;
+}
 
+static void Aeron_LeaveSpan(void) {
+	if (!g_aeron.window_spanned) {
+		return;
+	}
+	g_aeron.window_spanned = 0;
+	const SDL_Rect* rect   = &g_aeron.window_rect_before_span;
+	SDL_SetWindowBordered(g_aeron.window, true);
+	SDL_SetWindowResizable(g_aeron.window, true);
+	SDL_SetWindowSize(g_aeron.window, rect->w, rect->h);
+	SDL_SetWindowPosition(g_aeron.window, rect->x, rect->y);
+	SDL_SyncWindow(g_aeron.window);
+	Aeron_ApplyPendingWindowAspectRatio();
+}
+
+/* Returns zero when the window doesn't span its row of displays afterwards. */
+static int Aeron_EnterSpan(void) {
+	SDL_Rect            row;
+	const SDL_DisplayID display = SDL_GetDisplayForWindow(g_aeron.window);
+	const int           count   = display ? Aeron_FindDisplayRow(display, &row) : 0;
+	if (count == 0) {
+		Aeron_LogWarn("aeron", "the window can't span the displays: they differ in pixel density");
+		return 0;
+	}
+	if (count == 1) {
+		Aeron_LogInfo("aeron", "the window can't span the displays: there is no display next to this one");
+		return 0;
+	}
+	if (SDL_GetWindowFlags(g_aeron.window) & SDL_WINDOW_FULLSCREEN) {
+		SDL_SetWindowFullscreen(g_aeron.window, false);
+		SDL_SyncWindow(g_aeron.window);
+	}
+	if (!g_aeron.window_spanned) {
+		SDL_Rect* before = &g_aeron.window_rect_before_span;
+		SDL_GetWindowPosition(g_aeron.window, &before->x, &before->y);
+		SDL_GetWindowSize(g_aeron.window, &before->w, &before->h);
+		g_aeron.window_spanned = 1;
+	}
+	if (g_aeron.window_aspect_width > 0) {
+		/* The aspect constraint would stop the window from taking the row's
+		 * size. It is set again when the window leaves the span. */
+		SDL_SetWindowAspectRatio(g_aeron.window, 0.0f, 0.0f);
+		g_aeron.window_aspect_pending = 1;
+	}
+	SDL_SetWindowBordered(g_aeron.window, false);
+	SDL_SetWindowResizable(g_aeron.window, false);
+	SDL_SetWindowPosition(g_aeron.window, row.x, row.y);
+	SDL_SetWindowSize(g_aeron.window, row.w, row.h);
+	SDL_SyncWindow(g_aeron.window);
+	SDL_Rect placed = { 0 };
+	SDL_GetWindowPosition(g_aeron.window, &placed.x, &placed.y);
+	SDL_GetWindowSize(g_aeron.window, &placed.w, &placed.h);
+	if (placed.x != row.x || placed.y != row.y || placed.w != row.w || placed.h != row.h) {
+		Aeron_LogWarn("aeron",
+					  "the window can't span the displays: asked for %dx%d at %d,%d and got %dx%d at %d,%d",
+					  row.w, row.h, row.x, row.y, placed.w, placed.h, placed.x, placed.y);
+		Aeron_LeaveSpan();
+		return 0;
+	}
+	Aeron_LogInfo("aeron", "the window spans %d displays: %dx%d at %d,%d", count, row.w, row.h, row.x, row.y);
+	return 1;
+}
+
+int Aeron_SetWindowMode(AeronWindowMode mode) {
 	if (!g_aeron.window) {
 		return 0;
 	}
-	fullscreen = fullscreen != 0;
-	current    = (SDL_GetWindowFlags(g_aeron.window) & SDL_WINDOW_FULLSCREEN) != 0;
-	if (current == fullscreen) {
-		return 1;
+	g_aeron.window_mode = (int)mode;
+	if (mode == AERON_WINDOW_SPAN) {
+		if (Aeron_EnterSpan()) {
+			Aeron_UpdatePresentationPixelSize();
+			Aeron_RefreshPresentationTiming();
+			return 1;
+		}
+		mode = AERON_WINDOW_FULLSCREEN;
 	}
-	if (!SDL_SetWindowFullscreen(g_aeron.window, fullscreen)) {
+	Aeron_LeaveSpan();
+	const int fullscreen = mode == AERON_WINDOW_FULLSCREEN;
+	const int current    = (SDL_GetWindowFlags(g_aeron.window) & SDL_WINDOW_FULLSCREEN) != 0;
+	if (current != fullscreen && !SDL_SetWindowFullscreen(g_aeron.window, fullscreen)) {
 		Aeron_LogWarn("aeron", "SDL_SetWindowFullscreen failed: %s", SDL_GetError());
 		return 0;
 	}
-
 	Aeron_UpdatePresentationPixelSize();
 	Aeron_RefreshPresentationTiming();
 	return 1;
+}
+
+AeronWindowMode Aeron_WindowMode(void) {
+	if (!g_aeron.window) {
+		return AERON_WINDOW_WINDOWED;
+	}
+	if (SDL_GetWindowFlags(g_aeron.window) & SDL_WINDOW_FULLSCREEN) {
+		return AERON_WINDOW_FULLSCREEN;
+	}
+	return g_aeron.window_spanned ? AERON_WINDOW_SPAN : AERON_WINDOW_WINDOWED;
+}
+
+void Aeron_OnDisplaysChanged(void) {
+	if (g_aeron.window && g_aeron.window_mode == AERON_WINDOW_SPAN) {
+		Aeron_SetWindowMode(AERON_WINDOW_SPAN);
+	}
+}
+
+int Aeron_GetWindowDisplayRects(AeronRectI* out, int capacity) {
+	if (!g_aeron.window || !out || capacity <= 0) {
+		return 0;
+	}
+	SDL_Rect window;
+	int      pixel_width  = 0;
+	int      pixel_height = 0;
+	SDL_GetWindowPosition(g_aeron.window, &window.x, &window.y);
+	SDL_GetWindowSize(g_aeron.window, &window.w, &window.h);
+	if (!SDL_GetWindowSizeInPixels(g_aeron.window, &pixel_width, &pixel_height) || window.w <= 0 ||
+		window.h <= 0) {
+		return 0;
+	}
+	int            display_count = 0;
+	SDL_DisplayID* displays      = SDL_GetDisplays(&display_count);
+	if (!displays) {
+		return 0;
+	}
+	const double scale_x = (double)pixel_width / window.w;
+	const double scale_y = (double)pixel_height / window.h;
+	int          count   = 0;
+	for (int i = 0; i < display_count && count < capacity; ++i) {
+		SDL_Rect bounds;
+		SDL_Rect shown;
+		if (!SDL_GetDisplayBounds(displays[i], &bounds) ||
+			!SDL_GetRectIntersection(&bounds, &window, &shown)) {
+			continue;
+		}
+		const int left   = (int)lround((shown.x - window.x) * scale_x);
+		const int top    = (int)lround((shown.y - window.y) * scale_y);
+		const int right  = (int)lround((shown.x + shown.w - window.x) * scale_x);
+		const int bottom = (int)lround((shown.y + shown.h - window.y) * scale_y);
+		/* Keep the rectangles sorted by their left edge. */
+		int at = count++;
+		for (; at > 0 && out[at - 1].x > left; --at) {
+			out[at] = out[at - 1];
+		}
+		out[at] = (AeronRectI) { left, top, right - left, bottom - top };
+	}
+	SDL_free(displays);
+	return count;
+}
+
+int Aeron_SetFullscreen(int fullscreen) {
+	return Aeron_SetWindowMode(fullscreen ? AERON_WINDOW_FULLSCREEN : AERON_WINDOW_WINDOWED);
 }
 
 int Aeron_Fullscreen(void) {

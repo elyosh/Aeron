@@ -315,6 +315,11 @@ typedef struct AeronRuntime {
 	int                   window_aspect_width;
 	int                   window_aspect_height;
 	int                   window_aspect_pending;
+	/* The window mode last asked for, and the window's position and size
+	 * before it spanned the displays. */
+	int                   window_mode;
+	int                   window_spanned;
+	SDL_Rect              window_rect_before_span;
 	int                   presentation_pixel_width;
 	int                   presentation_pixel_height;
 	int                   relative_mouse_enabled;
@@ -368,6 +373,9 @@ int  Aeron_WindowInit(const AeronConfig* config);
 void Aeron_WindowShutdown(void);
 void Aeron_ApplyPendingWindowAspectRatio(void);
 void Aeron_UpdatePresentationPixelSize(void);
+/* Applies the span window mode again after a display was added, removed or
+ * moved. */
+void Aeron_OnDisplaysChanged(void);
 void Aeron_ComputePresentationRect(int container_width, int container_height, SDL_Rect* rect);
 
 int  Aeron_RenderBackendInit(void);
