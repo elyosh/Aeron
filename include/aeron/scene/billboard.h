@@ -112,6 +112,10 @@ typedef struct AeronSceneBillboardDesc {
 	 * `texture` may then be NULL. Each star is its own draw. */
 	AeronSceneBillboardShader shader;
 	AeronSceneBillboardStar   star;
+	/* The views that draw the billboard, one bit for each view of
+	 * AeronScene_SetViews. 0 draws it in every view. Use it for a billboard
+	 * that was built for one view's camera. */
+	uint32_t view_mask;
 } AeronSceneBillboardDesc;
 
 /* Queue one billboard for this frame (reset by AeronScene_Begin).

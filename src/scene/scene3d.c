@@ -520,24 +520,33 @@ int AeronScene_PrepareResources(AeronScene3D* s, AeronCullMode mesh_cull) {
 
 /* ---- per-frame ---- */
 
+/* Works out the cameras and matrices for `camera`: the output camera, with
+ * its viewport in output pixels, the render camera, with its viewport in
+ * render pixels, and the projection and view matrices without jitter. */
+static void scene_camera_matrices(const AeronScene3D* s, const AeronSceneCamera* camera,
+								  AeronSceneCamera* output_camera, AeronSceneCamera* render_camera,
+								  float proj[16], float view[16]) {
+	*output_camera = *camera;
+	if (output_camera->viewport.width <= 0 || output_camera->viewport.height <= 0) {
+		output_camera->viewport = (AeronRectI) { 0, 0, s->output_w, s->output_h };
+	}
+	*render_camera          = *output_camera;
+	render_camera->viewport = scene_render_viewport(s, output_camera->viewport);
+	scene_mat4_perspective_reverse_z_xy(proj, render_camera->h_half_rad, render_camera->v_half_rad,
+										render_camera->near_z > 0.0f ? render_camera->near_z : 0.001f,
+										render_camera->proj_x_offset, render_camera->proj_y_offset);
+	scene_mat4_view(view, render_camera->ori, render_camera->pos);
+}
+
 /* Makes `index` the current view. It copies the view's state into the
  * scene's camera, motion and cluster fields, and builds the view-projection
  * matrices. */
 static void scene_view_enter(AeronScene3D* s, int index) {
 	const AeronSceneViewState* state = &s->views[index];
 	s->current_view                  = index;
-	s->output_camera                 = state->camera;
-	if (s->output_camera.viewport.width <= 0 || s->output_camera.viewport.height <= 0) {
-		s->output_camera.viewport = (AeronRectI) { 0, 0, s->output_w, s->output_h };
-	}
-	s->camera          = s->output_camera;
-	s->camera.viewport = scene_render_viewport(s, s->output_camera.viewport);
 	float proj[16];
 	float view[16];
-	scene_mat4_perspective_reverse_z_xy(proj, s->camera.h_half_rad, s->camera.v_half_rad,
-										s->camera.near_z > 0.0f ? s->camera.near_z : 0.001f,
-										s->camera.proj_x_offset, s->camera.proj_y_offset);
-	scene_mat4_view(view, s->camera.ori, s->camera.pos);
+	scene_camera_matrices(s, &state->camera, &s->output_camera, &s->camera, proj, view);
 	scene_mat4_mul(s->unjittered_view_proj, proj, view);
 	s->temporal_jitter[0] = 0.0f;
 	s->temporal_jitter[1] = 0.0f;
@@ -573,6 +582,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	state->camera                = *camera;
 	state->mb_prev_view_proj_set = 0;
 	s->view_count                = 1;
+	s->primary_view              = 0;
 	s->frame_prepared            = 0;
 	scene_view_enter(s, 0);
 	s->instance_count       = 0;
@@ -1026,9 +1036,49 @@ int AeronScene_GetTemporalProfileInfo(const AeronScene3D* s, AeronTemporalProfil
 	return s && s->temporal_upscaler ? AeronTemporalUpscaler_GetProfileInfo(s->temporal_upscaler, info) : 0;
 }
 
+int AeronScene_SetViews(AeronScene3D* s, const AeronSceneViewDesc* views, int count, int primary) {
+	if (!s || !views || count < 1 || count > AERON_MAX_VIEWS || primary < 0 || primary >= count) {
+		return 0;
+	}
+	/* The temporal upscaler keeps the history of one view only. */
+	if (count > 1 && s->temporal_active_mode != AERON_TEMPORAL_OFF) {
+		Aeron_LogError("aeron.scene", "a frame can't have %d views while the temporal upscaler is on", count);
+		return 0;
+	}
+	for (int i = 0; i < count; ++i) {
+		AeronSceneViewState* state = &s->views[i];
+		/* Save the orientation the view had in the previous frame. For view
+		 * 0, AeronScene_Begin already saved it, before it put the centre
+		 * camera in that slot. */
+		if (i > 0) {
+			memcpy(state->mb_prev_ori, state->camera.ori, sizeof state->mb_prev_ori);
+		}
+		state->camera = views[i].camera;
+		if (views[i].prev_ori) {
+			memcpy(state->mb_prev_ori, views[i].prev_ori, sizeof state->mb_prev_ori);
+		}
+		state->mb_prev_view_proj_set = views[i].prev_view_proj != NULL;
+		if (views[i].prev_view_proj) {
+			memcpy(state->mb_prev_view_proj, views[i].prev_view_proj, sizeof state->mb_prev_view_proj);
+		}
+	}
+	s->view_count   = count;
+	s->primary_view = primary;
+	return 1;
+}
+
 void AeronScene_SetMotionContext(AeronScene3D* s, const float prev_view_proj[16], const float prev_ori[4],
 								 int velocity_regen) {
 	if (!s) {
+		return;
+	}
+	s->mb_velocity_regen = velocity_regen ? 1 : 0;
+	if (s->mb_velocity_regen) {
+		s->mb_velocity_valid = 1;
+	}
+	/* With several views, each view gets its previous camera from
+	 * AeronScene_SetViews, not from here. */
+	if (s->view_count > 1) {
 		return;
 	}
 	/* Store the motion context in the view's state, and also in the scene's
@@ -1049,10 +1099,10 @@ void AeronScene_SetMotionContext(AeronScene3D* s, const float prev_view_proj[16]
 		s->mb_tile_valid            = 0;
 		s->mb_neighbor_valid        = 0;
 		AeronTemporalUpscaler_InvalidateRetainedMotionVectors(s->temporal_upscaler);
-	}
-	s->mb_velocity_regen = velocity_regen ? 1 : 0;
-	if (s->mb_velocity_regen) {
-		s->mb_velocity_valid = 1;
+		/* A regenerated velocity is valid even without a previous camera. */
+		if (s->mb_velocity_regen) {
+			s->mb_velocity_valid = 1;
+		}
 	}
 }
 
@@ -1158,9 +1208,9 @@ static void scene_sky_bind_vs(AeronScene3D* s, AeronRenderPass* pass, const floa
 /* Largest radiance written, kept inside the half-float scene target. */
 #define SKY_SUN_MAX_RADIANCE 60000.0f
 
-static void sky_sun_basis(const AeronScene3D* s, const float dir[3], float t0[3], float t1[3]) {
+static void sky_sun_basis(const float camera_ori[4], const float dir[3], float t0[3], float t1[3]) {
 	float m[9];
-	AeronSceneInternal_QuatToMat3(s->camera.ori, m); /* world->eye rows */
+	AeronSceneInternal_QuatToMat3(camera_ori, m); /* world->eye rows */
 	const float* ref = &m[3];
 	if (fabsf(ref[0] * dir[0] + ref[1] * dir[1] + ref[2] * dir[2]) > 0.99f)
 		ref = &m[0];
@@ -1191,8 +1241,6 @@ void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light) {
 	if (light->visual == AERON_ENV_SUN_SPRITE) {
 		if (!light->sprite || !(light->angular_size_degrees > 0.0f))
 			return;
-		float t0[3], t1[3];
-		sky_sun_basis(s, dir, t0, t1);
 		const float             half  = tanf(0.5f * light->angular_size_degrees * deg);
 		const float             scale = light->sprite_strength;
 		AeronSceneBillboardDesc desc;
@@ -1204,16 +1252,24 @@ void AeronScene_AddSkySun(AeronScene3D* s, const AeronEnvironmentLight* light) {
 			{ -1.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, -1.0f }, { -1.0f, -1.0f }
 		};
 		static const float uvs[4][2] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
-		for (int c = 0; c < 4; ++c) {
-			for (int i = 0; i < 3; ++i)
-				desc.corners[c][i] =
-					s->camera.pos[i] + dir[i] + (t0[i] * signs[c][0] + t1[i] * signs[c][1]) * half;
-			desc.uv[c][0]     = uvs[c][0];
-			desc.uv[c][1]     = uvs[c][1];
-			desc.colors[c][0] = desc.colors[c][1] = desc.colors[c][2] = scale;
-			desc.colors[c][3]                                         = 1.0f;
+		/* The sprite is placed one unit from the camera and aligned with it,
+		 * so each view needs its own sprite. */
+		for (int view = 0; view < s->view_count; ++view) {
+			const AeronSceneCamera* camera = &s->views[view].camera;
+			float                   t0[3], t1[3];
+			sky_sun_basis(camera->ori, dir, t0, t1);
+			for (int c = 0; c < 4; ++c) {
+				for (int i = 0; i < 3; ++i)
+					desc.corners[c][i] =
+						camera->pos[i] + dir[i] + (t0[i] * signs[c][0] + t1[i] * signs[c][1]) * half;
+				desc.uv[c][0]     = uvs[c][0];
+				desc.uv[c][1]     = uvs[c][1];
+				desc.colors[c][0] = desc.colors[c][1] = desc.colors[c][2] = scale;
+				desc.colors[c][3]                                         = 1.0f;
+			}
+			desc.view_mask = s->view_count > 1 ? 1u << view : 0u;
+			AeronScene_AddBillboard(s, &desc);
 		}
-		AeronScene_AddBillboard(s, &desc);
 		return;
 	}
 
@@ -1256,7 +1312,7 @@ typedef struct SkySunDraw {
 
 static void sky_sun_resolve(const AeronScene3D* s, const AeronSceneSkySun* sun, SkySunDraw* out) {
 	memset(out, 0, sizeof *out);
-	sky_sun_basis(s, sun->direction, out->tangent0, out->tangent1);
+	sky_sun_basis(s->camera.ori, sun->direction, out->tangent0, out->tangent1);
 	/* The size of one output pixel as a tangent, at the centre of the view. */
 	const float pixel     = s->camera.viewport.height > 0
 								? 2.0f * tanf(s->camera.v_half_rad) / (float)s->camera.viewport.height
@@ -2071,9 +2127,25 @@ void AeronSceneInternal_FrustumPlanes(const float view_proj[16], int viewport_wi
 	}
 }
 
-static void scene_camera_frustum(const AeronScene3D* s, float planes[5][4]) {
-	AeronSceneInternal_FrustumPlanes(s->unjittered_view_proj, s->camera.viewport.width,
-									 s->camera.viewport.height, planes);
+/* The data needed to cull against one view. */
+typedef struct SceneCullView {
+	float view_proj[16];
+	float planes[5][4];
+	float width;
+	float height;
+} SceneCullView;
+
+static void scene_cull_view(const AeronScene3D* s, const AeronSceneCamera* camera, SceneCullView* out) {
+	AeronSceneCamera output_camera;
+	AeronSceneCamera render_camera;
+	float            proj[16];
+	float            view[16];
+	scene_camera_matrices(s, camera, &output_camera, &render_camera, proj, view);
+	scene_mat4_mul(out->view_proj, proj, view);
+	AeronSceneInternal_FrustumPlanes(out->view_proj, render_camera.viewport.width,
+									 render_camera.viewport.height, out->planes);
+	out->width  = (float)render_camera.viewport.width;
+	out->height = (float)render_camera.viewport.height;
 }
 
 /* Draw-order key of a camera-visible instance: the distance from the camera
@@ -2239,10 +2311,10 @@ static void scene_sort_order_keys(SceneOrderKey* keys, SceneOrderKey* scratch, i
 /* The larger side of the bound's projection, clipped to the viewport, in
  * render pixels: 0 outside the viewport, FLT_MAX across the near plane or
  * without a usable bound. */
-static float scene_instance_screen_size(const AeronScene3D* s, const AeronSceneInstanceBox* box) {
-	const float* m      = s->unjittered_view_proj;
-	const float  width  = (float)s->camera.viewport.width;
-	const float  height = (float)s->camera.viewport.height;
+static float scene_instance_screen_size(const SceneCullView* cull, const AeronSceneInstanceBox* box) {
+	const float* m      = cull->view_proj;
+	const float  width  = cull->width;
+	const float  height = cull->height;
 	if (!box) {
 		return FLT_MAX;
 	}
@@ -2271,11 +2343,8 @@ static float scene_instance_screen_size(const AeronScene3D* s, const AeronSceneI
 	return w > 0.0f && h > 0.0f ? fmaxf(w, h) : 0.0f;
 }
 
-/* An instance without a usable bound stays visible, and sorts last. */
-static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneInstanceBox* box,
-									 const float planes[5][4], SceneOrderKey* key) {
-	key->surface = FLT_MAX;
-	key->center  = FLT_MAX;
+/* An instance without a usable bound stays visible. */
+static int scene_instance_in_frustum(const AeronSceneInstanceBox* box, const float planes[5][4]) {
 	if (!box) {
 		return 1;
 	}
@@ -2288,6 +2357,18 @@ static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneInst
 			return 0;
 		}
 	}
+	return 1;
+}
+
+/* The draw-order key of an instance, from the centre camera. An instance
+ * without a usable bound sorts last. */
+static void scene_instance_order_key(const AeronScene3D* s, const AeronSceneInstanceBox* box,
+									 SceneOrderKey* key) {
+	key->surface = FLT_MAX;
+	key->center  = FLT_MAX;
+	if (!box) {
+		return;
+	}
 	float center_sq  = 0.0f;
 	float surface_sq = 0.0f;
 	for (int axis = 0; axis < 3; axis++) {
@@ -2298,7 +2379,6 @@ static int scene_instance_in_frustum(const AeronScene3D* s, const AeronSceneInst
 	}
 	key->center  = sqrtf(center_sq);
 	key->surface = sqrtf(surface_sq);
-	return 1;
 }
 
 /* Returns whether the emission shader draws a visible emission_only
@@ -2393,6 +2473,7 @@ static uint32_t scene_prepare_batches(AeronScene3D* s) {
 			prepared->batch = scene_instance_batch(s, &s->instances[i], prepared);
 			if (prepared->batch >= 0) {
 				s->pbr_batches[prepared->batch].count++;
+				s->pbr_batches[prepared->batch].view_mask |= prepared->view_mask;
 				records++;
 			} else {
 				/* The emission shader only draws batched instances, so this
@@ -2461,7 +2542,13 @@ static float scene_instance_px_per_unit(const AeronScene3D* s, const AeronSceneM
 static void scene_choose_lods(AeronScene3D* s) {
 	memset(&s->lod_stats, 0, sizeof s->lod_stats);
 	const bool  choose   = s->lod_force >= 0 || (s->lod_max_error_px > 0.0f && s->render_h > 0);
-	const float focal_px = s->render_h > 0 ? (float)s->render_h / (2.0f * tanf(s->camera.v_half_rad)) : 0.0f;
+	/* All views use the same level of detail. Pick it for the narrowest view,
+	 * which shows the most pixels per unit. */
+	float tan_v = tanf(s->views[0].camera.v_half_rad);
+	for (int view = 1; view < s->view_count; ++view) {
+		tan_v = fminf(tan_v, tanf(s->views[view].camera.v_half_rad));
+	}
+	const float focal_px = s->render_h > 0 ? (float)s->render_h / (2.0f * tan_v) : 0.0f;
 	for (int i = 0; i < s->instance_count; ++i) {
 		AeronSceneMeshInstance* instance = &s->instances[i];
 		/* An instance rendered again without being added again still has
@@ -2658,8 +2745,10 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	/* Before anything in the frame reads the instances' meshes. */
 	scene_choose_lods(s);
-	float frustum[5][4];
-	scene_camera_frustum(s, frustum);
+	SceneCullView cull[AERON_MAX_VIEWS];
+	for (int view = 0; view < s->view_count; ++view) {
+		scene_cull_view(s, &s->views[view].camera, &cull[view]);
+	}
 	SceneOrderKey* order_keys = s->order_keys;
 	s->camera_order_count     = 0;
 	int tables_dropped        = 0;
@@ -2670,24 +2759,33 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		SceneOrderKey                key;
 		AeronSceneInstanceBox        box_storage;
 		const AeronSceneInstanceBox* box = scene_instance_world_box(instance, &box_storage);
-		prepared->camera_visible         = (uint32_t)scene_instance_in_frustum(s, box, frustum, &key);
-		prepared->screen_size_px         = FLT_MAX;
-		if (prepared->camera_visible) {
-			prepared->screen_size_px = scene_instance_screen_size(s, box);
-			/* A mesh with only blended faces, such as a laser bolt, is thin
-			 * but bright: it stays. So does an emission_only instance, such
-			 * as a warhead, which AeronScene_SetEmissionMinWidth widens. */
-			if (s->small_cull_active && prepared->screen_size_px < s->small_cull_draw_px && instance->mesh &&
-				!instance->emission_only &&
-				(instance->mesh->opaque_index_count + instance->mesh->mask_index_count) != 0) {
-				prepared->camera_visible = 0;
+		/* Two kinds of instance are never culled for being small: a mesh with
+		 * only blended faces, such as a laser bolt, which is thin but bright,
+		 * and an emission_only instance, such as a warhead, which
+		 * AeronScene_SetEmissionMinWidth widens. */
+		const int can_be_too_small =
+			s->small_cull_active && instance->mesh && !instance->emission_only &&
+			(instance->mesh->opaque_index_count + instance->mesh->mask_index_count) != 0;
+		int   in_a_frustum = 0;
+		float largest_size = 0.0f;
+		for (int view = 0; view < s->view_count; ++view) {
+			if (!scene_instance_in_frustum(box, cull[view].planes)) {
+				continue;
+			}
+			const float size = scene_instance_screen_size(&cull[view], box);
+			in_a_frustum     = 1;
+			largest_size     = fmaxf(largest_size, size);
+			if (!(can_be_too_small && size < s->small_cull_draw_px)) {
+				prepared->view_mask |= 1u << view;
+				s->frame_stats.visible_instances[view]++;
 			}
 		}
-		prepared->probe_set =
-			prepared->camera_visible ? scene_instance_probe_set_for_box(s, instance, box) : -1;
-		prepared->batch          = -1;
-		prepared->emission = prepared->camera_visible && scene_instance_emission(s, instance, prepared);
-		if (prepared->camera_visible) {
+		prepared->screen_size_px = in_a_frustum ? largest_size : FLT_MAX;
+		prepared->probe_set = prepared->view_mask ? scene_instance_probe_set_for_box(s, instance, box) : -1;
+		prepared->batch     = -1;
+		prepared->emission  = prepared->view_mask && scene_instance_emission(s, instance, prepared);
+		if (prepared->view_mask) {
+			scene_instance_order_key(s, box, &key);
 			key.index                           = (uint16_t)i;
 			order_keys[s->camera_order_count++] = key;
 		}
@@ -3204,7 +3302,6 @@ int AeronScene_PrepareFrame(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!AeronSceneStorage_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene storage preparation failed");
 	}
-	s->frame_stats.visible_instances[0] = (uint32_t)s->camera_order_count;
 	if (s->bb_count > 0 && !AeronSceneBb3d_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene billboard preparation failed");
 	}
@@ -3238,6 +3335,18 @@ int AeronScene_RenderView(AeronScene3D* s, AeronCommandBuffer* cmd, int view) {
 	}
 	const uint32_t draws_at_start = scene_recorded_draws();
 	scene_view_enter(s, view);
+	AeronSceneDirectionalShadow_EnterView(s);
+	if (s->view_count > 1) {
+		/* The views share the velocity and blur targets. So a view can't
+		 * reuse what an earlier frame left in them, and a frame without a new
+		 * velocity has no blur. */
+		s->mb_tile_valid            = 0;
+		s->mb_neighbor_valid        = 0;
+		s->mb_temporal_motion_valid = 0;
+		if (!s->mb_velocity_regen) {
+			s->mb_velocity_valid = 0;
+		}
+	}
 	s->scene_rt_out             = s->color_rt;
 	s->scene_rt_out_borrowed    = 0;
 	s->screen_layer_active      = 0;

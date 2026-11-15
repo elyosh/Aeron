@@ -115,6 +115,7 @@ typedef struct AeronSceneBb3dEntry {
 	float         anchor[3]; /* LENS: flare source, world space */
 	uint8_t       shader;    /* AeronSceneBillboardShader */
 	float         star[5];   /* AeronSceneBillboardStar: tint, time, core radiance */
+	uint32_t      view_mask; /* AeronSceneBillboardDesc.view_mask */
 } AeronSceneBb3dEntry;
 
 typedef struct AeronSceneMeshOverlayEntry {
@@ -143,9 +144,11 @@ typedef struct AeronScenePreparedInstance {
 	uint32_t current_table_base;
 	uint32_t previous_table_base;
 	uint32_t table_component_count;
-	/* The bound intersects the camera frustum; camera passes skip the
-	 * instance otherwise (shadow passes cull per cascade). */
-	uint32_t camera_visible;
+	/* One bit for each view that draws the instance: its bound intersects
+	 * the view's frustum and it isn't too small there. A view's passes skip
+	 * an instance when its bit isn't set. Shadow passes don't use this mask:
+	 * they cull against each cascade. */
+	uint32_t view_mask;
 	/* The probe set the instance's colour draws use; -1 for none. */
 	int32_t probe_set;
 	/* The batch that draws the instance (AeronScenePbrBatch); -1 when it
@@ -159,7 +162,8 @@ typedef struct AeronScenePreparedInstance {
 	uint8_t emission;
 	/* The larger side of the bound's projection, clipped to the viewport, in
 	 * render pixels: 0 outside the viewport, FLT_MAX across the near plane
-	 * and for an instance outside the frustum. */
+	 * and for an instance outside the frustum. With several views, it is the
+	 * largest size in the views whose frustum the bound intersects. */
 	float screen_size_px;
 } AeronScenePreparedInstance;
 
@@ -178,6 +182,8 @@ typedef struct AeronScenePbrBatch {
 	uint8_t               emission;
 	/* The batch was drawn in the pass being recorded. */
 	uint8_t drawn;
+	/* The views that draw at least one of the batch's instances. */
+	uint32_t view_mask;
 } AeronScenePbrBatch;
 
 /* The settings of emission_only instances, such as laser bolts. */
@@ -503,6 +509,12 @@ struct AeronScene3D {
 	AeronSceneViewState views[AERON_MAX_VIEWS];
 	int                 view_count;
 	int                 current_view;
+	/* The view that meters the exposure (AeronScene_SetViews). */
+	int primary_view;
+	/* The radius of the sphere around all views' split frusta, for each
+	 * shadow cascade and for the receiver-local near tile. It is kept so
+	 * that rounding noise can't change it from frame to frame. */
+	float shadow_union_radius[AERON_SCENE_SHADOW_MAX_CASCADES + 1];
 	/* Nonzero between AeronScene_PrepareFrame and AeronScene_EndFrame. */
 	int frame_prepared;
 
@@ -1106,6 +1118,9 @@ int AeronScenePbr_DrawEmissionBloom(struct AeronScene3D* s, AeronRenderPass* pas
 
 /* directional_shadow.c */
 int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);
+/* Gives the shadow uniforms the camera of the current view. The shadow maps
+ * themselves are prepared once for all the views. */
+void AeronSceneDirectionalShadow_EnterView(struct AeronScene3D* scene);
 int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
 /* Draws the casters' depth (encoded as the shadow lists: an instance index,
  * or AERON_SCENE_SHADOW_ONLY_BASE plus a shadow-only index) with `view_proj`

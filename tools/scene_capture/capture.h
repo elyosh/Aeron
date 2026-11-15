@@ -147,6 +147,9 @@ typedef struct CaptureGameScene {
 
 typedef struct CaptureConfig {
 	int    width, height, frames, reference_samples, quality;
+	/* How many views each frame is rendered into: 1, 2 for a stereo pair or
+	 * 3 for a surround setup. Each view is `width` by `height`. */
+	int    views;
 	double fps, pan_speed, pan_direction, shutter;
 	char   output_dir[1024];
 	char   asset_root[1024];
@@ -229,6 +232,18 @@ int                CaptureConfig_Load(const char* path, CaptureConfig* config);
 int                Fixture_Create(Fixture* fixture, const CaptureConfig* config);
 void               Fixture_Destroy(Fixture* fixture);
 AeronRenderTarget* Fixture_Render(Fixture* fixture, double time, int blur);
+/* Renders one frame into the `views` views of the config. It calls `on_view`
+ * with each view's scene target, which is only valid during the call: the
+ * next view is rendered into the same target. `on_view` returns zero to stop. */
+typedef int (*FixtureViewFn)(void* user, int view, AeronRenderTarget* target);
+int Fixture_RenderViews(Fixture* fixture, double time, FixtureViewFn on_view, void* user);
+/* Renders one view of the `views` views as a frame of its own, with the
+ * same camera, to compare with the view that Fixture_RenderViews renders. */
+AeronRenderTarget* Fixture_RenderViewAlone(Fixture* fixture, double time, int view);
+/* Compares a view rendered with the others (`shared`) with the same view
+ * rendered alone, logs the result and writes it to frame_NNN_viewK_metrics. */
+int         Capture_CompareView(const CaptureConfig* config, int frame, int view, const float* shared,
+								const float* alone);
 int  Capture_Read(AeronRenderTarget* target, int width, int height, uint16_t* staging, float* rgb);
 int  Capture_Write(const CaptureConfig* config, int frame, const char* name, const float* rgb);
 int  Capture_WriteImage(const CaptureConfig* config, int frame, const char* name, int width, int height,

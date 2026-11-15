@@ -22,6 +22,10 @@ int main(int argc, char** argv) {
 	if (!CaptureConfig_Load(argv[benchmark ? 2 : 1], &c))
 		return 2;
 	c.benchmark_mode = benchmark;
+	if (benchmark && c.views > 1) {
+		fprintf(stderr, "benchmarks render one view: remove views from the capture file\n");
+		return 2;
+	}
 	if (c.game.temporal_mode != AERON_TEMPORAL_OFF && !benchmark) {
 		fprintf(stderr,
 				"game_scene.temporal_upscaling is for benchmarks: its output depends on frame history\n");

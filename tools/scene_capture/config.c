@@ -162,6 +162,9 @@ static int load_effects(const AeronConfigFile* yaml, CaptureConfig* config) {
 		fprintf(stderr, "msaa_samples must be 1, 2, 4 or 8\n");
 		return 0;
 	}
+	config->views = 1;
+	if (AeronConfigFile_GetNode(yaml, "views") && !integer(yaml, "views", 1, 3, &config->views))
+		return 0;
 	const AeronConfigNode* cull_node = AeronConfigFile_GetNode(yaml, "cull");
 	const char*            cull      = cull_node ? AeronConfigNode_String(cull_node, NULL) : "none";
 	if (!cull || (strcmp(cull, "none") && strcmp(cull, "front") && strcmp(cull, "back"))) {
@@ -839,6 +842,7 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 									  "anim",
 									  "fixture",
 									  "msaa_samples",
+									  "views",
 									  "tonemap",
 									  "agx_highlight",
 									  "cull",
@@ -881,6 +885,13 @@ int CaptureConfig_Load(const char* path, CaptureConfig* config) {
 		ok = load_models(yaml, config) && load_effects(yaml, config) &&
 			 load_benchmark(yaml, &config->benchmark) && load_lens_flare(yaml, &config->lens_flare) &&
 			 load_suns(yaml, config) && load_game_scene(vfs, yaml, config);
+	if (ok && config->views > 1 &&
+		(config->bloom_chart || config->bloom_enabled || config->reference_samples ||
+		 config->game.temporal_mode != AERON_TEMPORAL_OFF)) {
+		fprintf(stderr,
+				"views above 1 needs reference_samples 0 and no bloom, bloom chart or temporal upscaling\n");
+		ok = 0;
+	}
 	AeronConfigFile_Destroy(yaml);
 	AeronVfs_Destroy(vfs);
 	return ok;

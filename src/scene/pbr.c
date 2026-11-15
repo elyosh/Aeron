@@ -1184,6 +1184,17 @@ static void pbr_push_batch_uniforms(struct AeronScene3D* s, AeronRenderPass* pas
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 2, batch->mesh->tag_group_buffer);
 }
 
+/* Returns nonzero when the current view draws instance `i`. */
+static int pbr_instance_in_view(const struct AeronScene3D* s, int i) {
+	return (s->prepared_instances[i].view_mask >> s->current_view) & 1u;
+}
+
+/* Returns nonzero when the current view draws at least one instance of the
+ * batch. */
+static int pbr_batch_in_view(const struct AeronScene3D* s, const AeronScenePbrBatch* batch) {
+	return (batch->view_mask >> s->current_view) & 1u;
+}
+
 /* Clears the batches' drawn flags before a walk that draws them. */
 static void pbr_reset_batches(struct AeronScene3D* s) {
 	for (uint32_t b = 0; b < s->pbr_batch_count; ++b) {
@@ -1438,6 +1449,10 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0) {
 			continue;
 		}
+		/* The mirrored view has its own list, which it already culled. */
+		if (!s->planar_reflection.drawing && !pbr_instance_in_view(s, i)) {
+			continue;
+		}
 		/* The emission pipeline draws these in the transparent pass. They
 		 * keep their depth prepass, which hides their own back faces. */
 		if (!depth_only && !s->planar_reflection.drawing && s->prepared_instances[i].emission) {
@@ -1557,6 +1572,9 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
 			if (!m || !m->vbo || !m->ibo || (m->blend_index_count == 0 && !s->prepared_instances[i].emission)) {
+				continue;
+			}
+			if (!s->planar_reflection.drawing && !pbr_instance_in_view(s, i)) {
 				continue;
 			}
 			if (in->velocity_stamp_screens && !in->velocity_stamp && m->blend_screen_index_count != 0) {
@@ -1722,7 +1740,8 @@ int AeronScenePbr_DrawEmissionBloom(struct AeronScene3D* s, AeronRenderPass* pas
 	for (uint32_t b = 0; b < s->pbr_batch_count; ++b) {
 		const AeronScenePbrBatch* batch = &s->pbr_batches[b];
 		const AeronSceneMesh*     m     = batch->mesh;
-		if (!batch->emission || m->opaque_index_count + m->blend_index_count == 0) {
+		if (!batch->emission || m->opaque_index_count + m->blend_index_count == 0 ||
+			!pbr_batch_in_view(s, batch)) {
 			continue;
 		}
 		AeronGraphicsPipeline* pipeline = pbr_emission_bloom_pipeline(s, (AeronCullMode)batch->cull_mode);
@@ -1778,7 +1797,7 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 	if (!layer) {
 		for (uint32_t b = 0; b < s->pbr_batch_count; ++b) {
 			const AeronScenePbrBatch* batch = &s->pbr_batches[b];
-			if (batch->emission && batch->mesh->opaque_index_count != 0) {
+			if (batch->emission && batch->mesh->opaque_index_count != 0 && pbr_batch_in_view(s, batch)) {
 				pbr_draw_emission_batch(s, pass, batch, blend_kind, /*opaque=*/1, atlas_sampler, &bound);
 				bound_mesh = NULL;
 			}
@@ -1791,7 +1810,7 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 		const int                     i  = s->camera_order[k];
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
-		if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0) {
+		if (!m || !m->vbo || !m->ibo || m->blend_index_count == 0 || !pbr_instance_in_view(s, i)) {
 			continue;
 		}
 		/* The instance's screens go to the screen layer. */
@@ -1881,7 +1900,8 @@ int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
 		/* Two-sided instances already draw their back faces. */
-		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0 || in->cull_mode == AERON_CULL_NONE) {
+		if (!m || !m->vbo || !m->ibo || m->opaque_index_count == 0 || in->cull_mode == AERON_CULL_NONE ||
+			!pbr_instance_in_view(s, i)) {
 			continue;
 		}
 		/* The faces the instance culls are its back faces under the

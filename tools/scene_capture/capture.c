@@ -214,6 +214,38 @@ int Capture_SaveConfig(const CaptureConfig* c) {
 	return ok;
 }
 
+int Capture_CompareView(const CaptureConfig* c, int frame, int view, const float* shared,
+						const float* alone) {
+	const size_t pixels    = (size_t)c->width * c->height;
+	size_t       different = 0;
+	double       squared = 0, maximum = 0;
+	for (size_t i = 0; i < pixels; ++i) {
+		double pixel_error = 0;
+		for (int k = 0; k < 3; ++k) {
+			const double error = fabs((double)shared[i * 3 + k] - alone[i * 3 + k]);
+			squared += error * error;
+			pixel_error = fmax(pixel_error, error);
+		}
+		maximum = fmax(maximum, pixel_error);
+		different += pixel_error > 0;
+	}
+	const double rmse = sqrt(squared / (double)(pixels * 3));
+	Aeron_LogInfo("scene_capture",
+				  "frame %d view %d against the view alone: %zu of %zu pixels differ, "
+				  "rmse %.6g, largest difference %.6g",
+				  frame, view, different, pixels, rmse, maximum);
+	char name[32], path[1200], text[512];
+	snprintf(name, sizeof name, "view%d_metrics", view);
+	if (!output_path(c, frame, name, "yaml", path, sizeof path))
+		return 0;
+	snprintf(text, sizeof text,
+			 "frame: %d\nview: %d\npixels: %zu\ndifferent_pixels: %zu\nrmse: %.9g\nmax_error: %.9g\n"
+			 "note: The view rendered with the other views against the same view rendered alone. "
+			 "Values are linear scene radiance.\n",
+			 frame, view, pixels, different, rmse, maximum);
+	return write_text(path, text);
+}
+
 int Capture_Report(const CaptureConfig* c, int frame, const float* actual, const float* reference) {
 	size_t count = (size_t)c->width * c->height * 3, active = 0;
 	double squared = 0, absolute = 0, bias = 0, maximum = 0;

@@ -7,6 +7,7 @@
 #include "aeron/scene/lens_flare.h"
 #include "aeron/scene/mesh_overlay.h"
 #include "aeron/scene/probe_set.h"
+#include "aeron/scene/view_rig.h"
 #include "capture.h"
 
 #include <SDL3/SDL.h>
@@ -903,13 +904,106 @@ static void add_suns(AeronScene3D* scene, const CaptureConfig* c, double time) {
 	}
 }
 
-AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronCommandBuffer* cmd) {
-	if (f->config.bloom_chart)
-		return BloomChart_Record(f, cmd);
-	AeronScene3D*    scene    = blur ? f->scene : f->reference_scene;
-	AeronSceneCamera current  = camera_at(&f->config, time);
-	AeronSceneCamera previous = camera_at(&f->config, time - 1.0 / f->config.fps);
-	float            previous_matrix[16];
+/* Converts a scene camera's quaternion (w, x, y, z) to rotation rows. */
+static void camera_rows(const float q[4], float m[9]) {
+	const float w = q[0], x = q[1], y = q[2], z = q[3];
+	m[0] = 1.0f - 2.0f * (y * y + z * z);
+	m[1] = 2.0f * (x * y - w * z);
+	m[2] = 2.0f * (x * z + w * y);
+	m[3] = 2.0f * (x * y + w * z);
+	m[4] = 1.0f - 2.0f * (x * x + z * z);
+	m[5] = 2.0f * (y * z - w * x);
+	m[6] = 2.0f * (x * z - w * y);
+	m[7] = 2.0f * (y * z + w * x);
+	m[8] = 1.0f - 2.0f * (x * x + y * y);
+}
+
+/* Converts rotation rows back to a quaternion (w, x, y, z). */
+static void camera_orientation(const float m[9], float q[4]) {
+	const float trace = m[0] + m[4] + m[8];
+	if (trace > 0.0f) {
+		const float sq = sqrtf(trace + 1.0f) * 2.0f;
+		q[0]           = 0.25f * sq;
+		q[1]           = (m[7] - m[5]) / sq;
+		q[2]           = (m[2] - m[6]) / sq;
+		q[3]           = (m[3] - m[1]) / sq;
+	} else if (m[0] > m[4] && m[0] > m[8]) {
+		const float sq = sqrtf(1.0f + m[0] - m[4] - m[8]) * 2.0f;
+		q[0]           = (m[7] - m[5]) / sq;
+		q[1]           = 0.25f * sq;
+		q[2]           = (m[1] + m[3]) / sq;
+		q[3]           = (m[2] + m[6]) / sq;
+	} else if (m[4] > m[8]) {
+		const float sq = sqrtf(1.0f + m[4] - m[0] - m[8]) * 2.0f;
+		q[0]           = (m[2] - m[6]) / sq;
+		q[1]           = (m[1] + m[3]) / sq;
+		q[2]           = 0.25f * sq;
+		q[3]           = (m[5] + m[7]) / sq;
+	} else {
+		const float sq = sqrtf(1.0f + m[8] - m[0] - m[4]) * 2.0f;
+		q[0]           = (m[3] - m[1]) / sq;
+		q[1]           = (m[2] + m[6]) / sq;
+		q[2]           = (m[5] + m[7]) / sq;
+		q[3]           = 0.25f * sq;
+	}
+}
+
+/* Builds the rig for the config's `views`: a stereo pair for 2, a surround
+ * setup for 3. The capture camera is the rig's seat camera. */
+static int fixture_rig(const CaptureConfig* c, AeronViewRig* rig) {
+	const AeronSceneCamera seat = camera_at(c, 0.0);
+	if (c->views == 2) {
+		const AeronViewFov  fov  = { -seat.h_half_rad, seat.h_half_rad, seat.v_half_rad, -seat.v_half_rad };
+		const AeronViewPose head = { .orientation = { 0.0f, 0.0f, 0.0f, 1.0f } };
+		return AeronViewRig_DebugStereo(0.064f, &fov, &head, c->width, c->height, rig);
+	}
+	const AeronSurroundDesc surround = { .screen_width_m  = 0.6f,
+										 .screen_height_m = 0.6f * (float)c->height / (float)c->width,
+										 .bezel_m         = 0.008f,
+										 .distance_m      = 0.7f,
+										 .side_angle_rad  = 0.785398163f };
+	const AeronRectI        rect     = { 0, 0, c->width, c->height };
+	const AeronRectI        rects[3] = { rect, rect, rect };
+	return AeronViewRig_FromSurround(&surround, rects, rig);
+}
+
+/* Returns the scene camera of a rig view, given the seat camera. */
+static AeronSceneCamera rig_view_camera(const CaptureConfig* c, const AeronRigView* view,
+										const AeronSceneCamera* seat) {
+	AeronSceneCamera camera = *seat;
+	float            seat_rows[9], rows[9];
+	camera_rows(seat->ori, seat_rows);
+	/* The shapes fixture has no unit of length; take one unit as a metre. */
+	AeronViewPose_ComposeCamera(&view->pose, seat_rows, seat->pos,
+								c->game.enabled ? GAME_UNITS_PER_METER : 1.0f, rows, camera.pos);
+	camera_orientation(rows, camera.ori);
+	AeronViewFov_ToCamera(&view->fov, &camera.h_half_rad, &camera.v_half_rad, &camera.proj_x_offset,
+						  &camera.proj_y_offset);
+	return camera;
+}
+
+/* Begins the frame at `time` on `scene` and submits the fixture to it, with
+ * the effects of the blurred render when `blur` is set. With `rig` and
+ * `alone` < 0, the frame gets the rig's views. With `alone` >= 0, the frame
+ * has one view: that view of the rig, on its own. Returns the scene, ready
+ * to render, or NULL. */
+static AeronScene3D* fixture_submit(Fixture* f, AeronScene3D* scene, double time, int blur,
+									const AeronViewRig* rig, int alone) {
+	/* The seat cameras: models that follow the camera follow these. */
+	const AeronSceneCamera seat          = camera_at(&f->config, time);
+	const AeronSceneCamera previous_seat = camera_at(&f->config, time - 1.0 / f->config.fps);
+	AeronSceneCamera       current       = seat;
+	AeronSceneCamera       previous      = previous_seat;
+	/* A view rendered alone follows another camera on its scene, so the scene
+	 * can't know the orientation this view had in the previous frame. */
+	const float* previous_ori = NULL;
+	if (rig && alone >= 0) {
+		current      = rig_view_camera(&f->config, &rig->views[alone], &seat);
+		previous     = rig_view_camera(&f->config, &rig->views[alone], &previous_seat);
+		previous_ori = previous.ori;
+		rig          = NULL;
+	}
+	float previous_matrix[16];
 	AeronScene_ComputeViewProj(&previous, previous_matrix);
 	if (f->config.game.enabled && blur) {
 		/* The pose sequence restarts with a camera jump: start a new history. */
@@ -923,11 +1017,28 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 	}
 	if (!AeronScene_Begin(scene, &current))
 		return NULL;
+	if (rig) {
+		AeronSceneViewDesc views[AERON_MAX_VIEWS];
+		float              previous_matrices[AERON_MAX_VIEWS][16];
+		float              previous_oris[AERON_MAX_VIEWS][4];
+		for (int view = 0; view < rig->count; ++view) {
+			const AeronSceneCamera before = rig_view_camera(&f->config, &rig->views[view], &previous);
+			AeronScene_ComputeViewProj(&before, previous_matrices[view]);
+			memcpy(previous_oris[view], before.ori, sizeof previous_oris[view]);
+			views[view] = (AeronSceneViewDesc) {
+				.camera         = rig_view_camera(&f->config, &rig->views[view], &current),
+				.prev_view_proj = previous_matrices[view],
+				.prev_ori       = previous_oris[view],
+			};
+		}
+		if (!AeronScene_SetViews(scene, views, rig->count, rig->primary))
+			return NULL;
+	}
 	AeronScene_SetAnimationTime(scene, f->config.animation_time + time);
 	add_suns(scene, &f->config, time);
 	if (f->config.game.enabled) {
 		set_game_effects(scene, &f->config, blur);
-		AeronScene_SetMotionContext(scene, previous_matrix, NULL, 1);
+		AeronScene_SetMotionContext(scene, previous_matrix, previous_ori, 1);
 		AeronScene_SetBackfaceFill(scene, f->config.backface_fill);
 		set_game_lighting(scene, &f->config);
 		if (f->environment_reference >= 0)
@@ -936,7 +1047,7 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 				AeronEnvironmentLibrary_Find(f->environment_library, (uint32_t)f->environment_reference));
 		if (f->config.screen_test)
 			set_screen_sources(scene, f, time);
-		add_game_instances(scene, f, time, &current, &previous);
+		add_game_instances(scene, f, time, &seat, &previous_seat);
 		add_game_bolts(scene, f);
 		AeronScene_SetEmissionMinWidth(scene, f->config.game.bolts.min_width_px);
 		AeronScene_SetEmissionFade(scene, f->config.game.bolts.fade_width_px, f->config.game.bolts.fade_power);
@@ -948,22 +1059,69 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 		AeronScene_SetLodMaxError(scene, f->config.game.lod_max_error * px_per_1080);
 		AeronScene_SetLodForce(scene, f->config.game.lod_force);
 		AeronScene_SetLodTint(scene, f->config.game.lod_tint);
-		return AeronScene_Render(scene, cmd) ? AeronScene_SceneRt(scene) : NULL;
+		return scene;
 	}
 	AeronScene_SetPost(
 		scene, &(AeronScenePostDesc) { .mb_quality     = blur ? f->config.quality : 0,
 									   .mb_shutter     = (float)(f->config.shutter * .032 * f->config.fps),
 									   .mb_camera_blur = 1 });
-	AeronScene_SetMotionContext(scene, previous_matrix, NULL, 1);
+	AeronScene_SetMotionContext(scene, previous_matrix, previous_ori, 1);
 	AeronScene_SetBackfaceFill(scene, f->config.backface_fill);
 	/* Emissive shapes also read the PBR lighting/mode uniforms. */
 	set_lighting(scene, &f->config);
 	if (f->config.screen_test)
 		set_screen_sources(scene, f, time);
 	add_objects(scene, f, time);
-	if (!AeronScene_Render(scene, cmd))
+	return scene;
+}
+
+AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronCommandBuffer* cmd) {
+	if (f->config.bloom_chart)
+		return BloomChart_Record(f, cmd);
+	AeronScene3D* scene = fixture_submit(f, blur ? f->scene : f->reference_scene, time, blur, NULL, -1);
+	return scene && AeronScene_Render(scene, cmd) ? AeronScene_SceneRt(scene) : NULL;
+}
+
+AeronRenderTarget* Fixture_RenderViewAlone(Fixture* f, double time, int view) {
+	Aeron_PumpEvents();
+	AeronViewRig rig;
+	if (Aeron_QuitRequested() || Aeron_FatalErrorRequested() || !fixture_rig(&f->config, &rig) || view < 0 ||
+		view >= rig.count)
 		return NULL;
-	return AeronScene_SceneRt(scene);
+	AeronCommandBuffer* cmd = Aeron_AcquireCommandBuffer();
+	if (!cmd)
+		return NULL;
+	/* On the other scene, so that the views' frame leaves it no history. */
+	AeronScene3D* scene = fixture_submit(f, f->reference_scene, time, 1, &rig, view);
+	if (!scene || !AeronScene_Render(scene, cmd)) {
+		Aeron_CancelCommandBuffer(cmd);
+		return NULL;
+	}
+	return Aeron_SubmitCommandBuffer(cmd) ? AeronScene_SceneRt(scene) : NULL;
+}
+
+int Fixture_RenderViews(Fixture* f, double time, FixtureViewFn on_view, void* user) {
+	Aeron_PumpEvents();
+	AeronViewRig rig;
+	if (Aeron_QuitRequested() || Aeron_FatalErrorRequested() || !fixture_rig(&f->config, &rig))
+		return 0;
+	AeronCommandBuffer* cmd = Aeron_AcquireCommandBuffer();
+	if (!cmd)
+		return 0;
+	AeronScene3D* scene = fixture_submit(f, f->scene, time, 1, &rig, -1);
+	int           ok    = scene && AeronScene_PrepareFrame(scene, cmd);
+	for (int view = 0; ok && view < rig.count; ++view) {
+		/* The views share the scene target, so each one is submitted and read
+		 * before the next one is rendered. */
+		ok = AeronScene_RenderView(scene, cmd, view) && Aeron_FlushCommandBuffer(cmd) &&
+			 on_view(user, view, AeronScene_SceneRt(scene));
+	}
+	ok = ok && AeronScene_EndFrame(scene, cmd);
+	if (!ok) {
+		Aeron_CancelCommandBuffer(cmd);
+		return 0;
+	}
+	return Aeron_SubmitCommandBuffer(cmd);
 }
 
 AeronRenderTarget* Fixture_Render(Fixture* f, double time, int blur) {

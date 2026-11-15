@@ -353,6 +353,34 @@ AeronSampleCount AeronScene_SampleCount(const AeronScene3D* scene);
 /* Frame start: latch the camera and reset per-frame submissions. Returns zero
  * when a pending render-mode change cannot prepare its required resources. */
 int AeronScene_Begin(AeronScene3D* scene, const AeronSceneCamera* camera);
+
+/* One view of a frame that is rendered into several views. */
+typedef struct AeronSceneViewDesc {
+	AeronSceneCamera camera;
+	/* The view's view-projection and orientation in the previous frame, for
+	 * motion vectors. With NULL, the camera has no velocity in this frame. */
+	const float* prev_view_proj; /* float[16] */
+	const float* prev_ori;       /* float[4] */
+} AeronSceneViewDesc;
+
+/* Sets the views that the frame is rendered into, for AeronScene_RenderView.
+ * Call it right after AeronScene_Begin, before anything is submitted. Without
+ * it the frame has one view: the camera given to AeronScene_Begin.
+ *
+ * The camera given to AeronScene_Begin stays the centre camera. The scene
+ * uses it for the choices that all views share: the levels of detail and the
+ * draw order. All views must have the same near_z, and viewports of the same
+ * size.
+ *
+ * `primary` is the view that meters the exposure. Render it first: the other
+ * views use the exposure it sets.
+ *
+ * The descs replace what AeronScene_SetMotionContext sets for the camera;
+ * with several views, that function only sets velocity_regen.
+ *
+ * Returns zero when the views can't be used: `count` or `primary` is out of
+ * range, or there are several views while the temporal upscaler is on. */
+int AeronScene_SetViews(AeronScene3D* scene, const AeronSceneViewDesc* views, int count, int primary);
 /* Precreate mesh/billboard pipelines and enabled post resources after Begin,
  * outside render passes. Intended for loading screens; draws no geometry. */
 int AeronScene_PrepareResources(AeronScene3D* scene, AeronCullMode mesh_cull);

@@ -275,8 +275,10 @@ static int exposure_meter(AeronScene3D* s, AeronCommandBuffer* cmd) {
 int AeronSceneExposure_Update(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!exposure_ensure_texture(s))
 		return 0;
-	if (s->exposure_metered && !s->exposure_meter_failed && exposure_ensure_meter(s, cmd))
-		return exposure_meter(s, cmd);
+	if (s->exposure_metered && !s->exposure_meter_failed && exposure_ensure_meter(s, cmd)) {
+		/* The views share one exposure, which the primary view meters. */
+		return s->current_view == s->primary_view ? exposure_meter(s, cmd) : 1;
+	}
 	return exposure_upload_fixed(s, cmd);
 }
 

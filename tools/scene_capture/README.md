@@ -53,6 +53,7 @@ Presets that use game models need `asset_root` set to your game data.
 | `shutter` | Exposure time, `shutter × 32 ms` (0 to 1). |
 | `reference_samples` | Sub-frames averaged for the motion-blur reference (0 = none, max 256). |
 | `msaa_samples` | 1, 2, 4 or 8 (default 2). |
+| `views` | 1 (default), 2 or 3. With 2, each frame is rendered into the two eyes of a stereo pair, 64 mm apart. With 3, it is rendered into the left, centre and right screens of a surround setup (screens 0.6 m wide, 0.7 m away, the side screens turned by 45 degrees). Each view is `width` by `height`, and is saved as `frame_NNN_viewK`. Each view is then rendered again alone, with the same camera, as `frame_NNN_viewK_alone`, and `frame_NNN_viewK_metrics.yaml` says how much the two differ. They are identical unless the scene has shadows, which are fitted to all the views together. It can't be used with `reference_samples`, bloom, benchmarks or temporal upscaling. |
 | `fixture` | `shapes` (default) or `bloom_chart`. |
 | `models`, `asset_root` | OPT or `.glb` models replacing the cuboids, and the folder they are read from. |
 | `effect_dir`, `time` | Material animation: the effects folder under `asset_root` (`mod/flight/effects`) and the start time in seconds. |

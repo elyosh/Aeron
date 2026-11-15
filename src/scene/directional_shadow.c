@@ -33,12 +33,23 @@ typedef struct ShadowBounds {
 	float max[3];
 } ShadowBounds;
 
+/* One view's frustum between two depths. */
 typedef struct ShadowSplitFrustum {
-	float corners[8][3];
-	float eye_to_world[9];
-	float center[3];
-	float radius;
+	const AeronSceneCamera* camera;
+	float                   corners[8][3];
+	float                   eye_to_world[9];
+	float                   center[3];
+	float                   radius;
 } ShadowSplitFrustum;
+
+/* The frusta of all the frame's views between two depths, and a sphere
+ * around them. With one view, the sphere is that view's. */
+typedef struct ShadowSplit {
+	ShadowSplitFrustum view[AERON_MAX_VIEWS];
+	int                count;
+	float              center[3];
+	float              radius;
+} ShadowSplit;
 
 /* One receiver-local tile: light-space centre and half extent, texel size,
  * and the camera distance it serves up to. */
@@ -107,20 +118,21 @@ static const AeronSceneMeshInstance* shadow_caster(const struct AeronScene3D* sc
 	return index < (uint16_t)scene->shadow_only_count ? &scene->shadow_only[index] : NULL;
 }
 
-static void shadow_build_split_frustum(const struct AeronScene3D* scene, float near_z, float far_z,
+static void shadow_build_split_frustum(const AeronSceneCamera* camera, float near_z, float far_z,
 									   ShadowSplitFrustum* out) {
 	double       eye_corners[8][3];
 	double       eye_center[3] = { 0.0, 0.0, 0.0 };
-	const double tan_h         = tan((double)scene->camera.h_half_rad);
-	const double tan_v         = tan((double)scene->camera.v_half_rad);
+	const double tan_h         = tan((double)camera->h_half_rad);
+	const double tan_v         = tan((double)camera->v_half_rad);
+	out->camera                = camera;
 	for (int depth_index = 0; depth_index < 2; depth_index++) {
 		const double depth = depth_index ? (double)far_z : (double)near_z;
 		for (int corner = 0; corner < 4; corner++) {
 			const double ndc_x = (corner & 1) ? 1.0 : -1.0;
 			const double ndc_y = (corner & 2) ? 1.0 : -1.0;
 			double*      eye   = eye_corners[depth_index * 4 + corner];
-			eye[0]             = (ndc_x - (double)scene->camera.proj_x_offset) * depth * tan_h;
-			eye[1]             = -(ndc_y - (double)scene->camera.proj_y_offset) * depth * tan_v;
+			eye[0]             = (ndc_x - (double)camera->proj_x_offset) * depth * tan_h;
+			eye[1]             = -(ndc_y - (double)camera->proj_y_offset) * depth * tan_v;
 			eye[2]             = depth;
 			for (int axis = 0; axis < 3; axis++) {
 				eye_center[axis] += eye[axis] * 0.125;
@@ -137,15 +149,15 @@ static void shadow_build_split_frustum(const struct AeronScene3D* scene, float n
 		radius_sq = fmax(radius_sq, distance_sq);
 	}
 
-	AeronSceneInternal_QuatToMat3(scene->camera.ori, out->eye_to_world);
+	AeronSceneInternal_QuatToMat3(camera->ori, out->eye_to_world);
 	for (int axis = 0; axis < 3; axis++) {
-		out->center[axis] = scene->camera.pos[axis] + out->eye_to_world[0 * 3 + axis] * (float)eye_center[0] +
+		out->center[axis] = camera->pos[axis] + out->eye_to_world[0 * 3 + axis] * (float)eye_center[0] +
 							out->eye_to_world[1 * 3 + axis] * (float)eye_center[1] +
 							out->eye_to_world[2 * 3 + axis] * (float)eye_center[2];
 	}
 	for (int corner = 0; corner < 8; corner++) {
 		for (int axis = 0; axis < 3; axis++) {
-			out->corners[corner][axis] = scene->camera.pos[axis] +
+			out->corners[corner][axis] = camera->pos[axis] +
 										 out->eye_to_world[0 * 3 + axis] * (float)eye_corners[corner][0] +
 										 out->eye_to_world[1 * 3 + axis] * (float)eye_corners[corner][1] +
 										 out->eye_to_world[2 * 3 + axis] * (float)eye_corners[corner][2];
@@ -156,28 +168,77 @@ static void shadow_build_split_frustum(const struct AeronScene3D* scene, float n
 	out->radius = ceilf(fmaxf((float)sqrt(radius_sq), 1.0f));
 }
 
-static void shadow_project_split_bounds(const ShadowSplitFrustum* frustum, const float x_axis[3],
+/* Builds the split of every view of the frame. `kept_radius` holds the
+ * radius from the previous frame, and the function stores the new radius in
+ * it. */
+static void shadow_build_split(struct AeronScene3D* scene, float near_z, float far_z, float* kept_radius,
+							   ShadowSplit* out) {
+	out->count = scene->view_count;
+	for (int view = 0; view < out->count; view++) {
+		shadow_build_split_frustum(&scene->views[view].camera, near_z, far_z, &out->view[view]);
+	}
+	if (out->count == 1) {
+		memcpy(out->center, out->view[0].center, sizeof out->center);
+		out->radius  = out->view[0].radius;
+		*kept_radius = 0.0f;
+		return;
+	}
+	/* Build a sphere that contains every view's sphere. Its centre is the
+	 * average of their centres. */
+	for (int axis = 0; axis < 3; axis++) {
+		out->center[axis] = 0.0f;
+		for (int view = 0; view < out->count; view++) {
+			out->center[axis] += out->view[view].center[axis] / (float)out->count;
+		}
+	}
+	float reach = 0.0f;
+	for (int view = 0; view < out->count; view++) {
+		float distance_sq = 0.0f;
+		for (int axis = 0; axis < 3; axis++) {
+			const float delta = out->view[view].center[axis] - out->center[axis];
+			distance_sq += delta * delta;
+		}
+		reach = fmaxf(reach, sqrtf(distance_sq) + out->view[view].radius);
+	}
+	/* The views keep the same positions relative to each other, so this
+	 * radius should not change, and the shadow texels keep their size. But the
+	 * radius is computed in world space, and rounding changes it slightly when
+	 * the head turns. So the previous radius is kept unless the new one is
+	 * larger, or smaller by more than a rounding error. */
+	const float radius = ceilf(reach);
+	if (*kept_radius >= reach && *kept_radius - reach < 1.5f) {
+		out->radius = *kept_radius;
+	} else {
+		out->radius  = radius;
+		*kept_radius = radius;
+	}
+}
+
+static void shadow_project_split_bounds(const ShadowSplit* split, const float x_axis[3],
 										const float y_axis[3], const float z_axis[3], ShadowBounds* out) {
 	shadow_bounds_reset(out);
-	for (int corner = 0; corner < 8; corner++) {
-		const float projected[3] = {
-			shadow_dot3(frustum->corners[corner], x_axis),
-			shadow_dot3(frustum->corners[corner], y_axis),
-			shadow_dot3(frustum->corners[corner], z_axis),
-		};
-		for (int axis = 0; axis < 3; axis++) {
-			out->min[axis] = fminf(out->min[axis], projected[axis]);
-			out->max[axis] = fmaxf(out->max[axis], projected[axis]);
+	for (int view = 0; view < split->count; view++) {
+		for (int corner = 0; corner < 8; corner++) {
+			const float projected[3] = {
+				shadow_dot3(split->view[view].corners[corner], x_axis),
+				shadow_dot3(split->view[view].corners[corner], y_axis),
+				shadow_dot3(split->view[view].corners[corner], z_axis),
+			};
+			for (int axis = 0; axis < 3; axis++) {
+				out->min[axis] = fminf(out->min[axis], projected[axis]);
+				out->max[axis] = fmaxf(out->max[axis], projected[axis]);
+			}
 		}
 	}
 }
 
-static int shadow_bound_intersects_split(const struct AeronScene3D* scene, const ShadowSplitFrustum* frustum,
-										 const AeronSceneInstanceBox* bound, float near_z, float far_z) {
-	float delta[3] = {
-		bound->center[0] - scene->camera.pos[0],
-		bound->center[1] - scene->camera.pos[1],
-		bound->center[2] - scene->camera.pos[2],
+static int shadow_bound_intersects_frustum(const ShadowSplitFrustum*    frustum,
+										   const AeronSceneInstanceBox* bound, float near_z, float far_z) {
+	const AeronSceneCamera* camera   = frustum->camera;
+	float                   delta[3] = {
+		bound->center[0] - camera->pos[0],
+		bound->center[1] - camera->pos[1],
+		bound->center[2] - camera->pos[2],
 	};
 	const float eye[3] = {
 		shadow_dot3(delta, &frustum->eye_to_world[0]),
@@ -187,13 +248,13 @@ static int shadow_bound_intersects_split(const struct AeronScene3D* scene, const
 	if (eye[2] + bound->radius < near_z || eye[2] - bound->radius > far_z) {
 		return 0;
 	}
-	const float tan_h       = tanf(scene->camera.h_half_rad);
-	const float tan_v       = tanf(scene->camera.v_half_rad);
+	const float tan_h       = tanf(camera->h_half_rad);
+	const float tan_v       = tanf(camera->v_half_rad);
 	const float plane[4][3] = {
-		{ 1.0f, 0.0f, (1.0f + scene->camera.proj_x_offset) * tan_h },
-		{ -1.0f, 0.0f, (1.0f - scene->camera.proj_x_offset) * tan_h },
-		{ 0.0f, 1.0f, (1.0f - scene->camera.proj_y_offset) * tan_v },
-		{ 0.0f, -1.0f, (1.0f + scene->camera.proj_y_offset) * tan_v },
+		{ 1.0f, 0.0f, (1.0f + camera->proj_x_offset) * tan_h },
+		{ -1.0f, 0.0f, (1.0f - camera->proj_x_offset) * tan_h },
+		{ 0.0f, 1.0f, (1.0f - camera->proj_y_offset) * tan_v },
+		{ 0.0f, -1.0f, (1.0f + camera->proj_y_offset) * tan_v },
 	};
 	for (int side = 0; side < 4; side++) {
 		const float normal_length = sqrtf(shadow_dot3(plane[side], plane[side]));
@@ -202,6 +263,17 @@ static int shadow_bound_intersects_split(const struct AeronScene3D* scene, const
 		}
 	}
 	return 1;
+}
+
+/* Returns nonzero when the bound is inside the split of at least one view. */
+static int shadow_bound_intersects_split(const ShadowSplit* split, const AeronSceneInstanceBox* bound,
+										 float near_z, float far_z) {
+	for (int view = 0; view < split->count; view++) {
+		if (shadow_bound_intersects_frustum(&split->view[view], bound, near_z, far_z)) {
+			return 1;
+		}
+	}
+	return 0;
 }
 
 static void shadow_build_matrix(float out[16], const float x_axis[3], const float y_axis[3],
@@ -631,10 +703,10 @@ static void shadow_prepare_receiver_local(struct AeronScene3D*                  
 	const float far_extent =
 		extent + (desc->normal_bias_texels + filter_radius + 2.0f) * ((2.0f * extent) / (float)usable_size);
 	if (desc->receiver_local_near_distance > 0.0f) {
-		const float        camera_near = fmaxf(scene->camera.near_z, 0.001f);
-		ShadowSplitFrustum slice;
-		shadow_build_split_frustum(scene, camera_near,
-								   fmaxf(desc->receiver_local_near_distance, camera_near * 2.0f), &slice);
+		const float camera_near = fmaxf(scene->camera.near_z, 0.001f);
+		ShadowSplit slice;
+		shadow_build_split(scene, camera_near, fmaxf(desc->receiver_local_near_distance, camera_near * 2.0f),
+						   &scene->shadow_union_radius[AERON_SCENE_SHADOW_MAX_CASCADES], &slice);
 		const float near_extent = slice.radius + (desc->normal_bias_texels + filter_radius + 2.0f) *
 													 ((2.0f * slice.radius) / (float)usable_size);
 		/* Only worth a tile when markedly finer than the whole fit. */
@@ -794,9 +866,9 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 	if (cascade > 0) {
 		fit_near -= (split_edges[cascade] - split_edges[cascade - 1]) * desc->transition_fraction;
 	}
-	const float        fit_far = split_edges[cascade + 1];
-	ShadowSplitFrustum frustum;
-	shadow_build_split_frustum(scene, fit_near, fit_far, &frustum);
+	const float fit_far = split_edges[cascade + 1];
+	ShadowSplit frustum;
+	shadow_build_split(scene, fit_near, fit_far, &scene->shadow_union_radius[cascade], &frustum);
 	ShadowBounds split_bounds;
 	shadow_project_split_bounds(&frustum, x_axis, y_axis, light_dir, &split_bounds);
 
@@ -815,8 +887,7 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 				(instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) != 0 ||
 				(scene->receiver_local_owned &&
 				 (instance->shadow_flags & AERON_SCENE_INSTANCE_USE_RECEIVER_LOCAL_SHADOW) != 0) ||
-				!shadow_bound_intersects_split(scene, &frustum, &object_bounds[candidate], fit_near,
-											   fit_far)) {
+				!shadow_bound_intersects_split(&frustum, &object_bounds[candidate], fit_near, fit_far)) {
 				continue;
 			}
 			shadow_bounds_include_box(&receiver_bounds, &object_bounds[candidate], x_axis, y_axis, light_dir);
@@ -915,10 +986,15 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 	 * from the light, cover fewer than shadow_caster_min_px render pixels at
 	 * fit_near. fit_near is the depth of this cascade's nearest receivers, so
 	 * their shadows look even smaller everywhere else in the cascade. */
+	/* With several views, use the narrowest one: a caster's shadow covers the
+	 * most pixels there. */
+	float tan_v = tanf(scene->views[0].camera.v_half_rad);
+	for (int view = 1; view < scene->view_count; view++) {
+		tan_v = fminf(tan_v, tanf(scene->views[view].camera.v_half_rad));
+	}
 	const float min_caster_size =
-		scene->render_h > 0
-			? scene->shadow_caster_min_px * 2.0f * fit_near * tanf(scene->camera.v_half_rad) / (float)scene->render_h
-			: 0.0f;
+		scene->render_h > 0 ? scene->shadow_caster_min_px * 2.0f * fit_near * tan_v / (float)scene->render_h
+							: 0.0f;
 	float caster_z_max = receiver_z_max;
 	for (int candidate = 0; candidate < combined_count && !no_receivers; candidate++) {
 		if (!caster_valid[candidate]) {
@@ -1002,6 +1078,26 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 		stable_world_per_texel / sqrtf(world_per_texel[0] * world_per_texel[1]);
 	scene->shadow_stats.receiver_count[cascade] = receiver_count;
 	scene->shadow_stats.caster_count[cascade]   = scene->shadow_caster_count[cascade];
+}
+
+void AeronSceneDirectionalShadow_EnterView(struct AeronScene3D* scene) {
+	if (!scene || !scene->shadow_stats.active) {
+		return;
+	}
+	/* The shaders pick a cascade from the depth along the camera's forward
+	 * axis, so they need the camera of the view they draw. */
+	float camera_rotation[9];
+	AeronSceneInternal_QuatToMat3(scene->camera.ori, camera_rotation);
+	for (int axis = 0; axis < 3; axis++) {
+		scene->shadow_uniform.camera_pos[axis]     = scene->camera.pos[axis];
+		scene->shadow_uniform.camera_forward[axis] = camera_rotation[2 * 3 + axis];
+	}
+	if (scene->shadow_stats.receiver_local_active) {
+		memcpy(scene->receiver_local_shadow_uniform.camera_pos, scene->shadow_uniform.camera_pos,
+			   sizeof scene->receiver_local_shadow_uniform.camera_pos);
+		memcpy(scene->receiver_local_shadow_uniform.camera_forward, scene->shadow_uniform.camera_forward,
+			   sizeof scene->receiver_local_shadow_uniform.camera_forward);
+	}
 }
 
 int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
@@ -1439,7 +1535,7 @@ static int shadow_screen_receivers(const struct AeronScene3D* scene) {
 	for (int i = 0; i < scene->instance_count; ++i) {
 		const AeronSceneMeshInstance* instance = &scene->instances[i];
 		const AeronSceneMesh*         mesh     = instance->mesh;
-		if (mesh && scene->prepared_instances[i].camera_visible &&
+		if (mesh && scene->prepared_instances[i].view_mask &&
 			(mesh->opaque_index_count + mesh->mask_index_count) != 0 &&
 			(instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 &&
 			(local_from_cascades ||

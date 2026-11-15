@@ -57,6 +57,7 @@ void AeronScene_AddBillboard(AeronScene3D* s, const AeronSceneBillboardDesc* d) 
 	e->texture             = star ? NULL : d->texture;
 	e->blend               = (uint8_t)d->blend;
 	e->stage               = (uint8_t)d->stage;
+	e->view_mask           = d->view_mask;
 	e->depth_bias          = d->depth_bias_view;
 	memcpy(e->corners, d->corners, sizeof e->corners);
 	memcpy(e->uv, d->uv, sizeof e->uv);
@@ -411,6 +412,12 @@ int AeronSceneBb3d_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd) {
 	return 1;
 }
 
+/* Returns nonzero when the current view draws the entry. A mask of 0 means
+ * every view. */
+static int bb3d_in_view(const struct AeronScene3D* s, const AeronSceneBb3dEntry* e) {
+	return e->view_mask == 0 || ((e->view_mask >> s->current_view) & 1u);
+}
+
 /* Walk the entry list for `stage`, batching consecutive same-state
  * runs. `velocity` selects the prepass pipeline + prev-corner filter. */
 static void bb3d_draw(struct AeronScene3D* s, AeronRenderPass* pass, int stage, int velocity) {
@@ -460,7 +467,7 @@ static void bb3d_draw(struct AeronScene3D* s, AeronRenderPass* pass, int stage, 
 	for (int i = 0; i <= s->bb_count; i++) {
 		const AeronSceneBb3dEntry* e   = i < s->bb_count ? &s->bb_entries[i] : NULL;
 		const uint32_t             fv  = (uint32_t)i * BB3D_VERTS_PER_ENTRY;
-		const int                  use = e && e->stage == stage && (!velocity || e->has_prev);
+		const int use = e && e->stage == stage && (!velocity || e->has_prev) && bb3d_in_view(s, e);
 		if (use && e->texture == run_tex && (velocity || (int)e->blend == run_blend) && run_count &&
 			fv == run_first + run_count) {
 			run_count += BB3D_VERTS_PER_ENTRY;
@@ -542,7 +549,7 @@ void AeronSceneBb3d_DrawLens(struct AeronScene3D* s, AeronRenderPass* pass) {
 	int bound_blend = -1;
 	for (int i = 0; i < s->bb_count; i++) {
 		const AeronSceneBb3dEntry* e = &s->bb_entries[i];
-		if (e->stage != AERON_SCENE_BILLBOARD_STAGE_LENS) {
+		if (e->stage != AERON_SCENE_BILLBOARD_STAGE_LENS || !bb3d_in_view(s, e)) {
 			continue;
 		}
 		if ((int)e->blend != bound_blend) {
