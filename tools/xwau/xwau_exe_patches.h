@@ -28,6 +28,8 @@
 
 #include <stdbool.h>
 
+#include "xwau_game_tables.h"
+
 typedef enum XwauExePatchGroup {
 	XWAU_EXE_PATCHES_CRAFT,
 	XWAU_EXE_PATCHES_FLIGHT,
@@ -44,8 +46,8 @@ typedef struct XwauExePatches {
 	bool skirmish_ejections;
 } XwauExePatches;
 
-/* Reads the patches of `group` in the XWINGALLIANCE.EXE at `game`. The
- * patches of the other group stay false. A game without the file has none. */
-void XwauExePatches_Read(const char* game, XwauExePatchGroup group, XwauExePatches* out);
+/* Reads the patches of `group` in `exe`. The patches of the other group stay
+ * false. Without an executable (NULL), there are none. */
+void XwauExePatches_Read(const XwauGameExe* exe, XwauExePatchGroup group, XwauExePatches* out);
 
 #endif /* AERON_XWAU_EXE_PATCHES_H */

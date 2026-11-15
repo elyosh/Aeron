@@ -37,8 +37,28 @@ enum {
 	XWAU_GAME_SOUND_SWITCHES    = 4,
 	/* Object types 1 to 65 have a sound case; the others take the default
 	   case. */
-	XWAU_GAME_SOUND_CASES = 65,
+	XWAU_GAME_SOUND_CASES     = 65,
+	XWAU_GAME_FORMATIONS      = 34,
+	XWAU_GAME_FORMATION_SLOTS = 6,
 };
+
+/* The formation tables: the side, forward and up values of each slot, and
+   the divisor of each formation. */
+#define XWAU_GAME_FORMATION_SIDE 0x5B7080u
+#define XWAU_GAME_FORMATION_FORWARD 0x5B7218u
+#define XWAU_GAME_FORMATION_UP 0x5B73B0u
+#define XWAU_GAME_FORMATION_DIVISORS 0x5B7548u
+
+/* The XWINGALLIANCE.EXE of a game, to read its code and data. */
+typedef struct XwauGameExe XwauGameExe;
+
+/* Reads the XWINGALLIANCE.EXE at `root`. Returns NULL when there is none,
+ * and NULL with a report when it isn't a Windows executable. */
+XwauGameExe* XwauGameExe_Load(const char* root);
+void         XwauGameExe_Free(XwauGameExe* exe);
+/* The `size` bytes at address `address`, or NULL when they aren't in the
+ * data of a section. */
+const uint8_t* XwauGameExe_At(const XwauGameExe* exe, uint32_t address, size_t size);
 
 typedef struct XwauGameTables {
 	uint8_t  types[XWAU_GAME_OBJECT_TYPES][XWAU_GAME_OBJECT_TYPE_SIZE];
@@ -51,6 +71,9 @@ typedef struct XwauGameTables {
 	size_t   soundJumpSize[XWAU_GAME_SOUND_SWITCHES];
 	char**  rows[2]; /* the model names of the two lists, by row */
 	size_t  rowCount[2];
+	/* The executable that the tables come from, for the readers that need
+	   more of it. NULL for the stock tables of XwauGameTables_CreateStock. */
+	XwauGameExe* exe;
 } XwauGameTables;
 
 /* The fields of an entry of the object type table. */
@@ -79,6 +102,11 @@ typedef struct XwauStockValues {
 	const uint16_t* lifetime_seconds;
 	const uint16_t* lifetime_fractions;
 	size_t          lifetime_count;
+	/* The side, forward and up values of the formation slots, each
+	   XWAU_GAME_FORMATIONS rows of XWAU_GAME_FORMATION_SLOTS, and the divisor
+	   of each formation. NULL leaves the formations out. */
+	const int16_t* formation_positions[3];
+	const int16_t* formation_divisors;
 } XwauStockValues;
 
 /* Reads the tables of the game at `root`. Returns NULL, with a report, when
@@ -104,16 +132,5 @@ const char* XwauGameTables_RowModel(const XwauGameTables* tables, int object_typ
 /* The model of the object type that `craft_type` maps to, or "" when it has
  * none. */
 const char* XwauGameTables_CraftModel(const XwauGameTables* tables, int craft_type);
-
-/* The XWINGALLIANCE.EXE of a game, to read its code. */
-typedef struct XwauGameExe XwauGameExe;
-
-/* Reads the XWINGALLIANCE.EXE at `root`. Returns NULL when there is none,
- * and NULL with a report when it isn't a Windows executable. */
-XwauGameExe* XwauGameExe_Load(const char* root);
-void         XwauGameExe_Free(XwauGameExe* exe);
-/* The `size` bytes at address `address`, or NULL when they aren't in the
- * data of a section. */
-const uint8_t* XwauGameExe_At(const XwauGameExe* exe, uint32_t address, size_t size);
 
 #endif /* AERON_XWAU_GAME_TABLES_H */

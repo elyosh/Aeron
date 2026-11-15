@@ -221,11 +221,11 @@ static bool read_sound_switch(const Image* image, const char* exe, int index, Xw
 												   tables->soundJumpSize[index]);
 }
 
-static XwauGameTables* load_files(const char* exe, const char* flight_models);
+static XwauGameTables* load_files(XwauGameExe* exe, const char* flight_models);
 
 XwauGameTables* XwauGameTables_Load(const char* root) {
-	char exe[1100], models[1100];
-	if (!Xwau_FindFile(root, "XWINGALLIANCE.EXE", exe, sizeof exe)) {
+	char path[1100], models[1100];
+	if (!Xwau_FindFile(root, "XWINGALLIANCE.EXE", path, sizeof path)) {
 		Report(root, "has no XWINGALLIANCE.EXE");
 		return NULL;
 	}
@@ -233,7 +233,8 @@ XwauGameTables* XwauGameTables_Load(const char* root) {
 		Report(root, "has no FlightModels folder");
 		return NULL;
 	}
-	return load_files(exe, models);
+	XwauGameExe* exe = XwauGameExe_Load(root);
+	return exe ? load_files(exe, models) : NULL;
 }
 
 XwauGameTables* XwauGameTables_CreateStock(const char* flight_models) {
@@ -262,27 +263,26 @@ XwauGameTables* XwauGameTables_CreateStock(const char* flight_models) {
 	return tables;
 }
 
-static XwauGameTables* load_files(const char* exe, const char* flight_models) {
+/* Reads the tables from `exe`, which they keep. */
+static XwauGameTables* load_files(XwauGameExe* exe, const char* flight_models) {
 	XwauGameTables* tables = calloc(1, sizeof *tables);
-	size_t          size   = 0;
-	uint8_t*        data   = (uint8_t*)ReadWholeFile(exe, &size);
-	Image           image;
-	bool            ok = tables && data;
-	if (ok && !image_open(data, size, &image)) {
-		Report(exe, "isn't a Windows executable");
-		ok = false;
+	if (!tables) {
+		XwauGameExe_Free(exe);
+		return NULL;
 	}
-	uint8_t craft[2 * XWAU_GAME_CRAFT_TYPES];
-	ok = ok && read_table(&image, exe, OBJECT_TYPE_TABLE, tables->types, sizeof tables->types) &&
-		 read_table(&image, exe, RECORD_TABLE, tables->records, sizeof tables->records) &&
-		 read_table(&image, exe, CRAFT_TYPE_TABLE, craft, sizeof craft);
+	tables->exe        = exe;
+	const Image* image = &exe->image;
+	const char*  path  = exe->path;
+	uint8_t      craft[2 * XWAU_GAME_CRAFT_TYPES];
+	bool         ok = read_table(image, path, OBJECT_TYPE_TABLE, tables->types, sizeof tables->types) &&
+					  read_table(image, path, RECORD_TABLE, tables->records, sizeof tables->records) &&
+					  read_table(image, path, CRAFT_TYPE_TABLE, craft, sizeof craft);
 	for (int i = 0; ok && i < XWAU_GAME_SOUND_SWITCHES; ++i)
-		ok = read_sound_switch(&image, exe, i, tables);
+		ok = read_sound_switch(image, path, i, tables);
 	if (ok)
 		for (int i = 0; i < XWAU_GAME_CRAFT_TYPES; ++i)
 			tables->craft[i] = read_u16(craft + 2 * i);
 	ok = ok && read_lists(flight_models, tables);
-	free(data);
 	if (!ok) {
 		XwauGameTables_Free(tables);
 		return NULL;
@@ -297,6 +297,7 @@ void XwauGameTables_Free(XwauGameTables* tables) {
 		free(tables->soundJumps[i]);
 	for (int list = 0; list < 2; ++list)
 		FreeList(tables->rows[list], tables->rowCount[list]);
+	XwauGameExe_Free(tables->exe);
 	free(tables);
 }
 

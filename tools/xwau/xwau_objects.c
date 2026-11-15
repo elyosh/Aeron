@@ -1028,7 +1028,7 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 	if (!sounds_comparable)
 		ReportUnsupported("changes to the object type sound cases of XWINGALLIANCE.EXE");
 	XwauExePatches patches;
-	XwauExePatches_Read(mod_root, XWAU_EXE_PATCHES_CRAFT, &patches);
+	XwauExePatches_Read(mod->exe, XWAU_EXE_PATCHES_CRAFT, &patches);
 	const bool beam = patches.craft_beams;
 
 	NewCraftRows new_craft_rows = { { NULL, NULL } };

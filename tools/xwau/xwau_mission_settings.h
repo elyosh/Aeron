@@ -114,7 +114,9 @@ typedef struct XwauSettingsConfig {
 	size_t interdiction_count;
 	/* hook_interdictor, hook_hyperspace and ddraw's interdiction. */
 	XwauHyperspaceModes hyperspace;
-	/* The ejection patches of the mod's XWINGALLIANCE.EXE. */
+	/* The ejection patches of the mod's XWINGALLIANCE.EXE.
+	 * XwauSettingsConfig_Read doesn't read them: XwauFlightSettings_Write
+	 * does, with the formations, so that the executable is read once. */
 	XwauExePatches exe_patches;
 } XwauSettingsConfig;
 

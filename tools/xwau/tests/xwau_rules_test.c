@@ -142,9 +142,22 @@ static const uint16_t  kStockHullIcons[]        = { 0, 100, 200, 300 };
 static const uint8_t   kStockHardpointKinds[40] = { 0, 1, 1, 1 };
 static const uint16_t  kStockLifetimeSeconds[27]   = { 1, 1, 1, 1, 1, 2, 40, 25, 3, 3 };
 static const uint16_t  kStockLifetimeFractions[27] = { 0, 0x8000, 0, 0x8000, 0x8000 };
-static XwauStockValues g_stock                     = {
-	kStockHullIcons,         4, kStockHullIcons, 4, kStockHardpointKinds, 40, kStockLifetimeSeconds,
-	kStockLifetimeFractions, 27
+/* The stock formations of the tests are all 0, as the fake exe's are. */
+static const int16_t   kStockFormationPositions[3][XWAU_GAME_FORMATIONS * XWAU_GAME_FORMATION_SLOTS];
+static const int16_t   kStockFormationDivisors[XWAU_GAME_FORMATIONS];
+static XwauStockValues g_stock = {
+	.hull_icons           = kStockHullIcons,
+	.hull_icon_count      = 4,
+	.map_icons            = kStockHullIcons,
+	.map_icon_count       = 4,
+	.hardpoint_kinds      = kStockHardpointKinds,
+	.hardpoint_kind_count = 40,
+	.lifetime_seconds     = kStockLifetimeSeconds,
+	.lifetime_fractions   = kStockLifetimeFractions,
+	.lifetime_count       = 27,
+	.formation_positions  = { kStockFormationPositions[0], kStockFormationPositions[1],
+							  kStockFormationPositions[2] },
+	.formation_divisors   = kStockFormationDivisors,
 };
 
 static XwauNameList list_of(const char* const* names, size_t count) {
@@ -2638,6 +2651,46 @@ static void test_exe_patches(const char* scratch) {
 	free(text);
 }
 
+/* ---- Formations -------------------------------------------------------------- */
+
+/* Writes `count` int16 values at `address` of the fake exe. */
+static void fake_int16s(FakeExe* exe, unsigned address, const int16_t* values, size_t count) {
+	for (size_t i = 0; i < count; ++i)
+		put16(fake_at(exe, address + 2 * (unsigned)i), (unsigned)(uint16_t)values[i]);
+}
+
+static void test_formations(const char* scratch) {
+	char game[1024], settings[1300];
+	snprintf(game, sizeof game, "%s/formations_game", scratch);
+	MakeDirs(game);
+	snprintf(settings, sizeof settings, "%s/formations.yaml", scratch);
+	FakeExe exe;
+	fake_exe_init(&exe);
+	fake_exe_write(&exe, game);
+	char* text = flight_settings_text(game, settings);
+	check(text && !strstr(text, "formations"), "formations: none when the exe has the stock tables");
+	free(text);
+	/* TFTC's Finger Four (formation 1), and formation 2 with new slots and a
+	   divisor of 0. */
+	static const int16_t side[6] = { 0, -2, 4, 5, -4, -5 }, forward[6] = { 0, -2, -4, -5, -4, -5 },
+						 up[6] = { 0, -1, 2, 1, 3, 2 }, divisor = 1;
+	fake_exe_init(&exe);
+	fake_int16s(&exe, XWAU_GAME_FORMATION_SIDE + 12, side, 6);
+	fake_int16s(&exe, XWAU_GAME_FORMATION_FORWARD + 12, forward, 6);
+	fake_int16s(&exe, XWAU_GAME_FORMATION_UP + 12, up, 6);
+	fake_int16s(&exe, XWAU_GAME_FORMATION_DIVISORS + 2, &divisor, 1);
+	fake_int16s(&exe, XWAU_GAME_FORMATION_SIDE + 24, side, 6);
+	fake_exe_write(&exe, game);
+	text = flight_settings_text(game, settings);
+	check(text &&
+			  strstr(text,
+					 "\nformations:\n  1:\n    slots: [[0, 0, 0], [-2, -2, -1], [4, -4, 2], [5, -5, 1], "
+					 "[-4, -4, 3], [-5, -5, 2]]\n    divisor: 1\n") &&
+			  !strstr(text, "  2:\n    slots"),
+		  "formations: a changed formation is written, and one with a divisor of 0 is left out");
+	free(text);
+}
+
 /* ---- hook_hangars craft selection --------------------------------------------- */
 
 static void test_hangar_crafts(const char* scratch) {
@@ -3724,6 +3777,7 @@ int main(void) {
 	test_mission_files(scratch);
 	test_flight_settings(scratch);
 	test_exe_patches(scratch);
+	test_formations(scratch);
 	test_object_limits(scratch);
 	test_hangar_crafts(scratch);
 	test_weapon_lock(scratch);

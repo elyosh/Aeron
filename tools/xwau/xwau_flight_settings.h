@@ -44,6 +44,10 @@
  *     can be a loader of DDraw_Effects.dll or DDraw_Golden.dll, as
  *     DDrawType.cfg says. The flare is on when ddraw has its post effects on
  *     and a flare intensity above 0.01.
+ *   - `formations` holds the formations of the mod's XWINGALLIANCE.EXE that
+ *     differ from the stock tables: the side, forward and up values of the
+ *     six slots, and the divisor. A formation with a divisor of 0 is
+ *     reported and left out, since the game divides by it.
  */
 
 #include <stdbool.h>

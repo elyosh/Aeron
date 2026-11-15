@@ -73,7 +73,6 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	   motion. Older builds of the hook, without the droid hooks, don't have
 	   it. */
 	out->pilot_hangar_droids = Xwau_DllHasText(game, "hook_pilot.dll", "890DFC0D9100");
-	XwauExePatches_Read(game, XWAU_EXE_PATCHES_FLIGHT, &out->exe_patches);
 	XwauSection settings;
 	if (Xwau_FindFile(game, "hook_weapon_type.dll", path, sizeof path)) {
 		out->weapon_type          = true;

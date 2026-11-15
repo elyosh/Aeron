@@ -81,13 +81,11 @@ static bool applied(const XwauGameExe* exe, const Patch* patch) {
 	return patched != 0;
 }
 
-void XwauExePatches_Read(const char* game, XwauExePatchGroup group, XwauExePatches* out) {
+void XwauExePatches_Read(const XwauGameExe* exe, XwauExePatchGroup group, XwauExePatches* out) {
 	memset(out, 0, sizeof *out);
-	XwauGameExe* exe = XwauGameExe_Load(game);
 	if (!exe)
 		return;
 	for (size_t i = 0; i < sizeof g_patches / sizeof g_patches[0]; ++i)
 		if (g_patches[i].group == group)
 			*(bool*)((char*)out + g_patches[i].field) = applied(exe, &g_patches[i]);
-	XwauGameExe_Free(exe);
 }

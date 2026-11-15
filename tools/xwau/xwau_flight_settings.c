@@ -171,6 +171,57 @@ static void report_sun_models(const char* game) {
 /* Writes the `suns` section, when the mod's ddraw draws procedural suns: its
  * procedural_suns isn't 0. Its flare also needs bloom or SSAO, and a
  * flare_intensity above 0.01. */
+/* Reads `count` int16 values at `address` of the executable. */
+static bool read_int16s(const XwauGameExe* exe, uint32_t address, int16_t* out, size_t count) {
+	const uint8_t* bytes = XwauGameExe_At(exe, address, 2 * count);
+	if (!bytes)
+		return false;
+	for (size_t i = 0; i < count; ++i)
+		out[i] = (int16_t)(bytes[2 * i] | bytes[2 * i + 1] << 8);
+	return true;
+}
+
+/* Writes `formations`: each formation whose slots or divisor in the mod's
+ * executable `exe` differ from `stock`. Returns whether it wrote any. */
+static bool write_formations(FILE* f, const XwauGameExe* exe, const XwauStockValues* stock) {
+	enum { SLOTS = XWAU_GAME_FORMATIONS * XWAU_GAME_FORMATION_SLOTS };
+
+	static const uint32_t addresses[3] = { XWAU_GAME_FORMATION_SIDE, XWAU_GAME_FORMATION_FORWARD,
+										   XWAU_GAME_FORMATION_UP };
+	if (!stock->formation_divisors || !exe)
+		return false;
+	int16_t positions[3][SLOTS], divisors[XWAU_GAME_FORMATIONS];
+	bool    ok = read_int16s(exe, XWAU_GAME_FORMATION_DIVISORS, divisors, XWAU_GAME_FORMATIONS);
+	for (int axis = 0; ok && axis < 3; ++axis)
+		ok = read_int16s(exe, addresses[axis], positions[axis], SLOTS);
+	if (!ok) {
+		ReportUnsupported("an XWINGALLIANCE.EXE without the formation tables");
+		return false;
+	}
+	bool wrote = false;
+	for (int formation = 0; formation < XWAU_GAME_FORMATIONS; ++formation) {
+		const size_t first   = (size_t)formation * XWAU_GAME_FORMATION_SLOTS;
+		bool         changed = divisors[formation] != stock->formation_divisors[formation];
+		for (int axis = 0; !changed && axis < 3; ++axis)
+			changed = memcmp(positions[axis] + first, stock->formation_positions[axis] + first,
+							 XWAU_GAME_FORMATION_SLOTS * sizeof(int16_t)) != 0;
+		if (!changed)
+			continue;
+		/* The game divides by it. */
+		if (divisors[formation] == 0) {
+			ReportUnsupported("a formation divisor of 0 in XWINGALLIANCE.EXE");
+			continue;
+		}
+		fprintf(f, "%s  %d:\n    slots: [", wrote ? "" : "formations:\n", formation);
+		for (int slot = 0; slot < XWAU_GAME_FORMATION_SLOTS; ++slot)
+			fprintf(f, "%s[%d, %d, %d]", slot ? ", " : "", positions[0][first + slot],
+					positions[1][first + slot], positions[2][first + slot]);
+		fprintf(f, "]\n    divisor: %d\n", divisors[formation]);
+		wrote = true;
+	}
+	return wrote;
+}
+
 static bool write_suns(FILE* f, const char* game) {
 	char dll[1024];
 	if (!find_ddraw(game, dll, sizeof dll) || !Xwau_FileHasText(dll, "procedural_suns"))
@@ -529,9 +580,14 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 		XwauSettingsConfig_Free(&config);
 		return false;
 	}
+	/* The executable is read once, for the ejection patches and the
+	   formations. */
+	XwauGameExe* exe = XwauGameExe_Load(game);
+	XwauExePatches_Read(exe, XWAU_EXE_PATCHES_FLIGHT, &config.exe_patches);
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		Report(NULL, "cannot write %s", path);
+		XwauGameExe_Free(exe);
 		XwauSettingsConfig_Free(&config);
 		return false;
 	}
@@ -551,6 +607,8 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	const bool suns       = write_suns(f, game);
 	const bool speed      = write_speed_effect(f, game);
 	const bool hyperspace = XwauHyperspace_WriteFlightSettings(f, &config.hyperspace);
+	const bool formations = write_formations(f, exe, stock);
+	XwauGameExe_Free(exe);
 	bool       ai_attack, mag_pulse, warhead_lock;
 	const bool weapon_lock_ok =
 		XwauWeaponLock_WriteFlightSettings(f, game, names, &ai_attack, &mag_pulse, &warhead_lock);
@@ -573,7 +631,8 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 									camera ? "the camera" : NULL,
 									suns ? "the suns" : NULL,
 									speed ? "the speed effect" : NULL,
-									hyperspace ? "the hyperspace speeds" : NULL };
+									hyperspace ? "the hyperspace speeds" : NULL,
+									formations ? "the formations" : NULL };
 	for (size_t i = 0; i < sizeof parts / sizeof parts[0]; ++i) {
 		if (parts[i])
 			snprintf(what + strlen(what), sizeof what - strlen(what), "%s%s", what[0] ? ", " : "", parts[i]);
