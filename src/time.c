@@ -205,4 +205,10 @@ void Aeron_GetPacingStats(AeronPacingStats* out) {
 		SDL_qsort(waits, p->history_count, sizeof waits[0], Aeron_CompareU32);
 		out->acquire_wait_us = waits[p->history_count / 2u];
 	}
+	if (p->history_count) {
+		const uint32_t last = (p->history_next + AERON_PACING_HISTORY - 1u) % AERON_PACING_HISTORY;
+
+		out->last_acquire_wait_us = p->acquire_wait_us[last];
+		out->last_gpu_busy        = p->busy[last];
+	}
 }

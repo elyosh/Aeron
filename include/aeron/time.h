@@ -34,6 +34,8 @@ typedef struct AeronPacingStats {
 	uint32_t acquire_wait_us; /* median wait for the swapchain image, last 120 frames */
 	uint32_t late_frames;     /* frames shown more than 1.5 intervals after the last, in the last second */
 	uint32_t busy_frames;     /* frames whose GPU work wasn't done at the vsync, in the last second */
+	uint32_t last_acquire_wait_us; /* the last present's wait for the swapchain image */
+	int      last_gpu_busy;        /* the GPU work before the last present wasn't done at the vsync */
 } AeronPacingStats;
 
 void Aeron_GetPacingStats(AeronPacingStats* out);
