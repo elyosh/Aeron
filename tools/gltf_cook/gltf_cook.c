@@ -49,16 +49,16 @@ static char* cook_strdup(const char* source) {
 void aeron_gltf_cook_default_options(AeronGltfCookOptions* out) {
 	if (!out)
 		return;
-	out->atlas_page_size    = 2048;
-	out->max_texture_size   = 4096;
-	out->mip_min_subrect    = 16;
+	out->atlas_page_size           = 2048;
+	out->max_texture_size          = 4096;
+	out->mip_min_subrect           = 16;
 	out->separate_pages_budget     = 1 << 20;
 	out->separate_pages_max_layers = 256;
-	out->encoding           = AERON_GLTF_COOK_ENCODING_BC;
-	out->bc7_quality        = 1; /* KTX2_BC7_QUALITY_MED */
-	out->zstd_supercompress = true;
-	out->zstd_level         = KTX2_ZSTD_LEVEL_DEFAULT;
-	out->verbose            = false;
+	out->encoding                  = AERON_GLTF_COOK_ENCODING_BC;
+	out->bc7_quality               = 1; /* KTX2_BC7_QUALITY_MED */
+	out->zstd_supercompress        = true;
+	out->zstd_level                = KTX2_ZSTD_LEVEL_DEFAULT;
+	out->verbose                   = false;
 }
 
 /* ---------- channel-binding accessor table ---------------------------
@@ -162,8 +162,8 @@ static bool validate_material_textures(const cgltf_data* data) {
  * values (tools/extensions/AERON_flight_model_cooked, "Textures and
  * images"). A new texture is appended to `textures`; the caller sized the
  * array for every rect. */
-static cgltf_texture* atlas_texture(cgltf_texture* textures, size_t* count, size_t image, cgltf_sampler* sampler,
-									const ChannelRect* rect) {
+static cgltf_texture* atlas_texture(cgltf_texture* textures, size_t* count, size_t image,
+									cgltf_sampler* sampler, const ChannelRect* rect) {
 	char object[96];
 	if (rect->max_lod < CHANNEL_ATLAS_UNCLAMPED_LOD)
 		snprintf(object, sizeof object, "{\"source\":%zu,\"layer\":%d,\"maxLod\":%d}", image, rect->page,
@@ -372,8 +372,8 @@ static int64_t channel_texels(const ChannelAtlas* ca, const CookGroup* groups, i
  * image's (the core's or its group's), and that image's index; false when
  * not bound. */
 static bool binding_rect(const ChannelAtlas* atlases, const CookGroup* groups, int* const* group_of,
-						 int* const* rect_of, const int* core_image, size_t first_group_image, int c, size_t mi,
-						 ChannelRect* out, size_t* image) {
+						 int* const* rect_of, const int* core_image, size_t first_group_image, int c,
+						 size_t mi, ChannelRect* out, size_t* image) {
 	if (rect_of[c][mi] < 0)
 		return false;
 	if (group_of[c][mi] >= 0) {
@@ -433,8 +433,10 @@ static char** derive_image_variants(const cgltf_data* data) {
 	bool own_channel[AERON_GLTF_COOK_CHANNEL_COUNT] = { false };
 	for (size_t mi = 0; ok && mi < data->meshes_count; mi++)
 		for (size_t pi = 0; pi < data->meshes[mi].primitives_count; pi++)
-			for (int c = 0; data->meshes[mi].primitives[pi].material && c < AERON_GLTF_COOK_CHANNEL_COUNT; c++) {
-				const cgltf_texture_view* tv = material_channel_view(data->meshes[mi].primitives[pi].material, c);
+			for (int c = 0; data->meshes[mi].primitives[pi].material && c < AERON_GLTF_COOK_CHANNEL_COUNT;
+				 c++) {
+				const cgltf_texture_view* tv =
+					material_channel_view(data->meshes[mi].primitives[pi].material, c);
 				own_channel[c] |= tv && tv->texture && tv->texture->image;
 			}
 	for (size_t mi = 0; ok && mi < data->meshes_count; mi++)
@@ -530,7 +532,8 @@ static bool place_image(cgltf_data* data, char* const* image_variants, const cha
 						void* image_context, ImageCache* cache, const AeronGltfCookOptions* opts,
 						ChannelAtlas* atlases, CookGroup** groups, int* group_count, int c,
 						cgltf_image* image, int* group_out, int* rect_out) {
-	ChannelAtlas* atlas = target_atlas(data, image_variants, atlases, groups, group_count, c, image, group_out);
+	ChannelAtlas* atlas =
+		target_atlas(data, image_variants, atlases, groups, group_count, c, image, group_out);
 	if (!atlas)
 		return false;
 	*rect_out = find_channel_rect(atlas, image);
@@ -638,12 +641,11 @@ static bool place_transmission(cgltf_data* data, char* const* image_variants, co
 		return false;
 	snprintf(key, key_size, "%s#transmission=%s", base_image ? base_image->uri : "",
 			 trans_image ? trans_image->uri : "");
-	ChannelAtlas* atlas =
-		target_atlas(data, image_variants, atlases, groups, group_count, c, base_image ? base_image : trans_image,
-					 group_out);
-	cgltf_image probe = { 0 };
-	probe.uri         = key;
-	*rect_out         = atlas ? find_channel_rect(atlas, &probe) : -1;
+	ChannelAtlas* atlas = target_atlas(data, image_variants, atlases, groups, group_count, c,
+									   base_image ? base_image : trans_image, group_out);
+	cgltf_image   probe = { 0 };
+	probe.uri           = key;
+	*rect_out           = atlas ? find_channel_rect(atlas, &probe) : -1;
 	if (!atlas || *rect_out >= 0) {
 		free(key);
 		return atlas != NULL;
@@ -815,8 +817,7 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 		bool            merged_base = false;
 		if (m->has_transmission && m->transmission.transmission_factor > 0.0f)
 			ok = place_transmission(data, image_variants, source_label, image_provider, image_context, &cache,
-									&opts, atlases,
-									&groups, &group_count, &merged, m,
+									&opts, atlases, &groups, &group_count, &merged, m,
 									&group_of[AERON_GLTF_COOK_CHANNEL_BASE_COLOR][mi],
 									&rect_of[AERON_GLTF_COOK_CHANNEL_BASE_COLOR][mi], &merged_base);
 		for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT && ok; c++) {
@@ -863,7 +864,8 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 				continue;
 			one_each = one_each && groups[g].atlas.rect_count == 1;
 			layers += groups[g].atlas.rect_count;
-			bound += channel_atlas_texel_lower_bound(&groups[g].atlas, opts.atlas_page_size, opts.mip_min_subrect);
+			bound +=
+				channel_atlas_texel_lower_bound(&groups[g].atlas, opts.atlas_page_size, opts.mip_min_subrect);
 			channel_atlas_one_per_page_extent(&groups[g].atlas, &page_w, &page_h);
 		}
 		const int64_t separate       = (int64_t)layers * page_w * page_h;
@@ -905,15 +907,17 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 			continue;
 		}
 		if (separate_pages && packed >= 0)
-			ToolLog_Write(TOOL_LOG_DETAIL,
-						  "[aeron_gltf_cook] %s: one page per image, %d layer(s) of %d×%d (%lld texels; %s %lld)",
-						  kChannels[c].name, layers, page_w, page_h, (long long)separate, reason, (long long)packed);
+			ToolLog_Write(
+				TOOL_LOG_DETAIL,
+				"[aeron_gltf_cook] %s: one page per image, %d layer(s) of %d×%d (%lld texels; %s %lld)",
+				kChannels[c].name, layers, page_w, page_h, (long long)separate, reason, (long long)packed);
 		else if (separate_pages)
-			ToolLog_Write(TOOL_LOG_DETAIL, "[aeron_gltf_cook] %s: one page per image, %d layer(s) of %d×%d (%s)",
+			ToolLog_Write(TOOL_LOG_DETAIL,
+						  "[aeron_gltf_cook] %s: one page per image, %d layer(s) of %d×%d (%s)",
 						  kChannels[c].name, layers, page_w, page_h, reason);
 		else if (packed >= 0)
-			ToolLog_Write(TOOL_LOG_DETAIL, "[aeron_gltf_cook] %s: packed (%lld texels; %s %lld)", kChannels[c].name,
-						  (long long)packed, reason, (long long)separate);
+			ToolLog_Write(TOOL_LOG_DETAIL, "[aeron_gltf_cook] %s: packed (%lld texels; %s %lld)",
+						  kChannels[c].name, (long long)packed, reason, (long long)separate);
 		else
 			ToolLog_Write(TOOL_LOG_DETAIL, "[aeron_gltf_cook] %s: packed (%s)", kChannels[c].name, reason);
 
@@ -1076,10 +1080,10 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 		data->materials_count ? data->materials_count : 1, sizeof *saved_transmission);
 	/* The cooked file requires AERON_flight_model_cooked because its
 	 * textures can only be found through it. */
-	char*  required_name      = cook_strdup("AERON_flight_model_cooked");
-	char** cooked_required    = (char**)calloc(data->extensions_required_count + 1, sizeof *cooked_required);
-	char** cooked_used        = (char**)calloc(data->extensions_used_count + 1, sizeof *cooked_used);
-	bool   arrays_ok          = new_bvs && new_imgs && new_smp && new_texs && saved_views && saved_transmission &&
+	char*  required_name   = cook_strdup("AERON_flight_model_cooked");
+	char** cooked_required = (char**)calloc(data->extensions_required_count + 1, sizeof *cooked_required);
+	char** cooked_used     = (char**)calloc(data->extensions_used_count + 1, sizeof *cooked_used);
+	bool   arrays_ok = new_bvs && new_imgs && new_smp && new_texs && saved_views && saved_transmission &&
 					   required_name && cooked_required && cooked_used;
 	for (size_t i = 0; arrays_ok && i < old_bv; i++)
 		new_bvs[i] = data->buffer_views[i];
@@ -1122,7 +1126,8 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 		for (int c = 0; c < AERON_GLTF_COOK_CHANNEL_COUNT && arrays_ok; c++) {
 			ChannelRect rect;
 			size_t      image;
-			if (binding_rect(atlases, groups, group_of, rect_of, core_image, core_images, c, mi, &rect, &image))
+			if (binding_rect(atlases, groups, group_of, rect_of, core_image, core_images, c, mi, &rect,
+							 &image))
 				arrays_ok = atlas_texture(new_texs, &new_tex_count, image, &new_smp[0], &rect) != NULL;
 		}
 	}
@@ -1167,7 +1172,8 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 				continue;
 			ChannelRect rect;
 			size_t      image;
-			if (!binding_rect(atlases, groups, group_of, rect_of, core_image, core_images, c, mi, &rect, &image)) {
+			if (!binding_rect(atlases, groups, group_of, rect_of, core_image, core_images, c, mi, &rect,
+							  &image)) {
 				/* This material doesn't author this channel — clear
 				 * the binding entirely so cgltf_write emits no
 				 * texture reference. The FS falls back to the
@@ -1196,18 +1202,18 @@ bool aeron_gltf_cook_data_lazy(cgltf_data* data, const char* source_label,
 	/* Swap in the new arrays. The originals are released by
 	 * cgltf_free(data) below — we leak nothing, the new arrays we
 	 * own are freed at the cleanup label. */
-	cgltf_buffer_view* orig_bvs             = data->buffer_views;
-	cgltf_image*       orig_imgs            = data->images;
-	cgltf_texture*     orig_texs            = data->textures;
-	cgltf_sampler*     orig_smps            = data->samplers;
-	size_t             orig_bvs_count       = data->buffer_views_count;
-	size_t             orig_imgs_count      = data->images_count;
-	size_t             orig_texs_count      = data->textures_count;
-	size_t             orig_smps_count      = data->samplers_count;
-	char**             orig_required        = data->extensions_required;
-	size_t             orig_required_count  = data->extensions_required_count;
-	char**             orig_used            = data->extensions_used;
-	size_t             orig_used_count      = data->extensions_used_count;
+	cgltf_buffer_view* orig_bvs            = data->buffer_views;
+	cgltf_image*       orig_imgs           = data->images;
+	cgltf_texture*     orig_texs           = data->textures;
+	cgltf_sampler*     orig_smps           = data->samplers;
+	size_t             orig_bvs_count      = data->buffer_views_count;
+	size_t             orig_imgs_count     = data->images_count;
+	size_t             orig_texs_count     = data->textures_count;
+	size_t             orig_smps_count     = data->samplers_count;
+	char**             orig_required       = data->extensions_required;
+	size_t             orig_required_count = data->extensions_required_count;
+	char**             orig_used           = data->extensions_used;
+	size_t             orig_used_count     = data->extensions_used_count;
 
 	data->buffer_views       = new_bvs;
 	data->buffer_views_count = new_bv_n;

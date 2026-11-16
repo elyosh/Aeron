@@ -53,7 +53,8 @@ void AeronSceneBloom_Destroy(AeronSceneBloom* b);
  * when dimensions differ from creation or recording fails. */
 typedef int (*AeronSceneBloomExtraFn)(AeronRenderPass* pass, int target_w, int target_h, void* userdata);
 int AeronSceneBloom_Apply(AeronSceneBloom* b, struct AeronCommandBuffer* cmd, AeronTexture* flight_color_rt,
-						  int rt_w, int rt_h, int scissor_max_y, AeronSceneBloomExtraFn extra, void* userdata);
+						  int rt_w, int rt_h, int scissor_max_y, AeronSceneBloomExtraFn extra,
+						  void* userdata);
 
 /* Borrow the bloom mip0 texture — sampled by the final present pass
  * (scene_tonemap.frag) at fragment slot t1. */

@@ -65,8 +65,8 @@ AeronTexture* aeron_scene_upload_rgba8(AeronCommandBuffer* cmd, const uint8_t* p
 			   averaged in linear light too. */
 			levels[mip + 1] =
 				format == AERON_TEXTURE_FORMAT_RGBA8_SRGB || format == AERON_TEXTURE_FORMAT_BGRA8_SRGB
-					? Aeron_ImageDownsampleSrgbRgba8(uploads[mip].pixels, level_width, level_height, &level_width,
-													 &level_height)
+					? Aeron_ImageDownsampleSrgbRgba8(uploads[mip].pixels, level_width, level_height,
+													 &level_width, &level_height)
 					: Aeron_ImageDownsampleRgba8(uploads[mip].pixels, level_width, level_height, &level_width,
 												 &level_height);
 			if (!levels[mip + 1])

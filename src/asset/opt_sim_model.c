@@ -84,8 +84,10 @@ static bool same_position(const AeronFlightVec3* a, const AeronFlightVec3* b) {
 		   float_bits(a->z) == float_bits(b->z);
 }
 
-uint32_t Aeron_FlightTopologyDeduplicate(const AeronFlightTopology* topology, uint32_t* remap, uint32_t* unique) {
-	if (!topology || !topology->position_count || !remap || !unique || topology->position_count > UINT32_MAX / 4)
+uint32_t Aeron_FlightTopologyDeduplicate(const AeronFlightTopology* topology, uint32_t* remap,
+										 uint32_t* unique) {
+	if (!topology || !topology->position_count || !remap || !unique ||
+		topology->position_count > UINT32_MAX / 4)
 		return 0;
 	uint32_t capacity = 16;
 	while (capacity < topology->position_count * 2)
@@ -101,9 +103,9 @@ uint32_t Aeron_FlightTopologyDeduplicate(const AeronFlightTopology* topology, ui
 		for (;;) {
 			const uint32_t entry = table[slot];
 			if (entry == UINT32_MAX) {
-				table[slot]            = unique_count;
-				unique[unique_count]   = index;
-				remap[index]           = unique_count++;
+				table[slot]          = unique_count;
+				unique[unique_count] = index;
+				remap[index]         = unique_count++;
 				break;
 			}
 			if (same_position(&topology->positions[unique[entry]], position)) {
@@ -224,21 +226,22 @@ static bool mesh_bvh_and_sample(const AeronFlightComponent* component, uint32_t 
 	if (!sample_count)
 		return true;
 	*sample = malloc((size_t)sample_count * sizeof **sample);
-	return (*sample && Aeron_FlightTopologySample(&component->topology, unique, unique_count, sample_count, *sample) ==
-						   sample_count) ||
+	return (*sample && Aeron_FlightTopologySample(&component->topology, unique, unique_count, sample_count,
+												  *sample) == sample_count) ||
 		   component_error(error, error_size, component_index, "vertex sampling failed", NULL);
 }
 
-static bool build_mesh(const AeronFlightModel* model, uint32_t component_index, const AeronOptSimOptions* options,
-					   AeronOptSimMesh* mesh, char* error, size_t error_size) {
-	const AeronFlightComponent* component = &model->components[component_index];
-	const AeronFlightTopology*  topology  = &component->topology;
-	const uint32_t              positions = topology->position_count;
-	bool                        ok        = false;
-	uint32_t*                   remap     = malloc((size_t)positions * sizeof *remap);
-	uint32_t*                   unique    = malloc((size_t)positions * sizeof *unique);
-	uint32_t*                   final     = NULL;
-	uint32_t*                   sample    = NULL;
+static bool build_mesh(const AeronFlightModel* model, uint32_t component_index,
+					   const AeronOptSimOptions* options, AeronOptSimMesh* mesh, char* error,
+					   size_t error_size) {
+	const AeronFlightComponent* component  = &model->components[component_index];
+	const AeronFlightTopology*  topology   = &component->topology;
+	const uint32_t              positions  = topology->position_count;
+	bool                        ok         = false;
+	uint32_t*                   remap      = malloc((size_t)positions * sizeof *remap);
+	uint32_t*                   unique     = malloc((size_t)positions * sizeof *unique);
+	uint32_t*                   final      = NULL;
+	uint32_t*                   sample     = NULL;
 	uint32_t*                   first_face = NULL;
 	double*                     normal_sum = NULL;
 	if (!remap || !unique) {
@@ -252,8 +255,8 @@ static bool build_mesh(const AeronFlightModel* model, uint32_t component_index, 
 	}
 	const uint32_t sample_count =
 		options->vertex_sample_count < unique_count ? options->vertex_sample_count : unique_count;
-	if (!mesh_bvh_and_sample(component, component_index, unique_count, unique, sample_count, mesh, &sample, error,
-							 error_size))
+	if (!mesh_bvh_and_sample(component, component_index, unique_count, unique, sample_count, mesh, &sample,
+							 error, error_size))
 		goto done;
 	AeronFaceBvh_ScaleBounds(mesh->bvh, AERON_OPT_SIM_UNITS_PER_METER);
 
@@ -277,7 +280,8 @@ static bool build_mesh(const AeronFlightModel* model, uint32_t component_index, 
 	mesh->faces = topology->face_count ? malloc((size_t)topology->face_count * sizeof *mesh->faces) : NULL;
 	normal_sum  = calloc((size_t)unique_count * 3, sizeof *normal_sum);
 	first_face  = malloc((size_t)unique_count * sizeof *first_face);
-	if (!mesh->vertices || !mesh->normals || (topology->face_count && !mesh->faces) || !normal_sum || !first_face)
+	if (!mesh->vertices || !mesh->normals || (topology->face_count && !mesh->faces) || !normal_sum ||
+		!first_face)
 		goto oom;
 	memset(first_face, 0xff, (size_t)unique_count * sizeof *first_face);
 	for (uint32_t index = 0; index < unique_count; ++index)
@@ -293,18 +297,18 @@ static bool build_mesh(const AeronFlightModel* model, uint32_t component_index, 
 			goto done;
 		}
 		copy_vec(n, out->normal);
-		out->vertex_index[3] = -1;
-		const AeronFlightVec3* a = &topology->positions[face->indices[0]];
-		const AeronFlightVec3* b = &topology->positions[face->indices[1]];
-		const AeronFlightVec3* c = &topology->positions[face->indices[2]];
-		const double ab[3] = { (double)b->x - a->x, (double)b->y - a->y, (double)b->z - a->z };
-		const double ac[3] = { (double)c->x - a->x, (double)c->y - a->y, (double)c->z - a->z };
-		const double cross[3] = { ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2],
-								  ab[0] * ac[1] - ab[1] * ac[0] };
+		out->vertex_index[3]            = -1;
+		const AeronFlightVec3* a        = &topology->positions[face->indices[0]];
+		const AeronFlightVec3* b        = &topology->positions[face->indices[1]];
+		const AeronFlightVec3* c        = &topology->positions[face->indices[2]];
+		const double           ab[3]    = { (double)b->x - a->x, (double)b->y - a->y, (double)b->z - a->z };
+		const double           ac[3]    = { (double)c->x - a->x, (double)c->y - a->y, (double)c->z - a->z };
+		const double           cross[3] = { ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2],
+											ab[0] * ac[1] - ab[1] * ac[0] };
 		const double area = 0.5 * sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
 		for (int corner = 0; corner < 3; ++corner) {
-			const uint32_t vertex       = final[remap[face->indices[corner]]];
-			out->vertex_index[corner]   = (int32_t)vertex;
+			const uint32_t vertex     = final[remap[face->indices[corner]]];
+			out->vertex_index[corner] = (int32_t)vertex;
 			normal_sum[vertex * 3 + 0] += area * n->x;
 			normal_sum[vertex * 3 + 1] += area * n->y;
 			normal_sum[vertex * 3 + 2] += area * n->z;
@@ -419,7 +423,8 @@ bool Aeron_OptSimModelBuild(const AeronFlightModel* model, const AeronOptSimOpti
 	if (!out)
 		return false;
 	memset(out, 0, sizeof *out);
-	if (!model || !options || !model->component_count || options->vertex_sample_count > AERON_FACE_BVH_SAMPLE_MAX ||
+	if (!model || !options || !model->component_count ||
+		options->vertex_sample_count > AERON_FACE_BVH_SAMPLE_MAX ||
 		(options->trailing_box != AERON_OPT_TRAILING_BOX_DESCRIPTOR &&
 		 options->trailing_box != AERON_OPT_TRAILING_BOX_GEOMETRY))
 		return sim_error(error, error_size, "invalid OPT simulation model arguments");

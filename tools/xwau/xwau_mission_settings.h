@@ -56,20 +56,20 @@ typedef struct XwauSettingsConfig {
 	bool engine_sound; /* hook_engine_sound.dll */
 	/* hook_opt_limit.dll, with its [EngineGlows] feature: the hook also
 	 * hides the glows of destroyed meshes. */
-	bool      opt_limit_engine_glows;
+	bool opt_limit_engine_glows;
 	/* hook_weapon_color.dll, with WeaponSwitchBasedOnIff, and its global
 	 * value. */
-	bool      weapon_switch;
-	bool      weapon_switch_by_iff;
+	bool weapon_switch;
+	bool weapon_switch_by_iff;
 	/* hook_mission_tie.dll with stats profiles: a craft under attack compares
 	 * the craft's own top speeds. */
-	bool      mission_tie_stats;
+	bool mission_tie_stats;
 	/* hook_weapon_rate.dll with weapon profiles: a base laser fires only
 	 * with the decharge rate. */
 	bool weapon_rate_fire_check;
 	/* hook_weapon_rate.dll that reads mesh states: starships don't fire
 	 * from destroyed racks. */
-	bool      weapon_rate_rack_check;
+	bool weapon_rate_rack_check;
 	/* hook_weapon_rate.dll with warhead pools, which also lifts the cap of 9
 	 * warheads in a player's rack. */
 	bool weapon_rate_slot_cap;
@@ -88,22 +88,22 @@ typedef struct XwauSettingsConfig {
 	bool gunner_selected_group;
 	/* hook_engine_sound.dll with starship ambient sounds, and its
 	 * AreStarshipAmbientEnabled setting. */
-	bool      starship_ambient;
+	bool starship_ambient;
 	/* hook_jamming.dll, and its IsJammingEnabled setting. */
-	bool      jamming;
-	bool      jamming_enabled;
+	bool jamming;
+	bool jamming_enabled;
 	/* hook_weapon_type.dll, and whether its build also changes the missile
 	 * defense and the rack count. */
-	bool      weapon_type;
-	bool      weapon_type_missiles;
+	bool weapon_type;
+	bool weapon_type_missiles;
 	/* hook_crafts_count.dll, turned on, with the patch that lets the fly-by
 	 * sounds of several craft play at once. */
-	bool      crafts_count_sounds;
+	bool crafts_count_sounds;
 	/* hook_pilot.dll with the hangar droid hooks: the droids move the parts
 	 * that their model lists, and no others. */
-	bool      pilot_hangar_droids;
-	bool      warhead_collision_damage;
-	bool      damage_through_shields;
+	bool pilot_hangar_droids;
+	bool warhead_collision_damage;
+	bool damage_through_shields;
 	/* hook_mission_tie's IsMissionRanksModifierEnabled: the difficulty
 	 * changes the AI ranks at mission load, as in the original game. */
 	bool      ranks_modifier;

@@ -44,7 +44,7 @@
 
 /* Host-provided logs (SDL3's SDL_Log and SDL_LogVerbose; standalone tools
  * stub them). SDL's application log category is 0. */
-extern void SDL_Log(const char* fmt, ...);
+extern void      SDL_Log(const char* fmt, ...);
 extern void      SDL_LogVerbose(int category, const char* fmt, ...);
 static const int k_log_category_application = 0;
 
@@ -188,13 +188,13 @@ static bool read_markings(const cgltf_data* data, const char* source_label, Aero
 		if (root->extensions[e].name && root->extensions[e].data &&
 			strcmp(root->extensions[e].name, AERON_FLIGHT_MODEL_EXTENSION) == 0)
 			json = root->extensions[e].data;
-	cJSON* extension = json ? cJSON_Parse(json) : NULL;
-	const cJSON* markings = cJSON_GetObjectItemCaseSensitive(extension, "markings");
-	bool ok = !markings || (cJSON_IsArray(markings) && cJSON_GetArraySize(markings) <= 256);
-	const uint32_t count = ok && markings ? (uint32_t)cJSON_GetArraySize(markings) : 0u;
+	cJSON*         extension = json ? cJSON_Parse(json) : NULL;
+	const cJSON*   markings  = cJSON_GetObjectItemCaseSensitive(extension, "markings");
+	bool           ok        = !markings || (cJSON_IsArray(markings) && cJSON_GetArraySize(markings) <= 256);
+	const uint32_t count     = ok && markings ? (uint32_t)cJSON_GetArraySize(markings) : 0u;
 	if (ok && count) {
-		out->markings = (uint32_t*)malloc(count * sizeof *out->markings);
-		ok            = out->markings != NULL;
+		out->markings      = (uint32_t*)malloc(count * sizeof *out->markings);
+		ok                 = out->markings != NULL;
 		const cJSON* entry = NULL;
 		cJSON_ArrayForEach(entry, markings) {
 			if (!ok)
@@ -280,13 +280,14 @@ static bool read_atlas_texture(const cgltf_data* data, const cgltf_texture* text
 	const cJSON* source  = cJSON_GetObjectItemCaseSensitive(object, "source");
 	const cJSON* layer   = cJSON_GetObjectItemCaseSensitive(object, "layer");
 	const cJSON* max_lod = cJSON_GetObjectItemCaseSensitive(object, "maxLod");
-	const bool   ok =
-		cJSON_IsNumber(source) && source->valuedouble >= 0.0 && source->valuedouble < (double)data->images_count &&
-		source->valuedouble == floor(source->valuedouble) && cJSON_IsNumber(layer) && layer->valuedouble >= 0.0 &&
-		layer->valuedouble <= AERON_GLTF_ATLAS_MAX_PAGE && layer->valuedouble == floor(layer->valuedouble) &&
-		(!max_lod || (cJSON_IsNumber(max_lod) && max_lod->valuedouble >= 0.0 &&
-					  max_lod->valuedouble < AERON_GLTF_ATLAS_UNCLAMPED_LOD &&
-					  max_lod->valuedouble == floor(max_lod->valuedouble)));
+	const bool   ok      = cJSON_IsNumber(source) && source->valuedouble >= 0.0 &&
+						   source->valuedouble < (double)data->images_count &&
+						   source->valuedouble == floor(source->valuedouble) && cJSON_IsNumber(layer) &&
+						   layer->valuedouble >= 0.0 && layer->valuedouble <= AERON_GLTF_ATLAS_MAX_PAGE &&
+						   layer->valuedouble == floor(layer->valuedouble) &&
+						   (!max_lod || (cJSON_IsNumber(max_lod) && max_lod->valuedouble >= 0.0 &&
+										 max_lod->valuedouble < AERON_GLTF_ATLAS_UNCLAMPED_LOD &&
+										 max_lod->valuedouble == floor(max_lod->valuedouble)));
 	if (ok) {
 		out->image   = (uint32_t)source->valuedouble;
 		out->layer   = (uint32_t)layer->valuedouble;
@@ -298,7 +299,9 @@ static bool read_atlas_texture(const cgltf_data* data, const cgltf_texture* text
 
 /* Copies image `image`'s KTX2 bytes into `out`, with its layer count. */
 static bool copy_image_ktx2(const cgltf_image* image, AeronGltfChannelKtx2* out, uint32_t* layers) {
-	static const uint8_t kIdentifier[12] = { 0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, '\r', '\n', 0x1A, '\n' };
+	static const uint8_t kIdentifier[12] = {
+		0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, '\r', '\n', 0x1A, '\n'
+	};
 	const cgltf_buffer_view* view = image->buffer_view;
 	if (!view || !view->buffer || !view->buffer->data || view->size < 48)
 		return false;
@@ -339,7 +342,8 @@ static bool mark_atlas_images(const cgltf_data* data, const cgltf_material* m, A
 		if (!tv || !tv->texture)
 			continue;
 		if (!read_atlas_texture(data, tv->texture, &texture)) {
-			SDL_Log("[flight_gltf] '%s': a texture has no AERON_flight_model_cooked image and page (not a cooked model)",
+			SDL_Log("[flight_gltf] '%s': a texture has no AERON_flight_model_cooked image and page (not a "
+					"cooked model)",
 					source_label);
 			return false;
 		}
@@ -375,8 +379,8 @@ static bool read_atlases(const cgltf_data* data, const char* source_label, Aeron
 			ok = mark_atlas_images(data, p->material, atlas, own, uses, 0, true, source_label);
 			for (size_t k = 0; ok && k < p->mappings_count; k++)
 				ok = p->mappings[k].variant >= variants ||
-					 mark_atlas_images(data, p->mappings[k].material, atlas, own, uses, p->mappings[k].variant,
-									   false, source_label);
+					 mark_atlas_images(data, p->mappings[k].material, atlas, own, uses,
+									   p->mappings[k].variant, false, source_label);
 		}
 	}
 	bool own_channel[AERON_GLTF_CHANNEL_COUNT] = { false };
@@ -414,7 +418,7 @@ static bool read_atlases(const cgltf_data* data, const char* source_label, Aeron
 		out->groups              = grown;
 		AeronGltfVariantGroup* g = &out->groups[out->group_count];
 		memset(g, 0, sizeof *g);
-		g->channel = (uint32_t)c;
+		g->channel  = (uint32_t)c;
 		g->variants = (uint32_t*)malloc((variants ? variants : 1) * sizeof *g->variants);
 		ok          = g->variants && copy_image_ktx2(&data->images[i], &g->ktx2, &g->layers);
 		out->group_count++;
@@ -848,7 +852,8 @@ static bool read_damage_alternative(const cJSON* json, const char* library, Aero
 			return false;
 		out->offset_mode = AERON_ANIM_OFFSET_INSIDE;
 	} else if (offset) {
-		if (!cJSON_IsObject(offset) || !json_floats(cJSON_GetObjectItemCaseSensitive(offset, "min"), out->offset, 2) ||
+		if (!cJSON_IsObject(offset) ||
+			!json_floats(cJSON_GetObjectItemCaseSensitive(offset, "min"), out->offset, 2) ||
 			!json_floats(cJSON_GetObjectItemCaseSensitive(offset, "max"), out->offset + 2, 2))
 			return false;
 		out->offset_mode = AERON_ANIM_OFFSET_RANGE;
@@ -1041,8 +1046,8 @@ static bool read_animation(const cJSON* books, AeronGltfModel* model, FlipbookCa
 						   AeronGltfMaterial* out, const char* source_label, uint32_t material_index) {
 	if (!books)
 		return true;
-	const int    count = cJSON_IsArray(books) ? cJSON_GetArraySize(books) : -1;
-	bool         valid = count >= 0;
+	const int      count      = cJSON_IsArray(books) ? cJSON_GetArraySize(books) : -1;
+	bool           valid      = count >= 0;
 	const uint32_t first_book = model->flipbook_count, first_frame = model->flipbook_frame_count;
 	bool           oom = false;
 	for (int i = 0; valid && i < count; i++)
@@ -1122,6 +1127,7 @@ static uint32_t primitive_used_vertices(const cgltf_primitive* p, const cgltf_ac
 	}
 	return count;
 }
+
 static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node* node,
 									  uint16_t component_index, uint32_t prim_id, AeronGltfVertex* verts,
 									  uint32_t* indices, uint32_t* voff_io, uint32_t* ioff_io) {
@@ -1186,10 +1192,10 @@ static bool append_primitive_vertices(const cgltf_primitive* p, const cgltf_node
 		transform_direction(matrix, &tangents[i * 4], transformed);
 		const float tangent[4] = { transformed[0], transformed[1], transformed[2], tangents[i * 4 + 3] };
 		gltf_to_aeron_tangent(tangent, v->tangent);
-		v->uv[0]      = uvs[i * 2 + 0];
-		v->uv[1]      = uvs[i * 2 + 1];
-		v->component  = (float)component_index;
-		v->prim_id    = prim_id;
+		v->uv[0]     = uvs[i * 2 + 0];
+		v->uv[1]     = uvs[i * 2 + 1];
+		v->component = (float)component_index;
+		v->prim_id   = prim_id;
 	}
 	free(positions);
 	free(normals);
@@ -1238,8 +1244,8 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	if (!read_variants(data, source_label, out) || !read_atlases(data, source_label, out, &atlas) ||
 		!Aeron_FlightTagGroupsBuild(data, source_label, &out->tag_groups))
 		goto cleanup;
-	uint32_t   energy_default       = 0;
-	const bool has_energy_default   = read_energy_default(data, source_label, &energy_default);
+	uint32_t   energy_default     = 0;
+	const bool has_energy_default = read_energy_default(data, source_label, &energy_default);
 
 	/* ---- Materials (factors + per-channel UV transform) ----------- */
 	if (data->materials_count > AERON_GLTF_MAX_MATERIALS) {
@@ -1251,13 +1257,14 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 		out->materials = (AeronGltfMaterial*)calloc(data->materials_count, sizeof *out->materials);
 		if (!out->materials)
 			goto cleanup;
-		out->material_count = (uint32_t)data->materials_count;
+		out->material_count                   = (uint32_t)data->materials_count;
 		uint32_t         screen_rect_capacity = 0;
 		FlipbookCapacity flipbook_capacity    = { 0 };
 		for (uint32_t i = 0; i < out->material_count; i++) {
 			const cgltf_material* m = &data->materials[i];
 			if (!read_material(data, &atlas, m, &out->materials[i])) {
-				SDL_Log("[flight_gltf] '%s' material %u has an invalid alpha state or texture", source_label, i);
+				SDL_Log("[flight_gltf] '%s' material %u has an invalid alpha state or texture", source_label,
+						i);
 				goto cleanup;
 			}
 			cJSON*       object = flight_model_object(m->extensions, m->extensions_count);
@@ -1283,7 +1290,8 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			 * the PBR shader leaves them transparent when hidden: only the
 			 * blend range can draw them. */
 			AeronGltfMaterial* material = &out->materials[i];
-			if ((material->screen_flags & (AERON_GLTF_SCREEN_HOLOGRAM | AERON_GLTF_SCREEN_TRANSPARENT)) != 0 &&
+			if ((material->screen_flags & (AERON_GLTF_SCREEN_HOLOGRAM | AERON_GLTF_SCREEN_TRANSPARENT)) !=
+					0 &&
 				material->alpha_mode != AERON_GLTF_ALPHA_BLEND) {
 				SDL_Log("[flight_gltf] '%s' material %u: hologram or transparent screen drawn as BLEND",
 						source_label, i);
@@ -1387,7 +1395,8 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 				if (mp->variant < out->variant_count) {
 					uint32_t mat = mp->material ? (uint32_t)cgltf_material_index(data, mp->material)
 												: AERON_GLTF_NO_MATERIAL;
-					out->prim_variant_material[(size_t)prim_id * out->variant_columns + mp->variant + 1u] = mat;
+					out->prim_variant_material[(size_t)prim_id * out->variant_columns + mp->variant + 1u] =
+						mat;
 				}
 			}
 			prim_id++;
@@ -1405,13 +1414,13 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			goto cleanup;
 		}
 		for (uint32_t column = 1; column < out->variant_columns; ++column) {
-			const uint32_t material =
-				out->prim_variant_material[(size_t)pid * out->variant_columns + column];
+			const uint32_t material = out->prim_variant_material[(size_t)pid * out->variant_columns + column];
 			const AeronGltfAlphaMode mode = material_alpha_mode(out, material);
 			if ((int)mode < 0 || mode != default_mode) {
 				SDL_Log("[flight_gltf] '%s' primitive %u variant %u changes alpha class "
 						"(material %u mode %d -> material %u mode %d)",
-						source_label, pid, column - 1u, default_material, (int)default_mode, material, (int)mode);
+						source_label, pid, column - 1u, default_material, (int)default_mode, material,
+						(int)mode);
 				goto cleanup;
 			}
 		}
@@ -1429,9 +1438,8 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 	out->mask_screen_index_count   = 0;
 	out->blend_screen_index_count  = 0;
 	if (out->index_count > 0) {
-		uint32_t* sorted = (uint32_t*)malloc((size_t)out->index_count * sizeof *sorted);
-		uint8_t*  prim_screen =
-			(uint8_t*)malloc(out->total_prim_count ? out->total_prim_count : 1u);
+		uint32_t* sorted      = (uint32_t*)malloc((size_t)out->index_count * sizeof *sorted);
+		uint8_t*  prim_screen = (uint8_t*)malloc(out->total_prim_count ? out->total_prim_count : 1u);
 		if (!sorted || !prim_screen) {
 			free(sorted);
 			free(prim_screen);
@@ -1439,6 +1447,7 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 		}
 		for (uint32_t pid = 0; pid < out->total_prim_count; ++pid)
 			prim_screen[pid] = primitive_is_screen(out, pid);
+
 		/* screen: 0 = no screen material, 1 = screen. */
 		static const struct {
 			AeronGltfAlphaMode mode;
@@ -1447,7 +1456,9 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 			{ AERON_GLTF_ALPHA_OPAQUE, 0 }, { AERON_GLTF_ALPHA_OPAQUE, 1 }, { AERON_GLTF_ALPHA_MASK, 0 },
 			{ AERON_GLTF_ALPHA_MASK, 1 },   { AERON_GLTF_ALPHA_BLEND, 0 },  { AERON_GLTF_ALPHA_BLEND, 1 },
 		};
+
 		enum { CLASS_COUNT = sizeof classes / sizeof classes[0] };
+
 		uint32_t w = 0;
 		uint32_t starts[CLASS_COUNT + 1];
 		for (int c = 0; c < CLASS_COUNT; ++c) {

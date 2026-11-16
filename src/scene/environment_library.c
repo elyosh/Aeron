@@ -160,7 +160,7 @@ static int32_t acquire_texture(AeronEnvironmentLibrary* library, AeronCommandBuf
 	EnvTexture* e = &list->items[list->count];
 	memset(e, 0, sizeof *e);
 	snprintf(e->path, sizeof e->path, "%s", path);
-	e->kind = kind;
+	e->kind                  = kind;
 	const EnvTexture* shared = reload ? NULL : find_texture(library->textures, library->texture_count, path);
 	if (shared && shared->texture && shared->kind == kind) {
 		*e = *shared;
@@ -256,7 +256,7 @@ static bool build_slot(AeronEnvironmentLibrary* library, AeronCommandBuffer* cmd
 	const char*    paths[4 + AERON_ENV_MAX_LIGHTS];
 	EnvTextureKind kinds[4 + AERON_ENV_MAX_LIGHTS];
 	int32_t        indices[4 + AERON_ENV_MAX_LIGHTS];
-	int            count = 0;
+	int            count   = 0;
 	int            diffuse = -1, specular = -1, radiance = -1, overlay = -1;
 	if (def->diffuse_path[0]) {
 		diffuse        = count;
@@ -387,7 +387,7 @@ static bool prepare_set(AeronEnvironmentLibrary* library, AeronCommandBuffer* cm
 				previous = &old_slots[j];
 		if (previous) {
 			slot->prepared.settings = previous->prepared.settings;
-			slot->overridden       = true;
+			slot->overridden        = true;
 			env_library_apply(library, slot);
 		} else {
 			env_library_reset(library, slot);

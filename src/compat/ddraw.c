@@ -494,7 +494,7 @@ static int DDShim_ClearRenderTargetColor(DDrawSurfaceShim* s, uint32_t fill) {
 	}
 	/* The clear below replaces any recorded one. */
 	s->staging_clear_pending = 0;
-	staging_cleared = DDShim_CreateRenderTargetStaging(s) && AeronSurface_Clear(s->cpu, fill);
+	staging_cleared          = DDShim_CreateRenderTargetStaging(s) && AeronSurface_Clear(s->cpu, fill);
 	if (g_ddClassicFlightRenderingSuppressed) {
 		if (staging_cleared) {
 			s->cpu_dirty = 1;

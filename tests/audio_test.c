@@ -1600,7 +1600,7 @@ static void test_silent_skip(void) {
 	Aeron_AudioSetDistanceModel(1.0f, 1.0f, 0.0f);
 	for (int m = 0; m < 5; ++m) {
 		const char*               name = modes[m].name;
-		size_t      at_with[4], at_without[4];
+		size_t                    at_with[4], at_without[4];
 		AeronAudioSpatialSettings settings;
 		memset(&settings, 0, sizeof settings);
 		settings.mode           = modes[m].mode;

@@ -279,8 +279,8 @@ void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pas
 		memset(&vertex_uniforms, 0, sizeof vertex_uniforms);
 		memcpy(vertex_uniforms.view_proj, scene->jittered_view_proj, sizeof vertex_uniforms.view_proj);
 		memcpy(vertex_uniforms.transform, overlay->transform, sizeof vertex_uniforms.transform);
-		vertex_uniforms.params[0]        = overlay->depth_bias;
-		vertex_uniforms.mesh_table_base  = overlay->mesh_table_base;
+		vertex_uniforms.params[0]             = overlay->depth_bias;
+		vertex_uniforms.mesh_table_base       = overlay->mesh_table_base;
 		vertex_uniforms.table_component_count = overlay->table_component_count;
 		Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_VERTEX, 0, &vertex_uniforms,
 							  sizeof vertex_uniforms);

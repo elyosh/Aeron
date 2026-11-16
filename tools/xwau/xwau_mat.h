@@ -218,7 +218,7 @@ typedef struct XwauSequence {
 	int           group, image;
 	float         fps;
 	float         intensity; /* used by all the group's frames */
-	XwauSeqFrame* frames; /* listed frames */
+	XwauSeqFrame* frames;    /* listed frames */
 	size_t        frame_count;
 	int           section; /* 0 for [Default], otherwise the 1-based order of the section */
 } XwauSequence;

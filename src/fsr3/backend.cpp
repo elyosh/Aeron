@@ -118,26 +118,26 @@ struct AeronFsr3Backend {
 	std::array<ResourceEntry, kResourceCount>               resources {};
 	std::array<QueuedJob, kJobCount>                        jobs {};
 	std::array<PipelineEntry*, FFX_FSR3UPSCALER_PASS_COUNT> pipelines {};
-	uint32_t                                                jobCount                  = 0;
-	uint64_t                                                ownedBytes                = 0;
-	AeronSampler*                                           linearSampler             = nullptr;
-	AeronSampler*                                           pointSampler              = nullptr;
-	AeronComputePipeline*                                   clearTexturePipeline      = nullptr;
-	AeronComputePipeline*                                   clearBufferPipeline       = nullptr;
+	uint32_t                                                jobCount                    = 0;
+	uint64_t                                                ownedBytes                  = 0;
+	AeronSampler*                                           linearSampler               = nullptr;
+	AeronSampler*                                           pointSampler                = nullptr;
+	AeronComputePipeline*                                   clearTexturePipeline        = nullptr;
+	AeronComputePipeline*                                   clearBufferPipeline         = nullptr;
 	AeronCommandBuffer*                                     initializationCommandBuffer = nullptr;
-	const char*                                             profileName               = "unavailable";
-	bool                                                    fp16                      = false;
-	bool                                                    waveSpd                   = false;
-	bool                                                    lanczosLut                = false;
-	const char*                                             atomicLayout              = "unavailable";
-	bool                                                    externalClearPlanLogged   = false;
-	bool                                                    redundantClearLogged      = false;
-	bool                                                    spdClearSuppressionLogged = false;
-	bool                                                    lastExecutionSucceeded    = false;
-	bool                                                    directHistory             = false;
-	AeronRenderTarget*                                      outputAliasTarget         = nullptr;
-	AeronRenderTarget*                                      borrowedOutputTarget      = nullptr;
-	AeronBuffer*                                            reconstructedDepth        = nullptr;
+	const char*                                             profileName                 = "unavailable";
+	bool                                                    fp16                        = false;
+	bool                                                    waveSpd                     = false;
+	bool                                                    lanczosLut                  = false;
+	const char*                                             atomicLayout                = "unavailable";
+	bool                                                    externalClearPlanLogged     = false;
+	bool                                                    redundantClearLogged        = false;
+	bool                                                    spdClearSuppressionLogged   = false;
+	bool                                                    lastExecutionSucceeded      = false;
+	bool                                                    directHistory               = false;
+	AeronRenderTarget*                                      outputAliasTarget           = nullptr;
+	AeronRenderTarget*                                      borrowedOutputTarget        = nullptr;
+	AeronBuffer*                                            reconstructedDepth          = nullptr;
 	ReconstructedDepthState reconstructedDepthState = ReconstructedDepthState::NeedsClear;
 	PersistentClearState    spdMipsClearState       = PersistentClearState::NeedsClear;
 	PersistentClearState    spdAtomicClearState     = PersistentClearState::NeedsClear;
@@ -454,8 +454,8 @@ static bool UploadInitialTexture(AeronFsr3Backend* backend, AeronTexture* textur
 	upload.raw_size = create.initData.type == FFX_RESOURCE_INIT_DATA_TYPE_BUFFER
 						  ? static_cast<uint32_t>(create.initData.size)
 						  : bytes;
-	const bool ok = source && backend->initializationCommandBuffer &&
-					Aeron_UploadTextureDataCmd(backend->initializationCommandBuffer, &upload) != 0;
+	const bool ok   = source && backend->initializationCommandBuffer &&
+					  Aeron_UploadTextureDataCmd(backend->initializationCommandBuffer, &upload) != 0;
 	std::free(repeated);
 	return ok;
 }
@@ -498,7 +498,7 @@ static FfxErrorCode CreateResource(FfxInterface* interfacePtr, const FfxCreateRe
 			}
 			if (!data || !backend->initializationCommandBuffer ||
 				!Aeron_UploadBufferDataCmd(backend->initializationCommandBuffer, entry.buffer, 0, data,
-										  desc.size)) {
+										   desc.size)) {
 				Aeron_DestroyBuffer(entry.buffer);
 				return FFX_ERROR_BACKEND_API_ERROR;
 			}
@@ -832,12 +832,13 @@ static bool ExecuteClear(AeronFsr3Backend* backend, AeronCommandBuffer* commandB
 		uint32_t       height   = target->description.height;
 		const uint32_t mipCount = static_cast<uint32_t>(Aeron_TextureGetMipCount(target->texture));
 		if (!target->clearPlanLogged) {
-			Aeron_LogVerbose("fsr3", "clear plan resource %u (%s): %ux%u, %u mips, %llu bytes%s", target->resourceId,
-					  target->name[0] ? target->name : "unnamed", width, height, mipCount,
-					  static_cast<unsigned long long>(target->bytes),
-					  IsSpdMipsResource(*target) ? (backend->waveSpd ? ", wave SPD clears mips 0-5"
-																	 : ", scalar SPD clears mips 0-2 and 5")
-												 : "");
+			Aeron_LogVerbose(
+				"fsr3", "clear plan resource %u (%s): %ux%u, %u mips, %llu bytes%s", target->resourceId,
+				target->name[0] ? target->name : "unnamed", width, height, mipCount,
+				static_cast<unsigned long long>(target->bytes),
+				IsSpdMipsResource(*target)
+					? (backend->waveSpd ? ", wave SPD clears mips 0-5" : ", scalar SPD clears mips 0-2 and 5")
+					: "");
 			target->clearPlanLogged = true;
 		}
 		for (uint32_t mip = 0; mip < mipCount; ++mip) {
@@ -875,7 +876,7 @@ static bool ExecuteClear(AeronFsr3Backend* backend, AeronCommandBuffer* commandB
 
 	if (!target->clearPlanLogged && (!target->dynamic || !backend->externalClearPlanLogged)) {
 		Aeron_LogVerbose("fsr3", "clear plan resource %u (%s): %u-byte buffer", target->resourceId,
-				  target->name[0] ? target->name : "unnamed", target->description.size);
+						 target->name[0] ? target->name : "unnamed", target->description.size);
 		if (target->dynamic) {
 			backend->externalClearPlanLogged = true;
 		}
@@ -1024,7 +1025,8 @@ static FfxErrorCode ExecuteJobs(FfxInterface* interfacePtr, FfxCommandList comma
 			case FFX_GPU_JOB_CLEAR_FLOAT: {
 				if (ClearIsSuperseded(*backend, index)) {
 					if (!backend->redundantClearLogged) {
-						Aeron_LogDebug("fsr3", "suppressed reset clear superseded before the first FSR dispatch");
+						Aeron_LogDebug("fsr3",
+									   "suppressed reset clear superseded before the first FSR dispatch");
 						backend->redundantClearLogged = true;
 					}
 					break;
@@ -1154,7 +1156,7 @@ bool AeronFsr3Backend_FinishInitialization(AeronFsr3Backend* backend) {
 	if (!backend || !backend->initializationCommandBuffer) {
 		return false;
 	}
-	AeronCommandBuffer* commandBuffer = backend->initializationCommandBuffer;
+	AeronCommandBuffer* commandBuffer    = backend->initializationCommandBuffer;
 	backend->initializationCommandBuffer = nullptr;
 	return Aeron_SubmitCommandBuffer(commandBuffer) != 0;
 }

@@ -333,23 +333,16 @@ static bool parse_overlay(const AeronConfigNode* map, const char* what, AeronEnv
 		 !read_vec3(overlay, overlay_what, "rotation_degrees", def->overlay_rotation_degrees, NULL, error)))
 		return false;
 	for (int i = 0; i < 3; ++i)
-		def->overlay_rotation_degrees[i] = AeronEnvironment_NormalizeDegrees(def->overlay_rotation_degrees[i]);
+		def->overlay_rotation_degrees[i] =
+			AeronEnvironment_NormalizeDegrees(def->overlay_rotation_degrees[i]);
 	return true;
 }
 
 static bool parse_definition(const char* name, const AeronConfigNode* map, AeronEnvironmentDefinition* def,
 							 AeronConfigError* error) {
 	static const char* const fields[] = {
-		"radiance",
-		"diffuse",
-		"diffuse_strength",
-		"specular",
-		"specular_strength",
-		"intensity",
-		"ambient_fill",
-		"rotation_degrees",
-		"directional_lights",
-		"overlay",
+		"radiance",  "diffuse",      "diffuse_strength", "specular",           "specular_strength",
+		"intensity", "ambient_fill", "rotation_degrees", "directional_lights", "overlay",
 	};
 
 	char what[160];
@@ -399,7 +392,8 @@ static bool parse_definition(const char* name, const AeronConfigNode* map, Aeron
 		(has_specular &&
 		 (!read_path(map, what, "specular", def->specular_path, sizeof def->specular_path, error) ||
 		  !read_number(map, what, "specular_strength", true, 0.0, 4.0, &def->specular_strength, error))) ||
-		(def->has_directional_lights && !parse_lights(map, def, error)) || !parse_overlay(map, what, def, error))
+		(def->has_directional_lights && !parse_lights(map, def, error)) ||
+		!parse_overlay(map, what, def, error))
 		return false;
 	for (uint32_t i = 0; has_radiance && i < def->light_count; ++i)
 		if (def->lights[i].visual == AERON_ENV_SUN_NONE)
@@ -413,7 +407,7 @@ bool AeronEnvironment_ParseDefinitions(const AeronConfigNode*          environme
 									   AeronEnvironmentDefinitionSet** out_set, AeronConfigError* error) {
 	if (!out_set)
 		return env_error(error, NULL, "no output set");
-	*out_set = NULL;
+	*out_set                           = NULL;
 	AeronEnvironmentDefinitionSet* set = calloc(1, sizeof *set);
 	if (!set)
 		return env_error(error, environments, "out of memory");
@@ -583,11 +577,11 @@ size_t AeronEnvironment_FormatDefinitionYaml(const AeronEnvironmentDefinition* d
 					(double)l->intensity, l->primary ? "true" : "false", l->casts_shadows ? "true" : "false",
 					(double)l->angular_radius_degrees, l->lens_flare ? "true" : "false");
 		if (l->visual == AERON_ENV_SUN_DISC) {
-			yaml_printf(
-				&y,
-				"        visual:\n          kind: disc\n          radiance_scale: %.9g\n          glow_radius_degrees: %.9g\n"
-				"          glow_strength: %.9g\n",
-				(double)l->radiance_scale, (double)l->glow_radius_degrees, (double)l->glow_strength);
+			yaml_printf(&y,
+						"        visual:\n          kind: disc\n          radiance_scale: %.9g\n          "
+						"glow_radius_degrees: %.9g\n"
+						"          glow_strength: %.9g\n",
+						(double)l->radiance_scale, (double)l->glow_radius_degrees, (double)l->glow_strength);
 		} else if (l->visual == AERON_ENV_SUN_SPRITE) {
 			yaml_printf(&y, "        visual:\n          kind: sprite\n          sprite: ");
 			yaml_string(&y, l->sprite_path);

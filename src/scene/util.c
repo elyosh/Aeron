@@ -89,12 +89,11 @@ AeronTexture* AeronSceneInternal_WhiteTexture(void) {
 		return NULL;
 	}
 	static const uint8_t white[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
-	if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) {
-			.texture  = s_whiteTexture,
-			.width    = 1,
-			.height   = 1,
-			.raw_data = white,
-			.raw_size = sizeof white })) {
+	if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) { .texture  = s_whiteTexture,
+															 .width    = 1,
+															 .height   = 1,
+															 .raw_data = white,
+															 .raw_size = sizeof white })) {
 		Aeron_DestroyTexture(s_whiteTexture);
 		s_whiteTexture = NULL;
 		Aeron_RequestFatalRendererError("shared scene texture upload");
@@ -123,8 +122,11 @@ AeronTexture* AeronSceneInternal_WhiteArrayTexture(void) {
 		return NULL;
 	}
 	static const uint8_t white[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
-	if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) {
-			.texture = s_whiteArrayTexture, .width = 1, .height = 1, .raw_data = white, .raw_size = sizeof white })) {
+	if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) { .texture  = s_whiteArrayTexture,
+															 .width    = 1,
+															 .height   = 1,
+															 .raw_data = white,
+															 .raw_size = sizeof white })) {
 		Aeron_DestroyTexture(s_whiteArrayTexture);
 		s_whiteArrayTexture = NULL;
 		Aeron_RequestFatalRendererError("shared scene texture upload");
@@ -255,12 +257,13 @@ int AeronSceneInternal_InstanceBox(const AeronSceneMeshInstance* instance, const
 		if (table && table->visibility_packed[row >> 2][row & 3] < 0.5f) {
 			continue;
 		}
-		const float(*model)[4] = shared_model;
-		const float(*reach)[3] = shared_reach;
+		const float (*model)[4] = shared_model;
+		const float (*reach)[3] = shared_reach;
 		float own_model[3][4];
 		float own_reach[3][3];
-		if (table && memcmp(table->rows[row], instance_box_identity_row, sizeof instance_box_identity_row) != 0) {
-			instance_box_model(instance->transform, (const float(*)[4])table->rows[row], own_model);
+		if (table &&
+			memcmp(table->rows[row], instance_box_identity_row, sizeof instance_box_identity_row) != 0) {
+			instance_box_model(instance->transform, (const float (*)[4])table->rows[row], own_model);
 			instance_box_reach(own_model, axes, own_reach);
 			model = own_model;
 			reach = own_reach;

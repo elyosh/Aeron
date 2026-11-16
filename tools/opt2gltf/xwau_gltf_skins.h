@@ -36,9 +36,9 @@ typedef struct XwauGltfSkins XwauGltfSkins;
  * Image files are named after `basename`. Returns NULL when out of memory
  * or when the skins are invalid. Both cases are reported. */
 XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, const XwauSkinVariants* skins,
-								   const char* const* skin_names, const OptGltfScreen* screens, int base_shade,
-								   const XwauGltfMaterial* materials, const XwauGltfAnim* anims,
-								   const XwauBaked* baked);
+								   const char* const* skin_names, const OptGltfScreen* screens,
+								   int base_shade, const XwauGltfMaterial* materials,
+								   const XwauGltfAnim* anims, const XwauBaked* baked);
 
 /* The skin layers of texture `texture` in layer mode, and their count. */
 const OptGltfSkinLayer* XwauGltfSkins_Layers(const XwauGltfSkins* skins, int32_t texture, size_t* count);

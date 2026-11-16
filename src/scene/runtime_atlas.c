@@ -78,8 +78,8 @@ bool Aeron_RuntimeAtlasBuild(AeronRuntimeAtlas* out, AeronCommandBuffer* cmd,
 			(float)images[index].width,
 			(float)images[index].height,
 		};
-		out->layout.ids[index]       = frames[index].id;
-		out->layout.pages[index]     = (int16_t)images[index].page;
+		out->layout.ids[index]            = frames[index].id;
+		out->layout.pages[index]          = (int16_t)images[index].page;
 		out->layout.size[index * 2]       = (float)frames[index].width;
 		out->layout.size[index * 2 + 1]   = (float)frames[index].height;
 		out->layout.offset[index * 2]     = (float)frames[index].anchor_x;

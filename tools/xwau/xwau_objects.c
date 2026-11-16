@@ -741,7 +741,7 @@ static bool write_craft_types(const char* dir, const XwauNames* names, const Xwa
 	bool*            writes  = calloc(CRAFT_TYPE_COUNT, sizeof *writes);
 	bool             ok      = changes && writes;
 	for (int c = 1; ok && c < CRAFT_TYPE_COUNT; ++c) {
-		const int t = mod->craft[c];
+		const int  t       = mod->craft[c];
 		const bool changed = craft_type_change(c, stock, mod, texts, &changes[c]);
 		/* XWAU can't show a craft type whose object type loads nothing. */
 		writes[c] = t < OBJECT_TYPE_COUNT && models[t] && changed;
@@ -845,7 +845,7 @@ static bool write_object_file(const char* path, const XwauNames* names, const Ch
 		Report(path, "can't be written");
 		return false;
 	}
-	const XwauGameType m = XwauGameTables_Type(mod, change->objectType);
+	const XwauGameType m          = XwauGameTables_Type(mod, change->objectType);
 	const XwauGameType s          = XwauGameTables_Type(stock, change->objectType);
 	const char*        stock_name = XwauNames_Name(&names->object_types, change->objectType);
 	const char*        name       = XwauNames_ObjectType(names, change->objectType);
@@ -1112,15 +1112,15 @@ bool XwauObjects_Write(const char* mod_root, const char* stock_game, const XwauG
 			change.model      = stock_model;
 			kept_models++;
 		}
-		models[t]                 = change.model;
-		change.genus              = s.genus != m.genus;
-		change.family             = s.family != m.family;
-		change.flags              = s.flags != m.flags;
-		change.missions           = (asset_changes & ASSET_MISSION_FLAGS) != 0;
-		change.alwaysLoaded       = (asset_changes & ASSET_ALWAYS_LOADED) != 0;
+		models[t]            = change.model;
+		change.genus         = s.genus != m.genus;
+		change.family        = s.family != m.family;
+		change.flags         = s.flags != m.flags;
+		change.missions      = (asset_changes & ASSET_MISSION_FLAGS) != 0;
+		change.alwaysLoaded  = (asset_changes & ASSET_ALWAYS_LOADED) != 0;
 		change.recordChanged = valid_record(m.record) &&
 							   record_differs(stock->records[change.stockRecord], mod->records[m.record]);
-		change.soundsLike = sounds_comparable ? sounds_like(stock, mod, t) : 0;
+		change.soundsLike    = sounds_comparable ? sounds_like(stock, mod, t) : 0;
 		if (change.soundsLike < 0) {
 			ReportUnsupported("object type sound cases that no stock object type has");
 			change.soundsLike = 0;

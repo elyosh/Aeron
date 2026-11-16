@@ -104,15 +104,15 @@ typedef struct OptGltfComponentSet {
  * own materials, and with s with variant `State s`, which must exist. `tag`,
  * when not NULL, is the light's AERON_flight_model tag. */
 typedef struct OptGltfLight {
-	uint32_t   mesh_index;
-	int32_t    state;
+	uint32_t    mesh_index;
+	int32_t     state;
 	const char* tag;
-	float      color[3];  /* linear RGB */
-	float      intensity; /* candela */
-	bool       placed;
-	opt_vec3_t position;
-	opt_vec3_t direction;
-	float      spot_angle; /* above 0, below pi/2; 0 for a point light */
+	float       color[3];  /* linear RGB */
+	float       intensity; /* candela */
+	bool        placed;
+	opt_vec3_t  position;
+	opt_vec3_t  direction;
+	float       spot_angle; /* above 0, below pi/2; 0 for a point light */
 } OptGltfLight;
 
 /* A hinge of a control: it turns about OPT axis `axis` (0 to 2 for X to Z)
@@ -209,7 +209,7 @@ typedef struct OptGltfMaterial {
 	const char*  json; /* the material's AERON_flight_model object (animations), or NULL */
 	/* Meshes that draw the material get tangents even without a normal map,
 	 * for a detail layer that bends the normal (in `json`). */
-	bool                    tangents;
+	bool tangents;
 	/* Its AERON_flight_model tags. A NULL entry has no tag. */
 	const char*             tags[OPT_GLTF_MATERIAL_TAGS];
 	const OptGltfSkinLayer* skins; /* its skin layers, written as `skins` */
@@ -301,21 +301,21 @@ typedef struct OptGltfVariants {
 
 typedef struct OptGltfScreenRect {
 	const char* source; /* the name of the game display that it shows */
-	float    dst[4]; /* u0, v0, u1, v1 in TEXCOORD_0. Swapped corners mirror the content. */
-	float    bg[3];  /* linear background colours */
-	float    highlight[3];
-	float    lock[3];
-	float    gain;   /* emissive multiplier of the rectangle's content */
-	uint32_t layers; /* OPT_GLTF_SCREEN_LAYER_* */
-	float    bar[3]; /* linear fill colour for OPT_GLTF_SCREEN_LAYER_BAR */
+	float       dst[4]; /* u0, v0, u1, v1 in TEXCOORD_0. Swapped corners mirror the content. */
+	float       bg[3];  /* linear background colours */
+	float       highlight[3];
+	float       lock[3];
+	float       gain;   /* emissive multiplier of the rectangle's content */
+	uint32_t    layers; /* OPT_GLTF_SCREEN_LAYER_* */
+	float       bar[3]; /* linear fill colour for OPT_GLTF_SCREEN_LAYER_BAR */
 } OptGltfScreenRect;
 
 typedef struct OptGltfScreen {
-	bool              present;
-	bool              transparent;
-	bool              always_visible;
-	bool              hologram;
-	bool              noisy;
+	bool present;
+	bool transparent;
+	bool always_visible;
+	bool hologram;
+	bool noisy;
 	/* The names of the 2D HUD areas that the game hides while the screen is
 	   visible. */
 	const char*       hide[OPT_GLTF_SCREEN_MAX_HIDE];

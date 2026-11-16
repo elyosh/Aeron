@@ -191,7 +191,8 @@ static void test_recenter(void) {
 
 	head.orientation = axis_turn(0, 0, 0, 0.0f);
 	AeronXr_LevelOrigin(&head, &origin);
-	check(same_rotation(origin.orientation, axis_turn(0, 1, 0, 0.0f)), "recentre: a level head gives no turn");
+	check(same_rotation(origin.orientation, axis_turn(0, 1, 0, 0.0f)),
+		  "recentre: a level head gives no turn");
 
 	/* Looking straight down: the forward vector has no direction on the
 	 * ground, so the yaw comes from the right vector. */

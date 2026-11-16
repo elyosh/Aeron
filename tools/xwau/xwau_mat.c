@@ -20,7 +20,7 @@ typedef struct XwauMatEntry {
 typedef struct XwauMatSection {
 	XwauSequence* items;
 	size_t        count;
-	int           order; /* 0 for [Default], otherwise the 1-based order of the section */
+	int           order;     /* 0 for [Default], otherwise the 1-based order of the section */
 	char          name[256]; /* the names in the header, joined with ", " */
 } XwauMatSection;
 
@@ -31,24 +31,24 @@ struct XwauMatFile {
 	/* The materials that name the file's surface tags (XwauMat_SurfaceRuleAt). */
 	const XwauMatParams* surfaces[XWAU_MAT_SURFACES_MAX];
 	size_t               surface_count;
-	XwauMatParams   slot0;
-	int             slot0_section; /* -1 without a [Default] section */
-	XwauMatEntry*   entries;
-	size_t          count;
-	size_t          cap;
-	XwauMatSection* sections;
-	size_t          section_count;
+	XwauMatParams        slot0;
+	int                  slot0_section; /* -1 without a [Default] section */
+	XwauMatEntry*        entries;
+	size_t               count;
+	size_t               cap;
+	XwauMatSection*      sections;
+	size_t               section_count;
 };
 
 void XwauMat_CodeDefaults(XwauMatParams* out) {
 	memset(out, 0, sizeof *out);
-	out->metallic     = 0.30f; /* DEFAULT_METALLIC */
-	out->intensity    = 0.25f; /* DEFAULT_SPEC_INT */
-	out->glossiness   = 0.02f; /* DEFAULT_GLOSSINESS */
-	out->nm_intensity = 0.5f;
-	out->specular_val = 0.0f; /* DEFAULT_SPEC_VALUE */
-	out->light_uv[0]  = 0.1f;
-	out->light_uv[1]  = 0.5f;
+	out->metallic           = 0.30f; /* DEFAULT_METALLIC */
+	out->intensity          = 0.25f; /* DEFAULT_SPEC_INT */
+	out->glossiness         = 0.02f; /* DEFAULT_GLOSSINESS */
+	out->nm_intensity       = 0.5f;
+	out->specular_val       = 0.0f; /* DEFAULT_SPEC_VALUE */
+	out->light_uv[0]        = 0.1f;
+	out->light_uv[1]        = 0.5f;
 	out->joystick_max_yaw   = 10.0f;
 	out->joystick_max_pitch = -10.0f;
 	out->lava_speed         = 1.0f;
@@ -948,7 +948,7 @@ static int open_section(XwauMatFile* file, char (*names)[XWAU_MAT_NAME_MAX], siz
 	bool is_default = false;
 	for (size_t i = 0; i < name_count; ++i)
 		is_default |= ascii_casecmp(names[i], "default") == 0;
-	section->order = is_default ? 0 : (*next_order)++;
+	section->order   = is_default ? 0 : (*next_order)++;
 	section->name[0] = 0;
 	for (size_t i = 0; i < name_count; ++i) {
 		const size_t length = strlen(section->name);

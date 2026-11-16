@@ -68,11 +68,11 @@ typedef struct AeronConfig {
 	size_t      window_icon_bmp_size;
 	/* Window size in logical points. <= 0 auto-sizes to ~90% of the
 	 * primary display's usable area, locked to the logical aspect. */
-	int                   window_width;
-	int                   window_height;
+	int window_width;
+	int window_height;
 	/* Create the window hidden: for offscreen tools that never present (the
 	 * GPU device still needs a window to claim). */
-	int window_hidden;
+	int                   window_hidden;
 	int                   logical_width;
 	int                   logical_height;
 	AeronPresentationMode presentation_mode;

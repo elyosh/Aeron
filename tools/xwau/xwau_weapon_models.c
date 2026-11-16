@@ -24,7 +24,7 @@ static bool read_value(const char* game, const XwauSection* section, const char*
 	size_t length = 0;
 	for (; value[length]; ++length)
 		path[length] = value[length] == '\\' ? '/' : value[length];
-	path[length] = '\0';
+	path[length]     = '\0';
 	const char* name = path + strlen("FlightModels/");
 	if (strncasecmp(path, "FlightModels/", strlen("FlightModels/")) != 0 || strchr(name, '/') ||
 		!EndsWithNoCase(name, ".opt")) {
@@ -43,17 +43,17 @@ static bool read_value(const char* game, const XwauSection* section, const char*
 	}
 	if (!Xwau_ModelKey(path, out, cap)) {
 		if (report)
-			Report(section->source, "%s = %s: the model name is too long. The shots keep their own model", key,
-				   value);
+			Report(section->source, "%s = %s: the model name is too long. The shots keep their own model",
+				   key, value);
 		return false;
 	}
 	return true;
 }
 
 bool XwauWeaponModels_Read(const char* game, const char* model, bool report, XwauWeaponModels* out) {
-	char         keys[XWAU_WEAPON_MODELS_COUNT][16];
-	const char*  known[XWAU_WEAPON_MODELS_COUNT + 1];
-	XwauSection  section;
+	char        keys[XWAU_WEAPON_MODELS_COUNT][16];
+	const char* known[XWAU_WEAPON_MODELS_COUNT + 1];
+	XwauSection section;
 	memset(out, 0, sizeof *out);
 	if (!XwauSection_ReadModel(game, model, "OptReplace", XWAU_RULES_CPP, &section))
 		return false;

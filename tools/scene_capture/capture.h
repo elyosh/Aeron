@@ -135,18 +135,18 @@ typedef struct CaptureGameScene {
 	CaptureBolts      bolts;
 	/* The game's small_objects settings, in pixels of a 1080-line view; 0 is
 	 * off (AeronScene_SetSmallInstanceCull, AeronScene_SetShadowCasterMinSize). */
-	float             small_prepass_min_size, small_draw_min_size, small_shadow_min_size;
+	float small_prepass_min_size, small_draw_min_size, small_shadow_min_size;
 	/* The game's model_lod.max_error, in pixels of a 1080-line view (0 is
 	 * off), and a level to force for comparisons (-1 for none). */
-	float             lod_max_error;
-	int               lod_force;
-	int               lod_tint; /* the debug tint by level, in builds with the debug UI */
-	CaptureLight      lights[CAPTURE_MAX_LIGHTS];
-	int               light_count;
+	float        lod_max_error;
+	int          lod_force;
+	int          lod_tint; /* the debug tint by level, in builds with the debug UI */
+	CaptureLight lights[CAPTURE_MAX_LIGHTS];
+	int          light_count;
 } CaptureGameScene;
 
 typedef struct CaptureConfig {
-	int    width, height, frames, reference_samples, quality;
+	int width, height, frames, reference_samples, quality;
 	/* How many views each frame is rendered into: 1, 2 for a stereo pair or
 	 * 3 for a surround setup. Each view is `width` by `height`. */
 	int    views;
@@ -242,8 +242,8 @@ int Fixture_RenderViews(Fixture* fixture, double time, FixtureViewFn on_view, vo
 AeronRenderTarget* Fixture_RenderViewAlone(Fixture* fixture, double time, int view);
 /* Compares a view rendered with the others (`shared`) with the same view
  * rendered alone, logs the result and writes it to frame_NNN_viewK_metrics. */
-int         Capture_CompareView(const CaptureConfig* config, int frame, int view, const float* shared,
-								const float* alone);
+int  Capture_CompareView(const CaptureConfig* config, int frame, int view, const float* shared,
+						 const float* alone);
 int  Capture_Read(AeronRenderTarget* target, int width, int height, uint16_t* staging, float* rgb);
 int  Capture_Write(const CaptureConfig* config, int frame, const char* name, const float* rgb);
 int  Capture_WriteImage(const CaptureConfig* config, int frame, const char* name, int width, int height,

@@ -85,8 +85,8 @@ bool EffectLibrary_Write(const char* tool, const char* out_dir, const char* name
 	channel_atlas_init(&layer, AERON_GLTF_COOK_CHANNEL_BASE_COLOR);
 	channel_atlas_init(&emissive, AERON_GLTF_COOK_CHANNEL_EMISSIVE);
 	for (size_t k = 0; ok && k < count; ++k) {
-		const size_t              i   = order[k];
-		const EffectLibraryImage* im  = &images[i];
+		const size_t              i        = order[k];
+		const EffectLibraryImage* im       = &images[i];
 		const bool                own_page = EffectLibrary_KindHasOwnPage(im->kind);
 		const int                 max      = im->max_size > 0 ? im->max_size
 											 : own_page       ? EFFECT_LIBRARY_DETAIL_MAX

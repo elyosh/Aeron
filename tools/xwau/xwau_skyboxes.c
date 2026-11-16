@@ -135,7 +135,7 @@ typedef struct SkyList {
 } SkyList;
 
 typedef struct SkyMission {
-	char      key[256]; /* "missions/1b0m1fw.tie" */
+	char      key[256];   /* "missions/1b0m1fw.tie" */
 	bool      death_star; /* a Death Star mission without [SkyBoxes] */
 	SkyRegion regions[SKY_REGIONS];
 	SkyList   disabled, enabled;
@@ -554,8 +554,8 @@ static void write_environments(const SkyState* st, TextBuffer* f) {
 				   "    directional_lights: []\n",
 				   SKY_DEATH_STAR_AMBIENT, SKY_DEATH_STAR_AMBIENT, SKY_DEATH_STAR_AMBIENT);
 	for (size_t i = 0; i < st->definition_count; ++i) {
-		const SkyDefinition* d       = &st->definitions[i];
-		const char*          key     = st->folders[d->folder].key;
+		const SkyDefinition* d   = &st->definitions[i];
+		const char*          key = st->folders[d->folder].key;
 		const float fill = clamp_value(d->ambient_min, 4.0f, "AmbientMin", d->name) * SKY_FILL_RADIANCE;
 		TextAppend(f,
 				   "  %s:\n"

@@ -185,8 +185,8 @@ typedef struct AeronVoiceJob {
 	double            step;
 	AeronVoiceFilters filters;
 	int               loop;
-	int    frames;
-	int    skip_silent;
+	int               frames;
+	int               skip_silent;
 	/* With HRTF: the data set (the job counts in hrtf_jobs while it uses
 	   it), the voice's direction, and whether its HRTF filtering starts from
 	   silence in this chunk. */
@@ -258,7 +258,7 @@ typedef struct AeronAudioSystem {
 	float              rolloff_factor;
 	float              doppler_factor;
 
-	int               out_channels;    /* of the device stream */
+	int out_channels; /* of the device stream */
 	/* The channel count of the device itself, read before the output opened
 	   it, or 0 if unknown. See Aeron_AudioOpenDevice. */
 	int               device_channels;
@@ -452,9 +452,9 @@ static void Aeron_AudioBalanceGains(float gain, float balance, float* out_l, flo
 typedef struct AeronVoiceMixTargets {
 	float             gain[AERON_AUDIO_MAX_CHANNELS];
 	AeronVoiceFilters filters;
-	int   hrtf;
-	float azimuth;
-	float elevation;
+	int               hrtf;
+	float             azimuth;
+	float             elevation;
 } AeronVoiceMixTargets;
 
 /* The unit vector from the listener to a positional voice, and its distance.
@@ -611,9 +611,9 @@ static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, int hrtf, Ae
 	memset(out->gain, 0, sizeof out->gain);
 	memset(&out->filters, 0, sizeof out->filters);
 	out->filters.lowpass = 1.0f;
-	out->hrtf      = 0;
-	out->azimuth   = 0.0f;
-	out->elevation = 0.0f;
+	out->hrtf            = 0;
+	out->azimuth         = 0.0f;
+	out->elevation       = 0.0f;
 	if (!voice->is3d) {
 		Aeron_AudioBalanceGains(voice->gain, voice->pan, &out->gain[0], &out->gain[1]);
 		return;
@@ -704,8 +704,8 @@ static void Aeron_AudioVoiceMixTargets(const AeronVoiceSlot* voice, int hrtf, Ae
 		atten *= 1.0f - (1.0f - AERON_AUDIO_REAR_GAIN) * behind;
 		/* The coefficient goes from 1 (no filter) at the side to the rear
 		   cutoff right behind, so the filter starts without a jump. */
-		float rear   = 1.0f - expf(-2.0f * 3.14159265358979323846f * AERON_AUDIO_REAR_CUTOFF_HZ /
-								   (float)AERON_AUDIO_DEVICE_RATE);
+		float rear           = 1.0f - expf(-2.0f * 3.14159265358979323846f * AERON_AUDIO_REAR_CUTOFF_HZ /
+										   (float)AERON_AUDIO_DEVICE_RATE);
 		out->filters.lowpass = 1.0f - (1.0f - rear) * behind;
 	}
 	Aeron_AudioEqualPowerPanGains(voice->gain * atten, pan, &out->gain[0], &out->gain[1]);
@@ -1168,7 +1168,7 @@ static void Aeron_AudioLimitFrame(AeronAudioLimiter* limiter, float* frame, int 
  *     comes back into range sounds the same.
  */
 static void Aeron_AudioRunJob(AeronVoiceJob* job, int channels) {
-	const int silent = Aeron_AudioVoiceSilent(&job->state, channels);
+	const int silent   = Aeron_AudioVoiceSilent(&job->state, channels);
 	const int filtered = job->filters.shelf || job->filters.lowpass != 1.0f;
 	if (!job->hrtf) {
 		if (silent && job->skip_silent && !filtered) {
@@ -1464,24 +1464,24 @@ static void Aeron_AudioMixChunk(int frames) {
 			Aeron_AudioVoiceMixedLocked(voice, clip, chunk_start, mixed);
 			continue;
 		}
-		AeronVoiceJob* job = &g_audio.jobs[jobs++];
-		job->voice         = (voice->gen << 16) | (uint16_t)v;
-		job->clip          = clip;
-		job->start_pos     = voice->state.pos;
-		job->step          = step;
+		AeronVoiceJob* job  = &g_audio.jobs[jobs++];
+		job->voice          = (voice->gen << 16) | (uint16_t)v;
+		job->clip           = clip;
+		job->start_pos      = voice->state.pos;
+		job->step           = step;
 		job->filters        = targets.filters;
-		job->loop          = voice->loop;
-		job->frames        = frames;
+		job->loop           = voice->loop;
+		job->frames         = frames;
 		job->skip_silent    = !g_audio.silent_skip_off;
 		job->slot           = v;
 		job->hrtf           = targets.hrtf ? hrtf : NULL;
 		job->azimuth        = targets.azimuth;
 		job->elevation      = targets.elevation;
 		job->hrtf_start     = !voice->state.hrtf_set;
-		job->state         = voice->state;
+		job->state          = voice->state;
 		job->state.hrtf_set = targets.hrtf;
-		job->mixed         = 0;
-		voice->job         = jobs;
+		job->mixed          = 0;
+		voice->job          = jobs;
 		g_audio.hrtf_jobs += targets.hrtf;
 		Aeron_AudioClipAddRef(clip);
 		++clip->job_refs;

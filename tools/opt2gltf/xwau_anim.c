@@ -397,7 +397,7 @@ static bool damage_json(XwauAnim* a, const XwauMatFile* mat, cJSON* object, cons
 	/* A line past the number of indexes is never shown in XWAU, so it is left
 	 * out. */
 	const size_t        alternatives = counts[0] * counts[1];
-	const XwauSequence* first = NULL;
+	const XwauSequence* first        = NULL;
 	for (int k = 0; k < 3 && !first; ++k)
 		if (src[k])
 			first = find_instance(src[k], kDamageEvents[k], 0);
@@ -423,8 +423,8 @@ static bool damage_json(XwauAnim* a, const XwauMatFile* mat, cJSON* object, cons
 		OptJson_Add(damage, "library", cJSON_CreateString(library)) &&
 		OptJson_Add(damage, "choice", cJSON_CreateString(choice)) &&
 		(strcmp(placement, choice) == 0 || OptJson_Add(damage, "placement", cJSON_CreateString(placement)));
-	cJSON*    list      = ok ? OptJson_AddArray(damage, "alternatives") : NULL;
-	ok                  = list != NULL;
+	cJSON* list = ok ? OptJson_AddArray(damage, "alternatives") : NULL;
+	ok          = list != NULL;
 	for (size_t n = 0; ok && n < alternatives; ++n) {
 		const XwauSequence* line[3];
 		bool                any = false;

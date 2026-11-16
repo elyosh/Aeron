@@ -149,13 +149,17 @@ int Capture_SaveConfig(const CaptureConfig* c) {
 			 "ssao: %s\nshadows: %s\nfixture: %s\nemissive_scale: %.9g\nbloom_enabled: %s\n"
 			 "exposure_ev100: %.9g\ncull: %s\nbackface_fill: %s\n",
 			 c->bloom_chart ? 1 : (c->game.enabled ? 7 : (c->model_count ? 6 : 3)), Aeron_RenderDriverName(),
-			 c->width, c->height,
-			 c->frames, c->fps, c->pan_speed, c->pan_direction, c->quality, c->shutter, c->shutter * .032,
-			 c->reference_samples, c->msaa_samples,
+			 c->width, c->height, c->frames, c->fps, c->pan_speed, c->pan_direction, c->quality, c->shutter,
+			 c->shutter * .032, c->reference_samples, c->msaa_samples,
 			 c->game.enabled && c->game.ssao.ssao_quality > 0 ? "on" : "off",
 			 c->game.enabled && c->game.shadows.enabled ? "on" : "off",
-			 c->game.enabled ? "game_scene" : c->bloom_chart ? "bloom_chart" : (c->model_count ? "models" : "shapes"), c->emissive_scale,
-			 c->bloom_enabled ? "true" : "false", c->exposure_ev100, c->cull_mode == AERON_CULL_BACK ? "back" : c->cull_mode == AERON_CULL_FRONT ? "front" : "none",
+			 c->game.enabled  ? "game_scene"
+			 : c->bloom_chart ? "bloom_chart"
+							  : (c->model_count ? "models" : "shapes"),
+			 c->emissive_scale, c->bloom_enabled ? "true" : "false", c->exposure_ev100,
+			 c->cull_mode == AERON_CULL_BACK    ? "back"
+			 : c->cull_mode == AERON_CULL_FRONT ? "front"
+												: "none",
 			 c->backface_fill ? "true" : "false");
 	SDL_IOStream* stream = SDL_IOFromFile(path, "wb");
 	if (!stream)

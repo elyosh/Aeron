@@ -24,7 +24,8 @@ int AeronXr_LoadRuntime(AeronXrRuntimeInfo* out, char* error, size_t error_size)
 		SDL_OpenXR_UnloadLibrary();
 		return 0;
 	}
-	PFN_xrEnumerateInstanceExtensionProperties enumerate = (PFN_xrEnumerateInstanceExtensionProperties)function;
+	PFN_xrEnumerateInstanceExtensionProperties enumerate =
+		(PFN_xrEnumerateInstanceExtensionProperties)function;
 
 	uint32_t count = 0;
 	result         = enumerate(NULL, 0, &count, NULL);
@@ -49,7 +50,8 @@ int AeronXr_LoadRuntime(AeronXrRuntimeInfo* out, char* error, size_t error_size)
 	if (count)
 		result = enumerate(NULL, count, &count, properties);
 	if (XR_FAILED(result)) {
-		snprintf(error, error_size, "the OpenXR runtime did not list its extensions (XrResult %d)", (int)result);
+		snprintf(error, error_size, "the OpenXR runtime did not list its extensions (XrResult %d)",
+				 (int)result);
 		SDL_free(properties);
 		SDL_OpenXR_UnloadLibrary();
 		return 0;
@@ -64,9 +66,7 @@ int AeronXr_LoadRuntime(AeronXrRuntimeInfo* out, char* error, size_t error_size)
 	return 1;
 }
 
-void AeronXr_UnloadRuntime(void) {
-	SDL_OpenXR_UnloadLibrary();
-}
+void AeronXr_UnloadRuntime(void) { SDL_OpenXR_UnloadLibrary(); }
 
 int AeronXr_LoadFunctions(XrInstance instance, AeronXrFunctions* out, char* error, size_t error_size) {
 	PFN_xrGetInstanceProcAddr get_proc = (PFN_xrGetInstanceProcAddr)SDL_OpenXR_GetXrGetInstanceProcAddr();
@@ -75,10 +75,10 @@ int AeronXr_LoadFunctions(XrInstance instance, AeronXrFunctions* out, char* erro
 		snprintf(error, error_size, "the OpenXR loader has no xrGetInstanceProcAddr");
 		return 0;
 	}
-#define AERON_XR_LOAD_FUNCTION(name)                                                               \
-	if (XR_FAILED(get_proc(instance, #name, (PFN_xrVoidFunction*)&out->name)) || !out->name) { \
-		snprintf(error, error_size, "the OpenXR runtime has no %s", #name);                     \
-		return 0;                                                                               \
+#define AERON_XR_LOAD_FUNCTION(name)                                                                         \
+	if (XR_FAILED(get_proc(instance, #name, (PFN_xrVoidFunction*)&out->name)) || !out->name) {               \
+		snprintf(error, error_size, "the OpenXR runtime has no %s", #name);                                  \
+		return 0;                                                                                            \
 	}
 	AERON_XR_FUNCTIONS(AERON_XR_LOAD_FUNCTION)
 #undef AERON_XR_LOAD_FUNCTION

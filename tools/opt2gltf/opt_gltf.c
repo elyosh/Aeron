@@ -141,7 +141,8 @@ static bool validate_variants(Build* b) {
 		for (size_t l = 0; ok && l < sv->layer_count; ++l)
 			ok = sv->layers[l].skin && sv->layers[l].skin[0] && sv->layers[l].opacity <= 100;
 		if (!ok)
-			return opt_gltf_build_fail(b, "invalid or duplicate skin variant %zu '%s'", i, sv->name ? sv->name : "");
+			return opt_gltf_build_fail(b, "invalid or duplicate skin variant %zu '%s'", i,
+									   sv->name ? sv->name : "");
 	}
 	for (size_t m = 0; m < v->markings_count; ++m) {
 		const char* name  = v->default_markings[m];
@@ -297,7 +298,8 @@ static bool skin_variants_json(Build* b, cJSON* root, const OptGltfVariants* var
 		return true;
 	for (size_t v = 0; v < variants->skin_variant_count; ++v)
 		if ((int)variants->skin_variants[v].state >= (b->max_state_count > 1 ? b->max_state_count : 1))
-			return opt_gltf_build_fail(b, "skin variant '%s' starts from state %u, which the OPT does not have",
+			return opt_gltf_build_fail(b,
+									   "skin variant '%s' starts from state %u, which the OPT does not have",
 									   variants->skin_variants[v].name, variants->skin_variants[v].state);
 	cJSON* list = OptJson_AddArray(root, "skinVariants");
 	bool   ok   = list != NULL;
@@ -551,8 +553,8 @@ static void count_geometry(const Build* b, int32_t mi, const BuiltMesh* bm, size
  * mappings that pass 2 writes. cgltf points into these arrays, so each one
  * is allocated once at its full size. */
 static bool allocate_geometry(Build* b) {
-	const opt_file_t* opt = b->opt;
-	GltfBuild*        gb  = b->gb;
+	const opt_file_t* opt    = b->opt;
+	GltfBuild*        gb     = b->gb;
 	const size_t      meshes = (size_t)opt->mesh_count + b->control_mesh_count;
 	gb->meshes               = (cgltf_mesh*)calloc(meshes ? meshes : 1, sizeof *gb->meshes);
 	if (!gb->meshes)
@@ -925,7 +927,8 @@ static cJSON* root_extension(const Build* b, unsigned energy) {
 			if (set->members[component / 32] & (1u << (component % 32)))
 				ok = OptJson_Add(members, NULL, cJSON_CreateNumber(component));
 	}
-	ok = ok && skin_variants_json((Build*)b, root, b->variants) && markings_json(root, b->variants, b->max_state_count) &&
+	ok = ok && skin_variants_json((Build*)b, root, b->variants) &&
+		 markings_json(root, b->variants, b->max_state_count) &&
 		 (!energy || opt_gltf_add_energy(root, energy));
 	if (ok && o->model.seen_close) {
 		cJSON* lods = OptJson_AddObject(root, "lods");

@@ -391,8 +391,8 @@ static bool prepare_stock(Conversion* c, const ModelConversion* mc, const char* 
 /* Reads what XWAU's files give the model, except its materials. */
 static bool prepare_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t* opt,
 						 const char* basename, const char* label) {
-	c->model        = (XwauModel*)malloc(sizeof *c->model);
-	bool read       = c->model && XwauModel_Read(mc->game, mc->missions, basename, c->model, label);
+	c->model  = (XwauModel*)malloc(sizeof *c->model);
+	bool read = c->model && XwauModel_Read(mc->game, mc->missions, basename, c->model, label);
 	/* hook_pilot gives the stock hangar droids their parts when the model of
 	   the type's list row has no Pilot lines. */
 	for (int type = 311; read && mc->tables && !c->model->has_pilot_lines && type <= 312; ++type)
@@ -594,7 +594,7 @@ static bool xwau_mat_light_repeats(const Conversion* c, const OptGltfLight* ligh
 		const OptGltfLight* other = &c->lights[i];
 		const float dx = other->position.x - light->position.x, dy = other->position.y - light->position.y,
 					dz = other->position.z - light->position.z;
-		const bool same_tag =
+		const bool  same_tag =
 			(!other->tag && !light->tag) || (other->tag && light->tag && strcmp(other->tag, light->tag) == 0);
 		if (other->mesh_index == light->mesh_index && other->state == light->state && same_tag &&
 			memcmp(other->color, light->color, sizeof light->color) == 0 &&
@@ -956,7 +956,7 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	m->given                  = c->baked.textures;
 	m->untextured             = &c->baked.untextured;
 	m->variants = c->baked.variants.count || c->baked.variants.skin_variant_count ? &c->baked.variants : NULL;
-	m->screens                = screens;
+	m->screens  = screens;
 	/* XWAU's renderer uses the stored normal of each corner, without
 	 * remapping or repairing it. */
 	c->options.geometry.normals = OPT_GLTF_NORMALS_STORED;

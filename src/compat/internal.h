@@ -64,11 +64,11 @@ typedef struct DDrawSurfaceShim {
 	 * frame); `rt_back` is the visible half of a DirectDraw flip chain. Flip
 	 * swaps the two, while a primary Blt copies `rt` into `rt_back`; the host
 	 * submits `rt_back` after the game tick. */
-	AeronRenderTarget*       rt;
-	AeronRenderTarget*       rt_back;
-	AeronDepthTarget*        depth;
-	int                      cpu_dirty;
-	int                      gpu_dirty;
+	AeronRenderTarget* rt;
+	AeronRenderTarget* rt_back;
+	AeronDepthTarget*  depth;
+	int                cpu_dirty;
+	int                gpu_dirty;
 	/* A clear of the CPU staging recorded during a suppressed classic flight
 	 * frame, applied before anything outside such a frame uses the staging
 	 * (DDShim_ClearRenderTargetColor). */

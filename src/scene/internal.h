@@ -489,7 +489,7 @@ struct AeronScene3D {
 	float lod_max_error_px;
 	int   lod_force;
 	/* AeronScene_SetLodTint. */
-	int   lod_tint;
+	int lod_tint;
 	/* The levels chosen in the last frame (AeronScene_GetLodStats). */
 	AeronSceneLodStats lod_stats;
 	/* Counts for the last frame (AeronScene_GetFrameStats). */
@@ -539,7 +539,7 @@ struct AeronScene3D {
 	 * opaque passes draw in this order so depth testing rejects what the
 	 * nearer instances hide, and blending walks it backwards. */
 	uint16_t*                  camera_order;
-	struct AeronSceneOrderKey* order_keys; /* AeronSceneStorage_Prepare's sort */
+	struct AeronSceneOrderKey* order_keys;         /* AeronSceneStorage_Prepare's sort */
 	struct AeronSceneOrderKey* order_keys_scratch; /* scratch space for that sort */
 	int                        camera_order_count;
 	int                        instances_dropped;
@@ -637,12 +637,12 @@ struct AeronScene3D {
 	int screen_shadow_warned;
 	/* Spheres are packed first, then spot lights from point_spot_start on,
 	 * then tubes from point_tube_start on. */
-	uint32_t                   point_spot_start;
-	uint32_t                   point_tube_start;
+	uint32_t point_spot_start;
+	uint32_t point_tube_start;
 	/* This frame's merged spot light groups (merge_spot_lights): the spot
 	 * lights in them, and the merged lights added. */
-	uint32_t                   grouped_spot_light_count;
-	uint32_t                   merged_spot_light_count;
+	uint32_t grouped_spot_light_count;
+	uint32_t merged_spot_light_count;
 	/* The result of merging the spot lights, computed once per frame: the
 	 * merged lights, the group each scene light belongs to (UINT32_MAX for
 	 * none), and the centre and merge distance of each group.
@@ -668,8 +668,8 @@ struct AeronScene3D {
 	uint32_t                     instance_record_staging_cap;
 	AeronBuffer*                 instance_record_buffer;
 	uint32_t                     instance_record_buffer_cap;
-	int                        storage_ready;
-	int                        storage_error_logged;
+	int                          storage_ready;
+	int                          storage_error_logged;
 
 	/* Clustered-forward point-light allocation. */
 	AeronSceneClusteredLightDesc cluster_desc;
@@ -729,35 +729,35 @@ struct AeronScene3D {
 	/* The camera exposure (AeronScene_SetExposure, or the meter's newest
 	 * readout), and exposure.c's state: the 1x1 texture that holds it on
 	 * the GPU, the meter's settings, pipelines, buffers and readback. */
-	float                  exposure;
-	AeronTexture*          exposure_tex;
-	float                  exposure_uploaded;
-	int                    exposure_metered;
-	int                    exposure_snap;
-	int                    exposure_meter_failed;
-	uint64_t               exposure_last_us;
-	AeronSceneAutoExposure exposure_settings;
-	AeronComputePipeline*  exposure_histogram_pipeline;
-	AeronComputePipeline*  exposure_adapt_pipeline;
-	AeronSampler*          exposure_sampler;
-	AeronBuffer*           exposure_bins;
-	AeronBuffer*           exposure_state;
-	AeronBufferReadback*   exposure_readback;
+	float                     exposure;
+	AeronTexture*             exposure_tex;
+	float                     exposure_uploaded;
+	int                       exposure_metered;
+	int                       exposure_snap;
+	int                       exposure_meter_failed;
+	uint64_t                  exposure_last_us;
+	AeronSceneAutoExposure    exposure_settings;
+	AeronComputePipeline*     exposure_histogram_pipeline;
+	AeronComputePipeline*     exposure_adapt_pipeline;
+	AeronSampler*             exposure_sampler;
+	AeronBuffer*              exposure_bins;
+	AeronBuffer*              exposure_state;
+	AeronBufferReadback*      exposure_readback;
 	AeronSceneExposureReadout exposure_readout;
-	int                    exposure_readout_valid;
+	int                       exposure_readout_valid;
 	/* AeronScene_SetImageRadiance. */
-	float                  image_radiance;
-	float                  mb_prev_view_proj[16];
-	float                  mb_prev_ori[4]; /* previous frame's camera orientation (rotation gate) */
-	int                    mb_velocity_regen;
-	int                    mb_velocity_valid;
-	AeronRenderTarget*     scene_rt_out; /* color_rt or mb_rt after Render */
-	int                    scene_rt_out_borrowed;
-	int                    post_ssao_tried;
-	int                    post_mb_tried;
-	AeronShader*           fullscreen_vs;       /* scene_fullscreen_quad.vert, shared */
-	AeronSampler*          post_point_sampler;  /* NEAREST clamp (depth/velocity) */
-	AeronSampler*          post_linear_sampler; /* LINEAR clamp (ao/color) */
+	float              image_radiance;
+	float              mb_prev_view_proj[16];
+	float              mb_prev_ori[4]; /* previous frame's camera orientation (rotation gate) */
+	int                mb_velocity_regen;
+	int                mb_velocity_valid;
+	AeronRenderTarget* scene_rt_out; /* color_rt or mb_rt after Render */
+	int                scene_rt_out_borrowed;
+	int                post_ssao_tried;
+	int                post_mb_tried;
+	AeronShader*       fullscreen_vs;       /* scene_fullscreen_quad.vert, shared */
+	AeronSampler*      post_point_sampler;  /* NEAREST clamp (depth/velocity) */
+	AeronSampler*      post_linear_sampler; /* LINEAR clamp (ao/color) */
 	/* Half-resolution SSAO + opaque directional-shadow visibility. */
 	AeronShader*           ssao_ps;
 	AeronShader*           ssao_receiver_local_ps; /* receiver-local shadow, G only */
@@ -843,21 +843,21 @@ struct AeronScene3D {
 	int                        flare_frame;     /* drawn this frame */
 	float                      flare_center[2]; /* render pixels, jittered */
 	float                      flare_radius;    /* render pixels */
-	float flare_disc[3]; /* centre and radius, flare units of the output, without jitter */
-	float                      flare_depth;
-	int                        flare_tried;
-	AeronComputePipeline*      flare_visibility_pipe;
-	AeronSampler*              flare_depth_sampler;
-	AeronSampler*              flare_depth_compare_sampler;
-	AeronShader*               flare_vs;
-	AeronShader*               flare_fs;
-	AeronGraphicsPipeline*     flare_pipe;
-	AeronShader*               flare_smooth_fs;
-	AeronGraphicsPipeline*     flare_smooth_pipe;
-	AeronRenderTarget*         flare_smooth_rt; /* halos and discs, half the output's size */
-	AeronSampler*              flare_smooth_sampler;
-	AeronBuffer*               flare_visibility; /* one float4, x = visible part */
-	AeronBuffer*               flare_element_buffer;
+	float                  flare_disc[3]; /* centre and radius, flare units of the output, without jitter */
+	float                  flare_depth;
+	int                    flare_tried;
+	AeronComputePipeline*  flare_visibility_pipe;
+	AeronSampler*          flare_depth_sampler;
+	AeronSampler*          flare_depth_compare_sampler;
+	AeronShader*           flare_vs;
+	AeronShader*           flare_fs;
+	AeronGraphicsPipeline* flare_pipe;
+	AeronShader*           flare_smooth_fs;
+	AeronGraphicsPipeline* flare_smooth_pipe;
+	AeronRenderTarget*     flare_smooth_rt; /* halos and discs, half the output's size */
+	AeronSampler*          flare_smooth_sampler;
+	AeronBuffer*           flare_visibility; /* one float4, x = visible part */
+	AeronBuffer*           flare_element_buffer;
 
 	/* Sky cube (AeronScene_SetSkyEnvironment). Cube pointer + basis + exposure
 	 * are per-frame (reset by Begin); shaders/pipelines are lazily
@@ -1021,10 +1021,10 @@ const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void);
 /* Prepares and uploads the data that all views of the frame share. It
  * builds the mesh tables, culls the instances, picks their levels of detail,
  * sorts them, builds the batches and merges the spot lights. */
-int                        AeronSceneStorage_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+int AeronSceneStorage_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 /* Sorts and uploads the lights for the current view. */
-int                        AeronSceneStorage_PrepareView(struct AeronScene3D* s, AeronCommandBuffer* cmd);
-void                       AeronSceneStorage_Release(struct AeronScene3D* s);
+int  AeronSceneStorage_PrepareView(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void AeronSceneStorage_Release(struct AeronScene3D* s);
 /* float4 base of a shadow caster's mesh table, and its packed component count. */
 uint32_t AeronSceneStorage_ShadowTableBase(const struct AeronScene3D* s, uint16_t encoded_caster,
 										   uint32_t* component_count);
@@ -1071,10 +1071,10 @@ void AeronScenePlanarReflection_LightingFields(const struct AeronScene3D* s, int
 											   float rect[4], float params[4], float eye[4], float screen[4]);
 
 /* pbr.c */
-int  AeronScenePbr_Ensure(struct AeronScene3D* s);
+int AeronScenePbr_Ensure(struct AeronScene3D* s);
 /* Returns whether the emission shader can be used this frame: its shaders
  * loaded and no debug view is on. */
-int  AeronScenePbr_EmissionAvailable(const struct AeronScene3D* s);
+int AeronScenePbr_EmissionAvailable(const struct AeronScene3D* s);
 /* Creates the colour pipelines for AeronScene_PrepareMesh. */
 int  AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh, AeronCullMode cull);
 void AeronScenePbr_Release(struct AeronScene3D* s);
@@ -1097,6 +1097,7 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
  * a dark color where no front face covers them (AeronScene_SetBackfaceFill).
  * Call after the opaque draws, in the same pass. */
 int AeronScenePbr_DrawBackfaceFill(struct AeronScene3D* s, AeronRenderPass* pass);
+
 /* Where and how AeronScene_DrawEmissionBloom draws, in its target. */
 typedef struct AeronSceneEmissionBloomDraw {
 	/* The scene's output viewport, in target pixels. */
@@ -1114,14 +1115,15 @@ typedef struct AeronSceneEmissionBloomDraw {
  * settings `p`, as `draw` describes. AeronScene_DrawEmissionBloom calls it
  * once it has checked that there is something to draw. */
 int AeronScenePbr_DrawEmissionBloom(struct AeronScene3D* s, AeronRenderPass* pass,
-									const AeronSceneEmissionParams* p, const AeronSceneEmissionBloomDraw* draw);
+									const AeronSceneEmissionParams*    p,
+									const AeronSceneEmissionBloomDraw* draw);
 
 /* directional_shadow.c */
 int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene);
 /* Gives the shadow uniforms the camera of the current view. The shadow maps
  * themselves are prepared once for all the views. */
 void AeronSceneDirectionalShadow_EnterView(struct AeronScene3D* scene);
-int AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
+int  AeronSceneDirectionalShadow_Render(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
 /* Draws the casters' depth (encoded as the shadow lists: an instance index,
  * or AERON_SCENE_SHADOW_ONLY_BASE plus a shadow-only index) with `view_proj`
  * into the current depth pass, both faces: what is nearest whichever way it
@@ -1180,7 +1182,7 @@ void AeronSceneLensFlare_Draw(struct AeronScene3D* s, AeronRenderPass* pass);
 void AeronSceneLensFlare_Release(struct AeronScene3D* s);
 
 /* mesh_overlay.c */
-int  AeronSceneMeshOverlay_Prepare(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
+int AeronSceneMeshOverlay_Prepare(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
 /* Draws the overlays after the opaque instances. `visibility` is the
  * visibility pass's output that the opaque instances read, or NULL without
  * one; lit overlays then take the key light's shadow from the shadow map. */
@@ -1194,13 +1196,13 @@ int  AeronScenePost_EnsureMb(struct AeronScene3D* s);
 void AeronScenePost_Release(struct AeronScene3D* s);
 /* The half-resolution visibility passes: AO when `ao_enabled` (else R is
  * 1) and the opaque receivers' directional shadow, then their blur. */
-int  AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int ao_enabled);
-int  AeronScenePost_DebugVisualizeSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd);
-int  AeronScenePost_MbPrepareTemporalMotion(struct AeronScene3D* s, AeronCommandBuffer* cmd);
-int  AeronScenePost_MbVisualizeTemporal(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronTexture* motion,
-										int direct_fsr_motion);
-int  AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderTarget* color,
-							  AeronTexture* velocity, int direct_fsr_motion);
+int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int ao_enabled);
+int AeronScenePost_DebugVisualizeSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+int AeronScenePost_MbPrepareTemporalMotion(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+int AeronScenePost_MbVisualizeTemporal(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronTexture* motion,
+									   int direct_fsr_motion);
+int AeronScenePost_MbResolve(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderTarget* color,
+							 AeronTexture* velocity, int direct_fsr_motion);
 /* Writes the scene's exposure texture: runs the image meter, or uploads the
  * fixed exposure (exposure.c). Before FSR, with no pass open. */
 int  AeronSceneExposure_Update(struct AeronScene3D* s, AeronCommandBuffer* cmd);

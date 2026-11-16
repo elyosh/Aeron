@@ -251,7 +251,8 @@ static int bloom_pass(AeronCommandBuffer* cmd, AeronRenderTarget* dst, int dst_w
 }
 
 int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronTexture* flight_color_rt,
-						  int rt_w, int rt_h, int scissor_max_y, AeronSceneBloomExtraFn extra, void* userdata) {
+						  int rt_w, int rt_h, int scissor_max_y, AeronSceneBloomExtraFn extra,
+						  void* userdata) {
 	if (!b || !b->ready || !cmd || !flight_color_rt)
 		return 0;
 	if (rt_w != b->rt_w || rt_h != b->rt_h)
@@ -360,4 +361,3 @@ void AeronSceneBloom_SetIntensity(float v) {
 		v = 1.0f;
 	s_bloom_intensity = v;
 }
-

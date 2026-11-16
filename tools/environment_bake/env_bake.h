@@ -42,32 +42,32 @@ typedef struct EnvBakeOptions {
 	   `overlay_faces`. */
 	const CubeFacePixels* face_pixels;
 	float                 ldr_intensity; /* multiplies PNG and JPEG sky faces */
-	const char* overlay_out;
-	const char* lights_input;
-	const char* name;
-	const char* radiance_out;
-	const char* diffuse_out;
-	const char* specular_out;
-	const char* environment_out;
-	FILE*       environment_stream; /* the entry when there is no environment_out; NULL: none */
-	const char* manifest_root;
-	const char* diagnostic_out;
-	const char* sprite_input;
-	const char* sprite_out;
-	const char* sprite_format;
-	const char* capture_dir;
-	const char* bake_root;
-	const char* probes_input;
-	const char* cubes_out;
-	const char* grid_out;
-	const char* bake_out;
-	int         radiance_size;
-	int         diffuse_size;
-	int         specular_size;
-	int         specular_samples;
-	int         sprite_size;
-	int         jobs;
-	bool        specular_size_given; /* probes mode defaults to 256 */
+	const char*           overlay_out;
+	const char*           lights_input;
+	const char*           name;
+	const char*           radiance_out;
+	const char*           diffuse_out;
+	const char*           specular_out;
+	const char*           environment_out;
+	FILE*                 environment_stream; /* the entry when there is no environment_out; NULL: none */
+	const char*           manifest_root;
+	const char*           diagnostic_out;
+	const char*           sprite_input;
+	const char*           sprite_out;
+	const char*           sprite_format;
+	const char*           capture_dir;
+	const char*           bake_root;
+	const char*           probes_input;
+	const char*           cubes_out;
+	const char*           grid_out;
+	const char*           bake_out;
+	int                   radiance_size;
+	int                   diffuse_size;
+	int                   specular_size;
+	int                   specular_samples;
+	int                   sprite_size;
+	int                   jobs;
+	bool                  specular_size_given; /* probes mode defaults to 256 */
 } EnvBakeOptions;
 
 /* The result of a bake. Its values are environment_bake's exit codes. */

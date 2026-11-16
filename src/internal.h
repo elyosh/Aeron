@@ -62,9 +62,9 @@ struct AeronTexture {
 	int                owned;
 	/* The list of textures that are not destroyed yet, which the shutdown
 	 * logs, and the name the texture was created with. */
-	AeronTexture*      live_prev;
-	AeronTexture*      live_next;
-	char               debug_name[48];
+	AeronTexture* live_prev;
+	AeronTexture* live_next;
+	char          debug_name[48];
 };
 
 struct AeronBuffer {
@@ -178,13 +178,13 @@ struct AeronCommandBuffer {
 	 * its fence once it is submitted. */
 	struct AeronReadbackSlot* readback_slots[AERON_COMMAND_READBACK_MAX];
 	uint32_t                  readback_slot_count;
-	AeronComputePass       active_compute_pass;
-	int                    compute_pass_active;
-	int                    render_pass_active;
-	int                    owns_wrapper;
-	int                    immediate_upload;
-	int                    failed;
-	char                   failure_message[512];
+	AeronComputePass          active_compute_pass;
+	int                       compute_pass_active;
+	int                       render_pass_active;
+	int                       owns_wrapper;
+	int                       immediate_upload;
+	int                       failed;
+	char                      failure_message[512];
 	/* The open debug groups, outermost first. */
 	char     debug_labels[AERON_COMMAND_DEBUG_DEPTH][64];
 	uint32_t debug_depth;
@@ -277,9 +277,9 @@ typedef struct AeronPacingState {
 } AeronPacingState;
 
 typedef struct AeronRuntime {
-	int                         initialized;
-	int                         quit_requested;
-	int                         fatal_error_requested;
+	int initialized;
+	int quit_requested;
+	int fatal_error_requested;
 	/* From the application's startup options. */
 	AeronXrMode                 xr_mode;
 	SDL_Window*                 window;
@@ -296,13 +296,13 @@ typedef struct AeronRuntime {
 	 * the display properties cached from the last HDR-state event. The desired
 	 * flag is kept so the composition can be re-applied when a display becomes
 	 * HDR-capable (or stops being one) while the app runs. */
-	int   hdr_output_desired;
-	int   hdr_output_enabled;
+	int hdr_output_desired;
+	int hdr_output_enabled;
 	/* The window's present mode: vsync, except while a VR session runs. */
 	SDL_GPUPresentMode present_mode;
 	/* A VR session runs and the window can't present without waiting for
 	 * its display, so the window isn't drawn. */
-	int window_draw_disabled;
+	int   window_draw_disabled;
 	int   hdr_reapply_pending;
 	float hdr_headroom;
 	float hdr_sdr_white_level;
@@ -321,14 +321,14 @@ typedef struct AeronRuntime {
 	int                   pixel_layer_upload_count;
 	/* Upload chunks that no command buffer owns. They are mapped with cycling
 	 * when reused, so SDL picks a copy the GPU no longer reads. */
-	AeronUploadChunk      upload_chunk_pool[AERON_UPLOAD_CHUNK_POOL_MAX];
-	uint32_t              upload_chunk_pool_count;
-	uint64_t              upload_chunk_pool_bytes;
-	int                   logical_width;
-	int                   logical_height;
-	int                   window_aspect_width;
-	int                   window_aspect_height;
-	int                   window_aspect_pending;
+	AeronUploadChunk upload_chunk_pool[AERON_UPLOAD_CHUNK_POOL_MAX];
+	uint32_t         upload_chunk_pool_count;
+	uint64_t         upload_chunk_pool_bytes;
+	int              logical_width;
+	int              logical_height;
+	int              window_aspect_width;
+	int              window_aspect_height;
+	int              window_aspect_pending;
 	/* The window mode last asked for, and the window's position and size
 	 * before it spanned the displays. */
 	int                   window_mode;
@@ -354,8 +354,8 @@ typedef struct AeronRuntime {
 	AeronRenderDataStats  render_data_stats;
 	/* Frames submitted for presentation. The buffer readbacks count them to
 	 * know when the GPU has finished an older command buffer. */
-	uint64_t              presented_frames;
-	int                   frames_in_flight;
+	uint64_t presented_frames;
+	int      frames_in_flight;
 	/* SDL_QueryGPUFence gives the right answer. */
 	int fence_query_reliable;
 	/* Block-compressed uploads need regions in whole 4x4 blocks. */
@@ -363,19 +363,19 @@ typedef struct AeronRuntime {
 	/* The Vulkan device has the shaderFloat16 and shaderInt16 features. */
 	int vulkan_shader_fp16;
 	/* Textures, render targets and depth targets that are not destroyed yet. */
-	AeronTexture*     live_textures;
+	AeronTexture* live_textures;
 	void (*render_shutdown_hooks[AERON_MAX_RENDER_SHUTDOWN_HOOKS])(void);
-	int               render_shutdown_hook_count;
-	SDL_SpinLock      live_textures_lock;
+	int          render_shutdown_hook_count;
+	SDL_SpinLock live_textures_lock;
 	/* The fence of the newest command buffer submitted since the last
 	 * present, which the present queries when its swapchain image arrives. */
 	AeronSharedFence* pacing_fence;
 	/* Fences that Aeron no longer needs and the GPU hasn't signaled yet. They
 	 * are released once signaled. */
-	SDL_GPUFence**    retired_fences;
-	uint32_t          retired_fence_count;
-	uint32_t          retired_fence_capacity;
-	AeronPacingState  pacing;
+	SDL_GPUFence**   retired_fences;
+	uint32_t         retired_fence_count;
+	uint32_t         retired_fence_capacity;
+	AeronPacingState pacing;
 } AeronRuntime;
 
 extern AeronRuntime g_aeron;

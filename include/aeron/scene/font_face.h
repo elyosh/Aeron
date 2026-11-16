@@ -22,8 +22,9 @@ extern "C" {
 typedef struct AeronFontFace AeronFontFace;
 
 /* Returns NULL when the file can't be read or isn't a font. */
-AeronFontFace* AeronFontFace_LoadVfs(AeronVfs* vfs, AeronVfsRoot root, const char* path, size_t maximum_file_size);
-void AeronFontFace_Release(AeronFontFace* face);
+AeronFontFace* AeronFontFace_LoadVfs(AeronVfs* vfs, AeronVfsRoot root, const char* path,
+									 size_t maximum_file_size);
+void           AeronFontFace_Release(AeronFontFace* face);
 
 /* Ascent and descent in em, both positive. They come from the OS/2 table's
  * usWinAscent and usWinDescent, which Windows' GDI uses, or from the hhea
@@ -34,11 +35,11 @@ void AeronFontFace_VMetrics(const AeronFontFace* face, float* ascent, float* des
 int AeronFontFace_Advance(const AeronFontFace* face, uint32_t codepoint, float* advance);
 
 typedef struct AeronFontFaceAtlasDesc {
-	float em_pixels; /* the em size in pixels */
-	uint16_t first_char;
-	uint16_t char_count;
+	float           em_pixels; /* the em size in pixels */
+	uint16_t        first_char;
+	uint16_t        char_count;
 	const uint32_t* codepoints; /* the code point of each char, char_count entries */
-	const char* debug_name;
+	const char*     debug_name;
 } AeronFontFaceAtlasDesc;
 
 /* Rasterizes the chars and uploads them through `cmd` into `out`, which
@@ -47,8 +48,8 @@ typedef struct AeronFontFaceAtlasDesc {
  * pen position on the baseline. A char the font doesn't have gets an empty
  * rectangle. The atlas's baseline is the ascent in pixels, and its cell is
  * the line height. */
-int AeronFontFace_BuildAtlas(const AeronFontFace* face, AeronCommandBuffer* cmd, const AeronFontFaceAtlasDesc* desc,
-							 AeronFontAtlas* out);
+int AeronFontFace_BuildAtlas(const AeronFontFace* face, AeronCommandBuffer* cmd,
+							 const AeronFontFaceAtlasDesc* desc, AeronFontAtlas* out);
 
 #ifdef __cplusplus
 }

@@ -623,7 +623,7 @@ void XwauCraft_ReadSound(const char* sound_txt, const char* ini, int range_bank,
 		sound->range_count[weapon] = count > WEAPON_RANGE_SOUND_MAX ? WEAPON_RANGE_SOUND_MAX : count;
 	}
 	XwauSection_Text(&section, "EngineSlowing", text, sizeof text);
-	sound->engine_slowing = text[0] != 0;
+	sound->engine_slowing                     = text[0] != 0;
 	static const char* const offset_keys[3]   = { "AmbientSoundOffsetX", "AmbientSoundOffsetY",
 												  "AmbientSoundOffsetZ" };
 	static const char* const distance_keys[3] = { "AmbientSoundDistanceX", "AmbientSoundDistanceZ",
@@ -819,7 +819,7 @@ void XwauCraft_WriteWeaponRates(FILE* f, const XwauNames* names, const char* ind
 			fputs(", ", f);
 		else
 			fprintf(f, "%s%s: {", indent, g_rateKeys[key].group);
-		open = true;
+		open             = true;
 		const char* name = g_rateKeys[key].name ? g_rateKeys[key].name
 												: XwauNames_WeaponType(names, g_rateKeys[key].weapon_type);
 		if (key == XWAU_CRAFT_IMPACT_SPIN)
@@ -1286,9 +1286,9 @@ static bool glb_material_has_tag(const char* path, const char* tag) {
 	bool          found = false;
 	if (fread(header, 1, sizeof header, f) == sizeof header && memcmp(header, "glTF", 4) == 0 &&
 		memcmp(header + 16, "JSON", 4) == 0) {
-		const uint32_t length = (uint32_t)header[12] | (uint32_t)header[13] << 8 | (uint32_t)header[14] << 16 |
-								(uint32_t)header[15] << 24;
-		json = length ? (char*)malloc(length) : NULL;
+		const uint32_t length = (uint32_t)header[12] | (uint32_t)header[13] << 8 |
+								(uint32_t)header[14] << 16 | (uint32_t)header[15] << 24;
+		json                  = length ? (char*)malloc(length) : NULL;
 		if (json && fread(json, 1, length, f) == length) {
 			cJSON*       document  = cJSON_ParseWithLength(json, length);
 			const cJSON* materials = cJSON_GetObjectItemCaseSensitive(document, "materials");
@@ -1749,13 +1749,13 @@ static bool write_hud_file(const char* xwau_root, const char* output_dir, const 
 	EnhancedHud   readout;
 	const bool    has_readout = read_enhanced_hud(xwau_root, &readout);
 	const bool    has_boxes   = read_radar_2d_renderer(xwau_root);
-	uint16_t* hull       = NULL;
-	uint16_t* map        = NULL;
-	size_t    hull_count = 0, map_count = 0;
-	bool      ok = (!has_hull || XwauCraft_ReadIconList(hull_path, &hull, &hull_count)) &&
-				   (!has_map || XwauCraft_ReadIconList(map_path, &map, &map_count)) &&
-				   PathFormat(path, sizeof path, "%s/hud.yaml", output_dir) && MakeDirs(output_dir);
-	FILE*     f  = ok ? fopen(path, "wb") : NULL;
+	uint16_t*     hull        = NULL;
+	uint16_t*     map         = NULL;
+	size_t        hull_count = 0, map_count = 0;
+	bool          ok = (!has_hull || XwauCraft_ReadIconList(hull_path, &hull, &hull_count)) &&
+					   (!has_map || XwauCraft_ReadIconList(map_path, &map, &map_count)) &&
+					   PathFormat(path, sizeof path, "%s/hud.yaml", output_dir) && MakeDirs(output_dir);
+	FILE*         f  = ok ? fopen(path, "wb") : NULL;
 	if (ok && !f) {
 		Report(path, "can't be written");
 		ok = false;
@@ -1997,14 +1997,14 @@ bool XwauCraft_Write(const char* xwau_root, const char* output_dir, const XwauNa
 	XwauStockValues      craft_stock = *stock_values;
 	if (tables && tables->exe && XwauGameExe_ReadProjectiles(tables->exe, &mod_projectiles))
 		craft_stock.projectiles = &mod_projectiles;
-	XwauStatsGenus  genus = { 0 };
+	XwauStatsGenus genus = { 0 };
 
 	ok = (!tables || XwauObjects_ImportedModels(stock_tables, tables, models)) &&
 		 XwauStatsGenus_Read(xwau_root, tables, models, &genus);
 	/* hook_mission_objects reads the [Turrets] sections. */
 	const bool        turrets      = Xwau_DllHasText(xwau_root, "hook_mission_objects.dll", "Turrets.txt");
 	int               gunner_seats = 0;
-	XwauCraftWeapons* weapons = (XwauCraftWeapons*)malloc(sizeof *weapons);
+	XwauCraftWeapons* weapons      = (XwauCraftWeapons*)malloc(sizeof *weapons);
 	if (!weapons) {
 		XwauStatsGenus_Free(&genus);
 		XwauGameTables_Free(tables);

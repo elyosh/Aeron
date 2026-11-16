@@ -278,7 +278,7 @@ void Aeron_OnXrSessionRunningChanged(int running) {
 						  Aeron_RenderLastError());
 		} else {
 			Aeron_LogInfo("aeron.xr", "the window presents %s",
-						  mode == SDL_GPU_PRESENTMODE_VSYNC		  ? "with vsync"
+						  mode == SDL_GPU_PRESENTMODE_VSYNC       ? "with vsync"
 						  : mode == SDL_GPU_PRESENTMODE_IMMEDIATE ? "without waiting (immediate)"
 																  : "without waiting (mailbox)");
 		}
@@ -3941,13 +3941,13 @@ AeronComputePipeline* Aeron_CreateComputePipeline(const AeronComputePipelineDesc
 	}
 
 	SDL_zero(create_info);
-	create_info.code_size                     = code_size;
-	create_info.code                          = code;
+	create_info.code_size                      = code_size;
+	create_info.code                           = code;
 	create_info.entrypoint                     = entrypoint;
-	create_info.format                        = format_info->format;
-	create_info.num_samplers                  = desc->sampler_count;
-	create_info.num_readonly_storage_textures = desc->readonly_storage_texture_count;
-	create_info.num_readonly_storage_buffers  = desc->readonly_storage_buffer_count;
+	create_info.format                         = format_info->format;
+	create_info.num_samplers                   = desc->sampler_count;
+	create_info.num_readonly_storage_textures  = desc->readonly_storage_texture_count;
+	create_info.num_readonly_storage_buffers   = desc->readonly_storage_buffer_count;
 	create_info.num_readwrite_storage_textures = desc->readwrite_storage_texture_count;
 	create_info.num_readwrite_storage_buffers  = desc->readwrite_storage_buffer_count;
 	create_info.num_uniform_buffers            = desc->uniform_buffer_count;

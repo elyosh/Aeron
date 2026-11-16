@@ -35,7 +35,7 @@ struct cJSON;
 #define EFFECT_LIBRARY_BAKE_VERSION 5
 
 #define EFFECT_LIBRARY_PAGE_SIZE 2176
-#define EFFECT_LIBRARY_IMAGE_MAX 1024 /* longest side; larger images are box-downscaled */
+#define EFFECT_LIBRARY_IMAGE_MAX 1024  /* longest side; larger images are box-downscaled */
 #define EFFECT_LIBRARY_DETAIL_MAX 2048 /* the same for detail images */
 
 typedef enum EffectLibraryKind {
@@ -55,12 +55,12 @@ typedef enum EffectLibraryKind {
 typedef struct EffectLibraryImage {
 	const char*       key;
 	EffectLibraryKind kind; /* written to the index */
-	int            width, height;
-	const uint8_t* layer;
-	const uint8_t* emissive;
+	int               width, height;
+	const uint8_t*    layer;
+	const uint8_t*    emissive;
 	int               max_size; /* longest side cap; 0: EFFECT_LIBRARY_IMAGE_MAX, or EFFECT_LIBRARY_DETAIL_MAX
 								 * for a detail image */
-	const float*   crop;     /* [x0, y0, x1, y1] written to the index, or NULL */
+	const float* crop;          /* [x0, y0, x1, y1] written to the index, or NULL */
 } EffectLibraryImage;
 
 typedef struct EffectLibraryResult {

@@ -581,7 +581,7 @@ static bool make_inputs(const Library* l, const char* path, Sink* sink, cJSON* e
 			continue;
 		}
 		const int    w = (int)im.width, h = (int)im.height;
-		const size_t n        = (size_t)w * h;
+		const size_t n = (size_t)w * h;
 		/* BC5 holds a normal's X and Y, so Z is rebuilt, as for the
 		 * NormalMap key. */
 		for (size_t t = 0; r->kind == XWAU_FX_DETAIL_NORMAL && im.encoding == XWAU_DAT_ENCODING_BC5 && t < n;
@@ -591,9 +591,9 @@ static bool make_inputs(const Library* l, const char* path, Sink* sink, cJSON* e
 			const double z2 = 1.0 - nx * nx - ny * ny;
 			px[2]           = (uint8_t)lround((sqrt(z2 > 0.0 ? z2 : 0.0) * 0.5 + 0.5) * 255.0);
 		}
-		uint8_t*     layer    = XwauFx_HasLayer(r->kind) ? (uint8_t*)malloc(n * 4) : NULL;
-		uint8_t*     emissive = XwauFx_HasEmissive(r->kind) ? (uint8_t*)malloc(n * 4) : NULL;
-		uint8_t*     input    = (uint8_t*)malloc(n * 4);
+		uint8_t* layer    = XwauFx_HasLayer(r->kind) ? (uint8_t*)malloc(n * 4) : NULL;
+		uint8_t* emissive = XwauFx_HasEmissive(r->kind) ? (uint8_t*)malloc(n * 4) : NULL;
+		uint8_t* input    = (uint8_t*)malloc(n * 4);
 		ok = input && (layer || !XwauFx_HasLayer(r->kind)) && (emissive || !XwauFx_HasEmissive(r->kind));
 		if (ok)
 			XwauFx_Bake(r->kind, im.rgba, n, r->tint, r->alpha_mode, layer, emissive);
@@ -709,10 +709,10 @@ static bool write_library_sources(Library* l, const char* effects_dir, bool merg
 									 (entries = cJSON_AddObjectToObject(doc, "images")));
 	if (existing && doc && !ok)
 		Report(file, "no images");
-	size_t images = 0;
-	int    diff   = 0;
-	Sink   sink   = { .dir = dir };
-	ok            = ok && make_inputs(l, path, &sink, entries, existing, &images, &diff);
+	size_t images      = 0;
+	int    diff        = 0;
+	Sink   sink        = { .dir = dir };
+	ok                 = ok && make_inputs(l, path, &sink, entries, existing, &images, &diff);
 	const char* header = "# Made by the OpenXWA mod importer.\n";
 	if (existing && !images) {
 		cJSON_Delete(doc);
@@ -910,13 +910,13 @@ bool XwauLibrary_Make(const XwauLibrarySet* set, size_t index, int threads, cJSO
 		Report(l->name, "%s not found", l->dat);
 		return false;
 	}
-	cJSON* doc = cJSON_CreateObject();
+	cJSON* doc     = cJSON_CreateObject();
 	cJSON* entries = doc && cJSON_AddStringToObject(doc, "library", l->name)
 						 ? cJSON_AddObjectToObject(doc, "images")
 						 : NULL;
-	Sink   sink   = { 0 };
-	size_t images = 0;
-	int    diff   = 0;
+	Sink   sink    = { 0 };
+	size_t images  = 0;
+	int    diff    = 0;
 	if (!entries || !make_inputs(l, path, &sink, entries, false, &images, &diff)) {
 		if (!entries)
 			Report(NULL, "out of memory");

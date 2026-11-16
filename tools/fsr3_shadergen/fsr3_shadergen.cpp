@@ -192,6 +192,7 @@ public:
 	}
 
 	yaml_node_t* root() { return yaml_document_get_root_node(&document_); }
+
 	yaml_node_t* node(int index) { return yaml_document_get_node(&document_, index); }
 
 private:

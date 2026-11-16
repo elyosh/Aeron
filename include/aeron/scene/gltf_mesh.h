@@ -330,7 +330,7 @@ typedef struct AeronGltfScreenRect {
 typedef struct AeronGltfLod {
 	/* The largest distance from this level's surface to level 0's, in model
 	 * units. */
-	float    error;
+	float error;
 	/* Its indices: index_count of them from index_offset in lod_indices. */
 	uint32_t index_offset;
 	uint32_t index_count;
@@ -375,11 +375,11 @@ typedef struct AeronGltfModel {
 	 * vertex_count and index_count above describe level 0. The vertices that
 	 * only levels use follow level 0's in `vertices`, lod_vertex_count of
 	 * them. */
-	uint32_t         lod_count;
-	AeronGltfLod     lods[AERON_GLTF_MAX_LODS];
-	uint32_t*        lod_indices;
-	uint32_t         lod_index_count;
-	uint32_t         lod_vertex_count;
+	uint32_t     lod_count;
+	AeronGltfLod lods[AERON_GLTF_MAX_LODS];
+	uint32_t*    lod_indices;
+	uint32_t     lod_index_count;
+	uint32_t     lod_vertex_count;
 
 	/* Per-channel cooked KTX2 atlases (4): BC5/BC7 or RGBA8. */
 	AeronGltfChannelKtx2 channels[AERON_GLTF_CHANNEL_COUNT];
@@ -391,7 +391,7 @@ typedef struct AeronGltfModel {
 	/* Variant table — flat [total_prim_count * variant_columns] row-
 	 * major, indexed (prim_id * variant_columns + column): column 0 holds
 	 * the primitive's own material, column v + 1 variant v's. */
-	uint32_t  variant_count; /* asset-level KHR count, 0 = none */
+	uint32_t  variant_count;   /* asset-level KHR count, 0 = none */
 	uint32_t  variant_columns; /* variant_count + 1 */
 	uint32_t  total_prim_count;
 	uint32_t* prim_variant_material;

@@ -65,9 +65,9 @@ typedef struct Demo {
 static void demo_build_cube(DemoVertex out[36]) {
 	static const float faces[6][3][3] = {
 		/* normal, first edge, second edge */
-		{ { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } },   { { -1, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 } },
-		{ { 0, 1, 0 }, { 0, 0, 1 }, { 1, 0, 0 } },   { { 0, -1, 0 }, { 1, 0, 0 }, { 0, 0, 1 } },
-		{ { 0, 0, 1 }, { 1, 0, 0 }, { 0, 1, 0 } },   { { 0, 0, -1 }, { 0, 1, 0 }, { 1, 0, 0 } },
+		{ { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } }, { { -1, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 } },
+		{ { 0, 1, 0 }, { 0, 0, 1 }, { 1, 0, 0 } }, { { 0, -1, 0 }, { 1, 0, 0 }, { 0, 0, 1 } },
+		{ { 0, 0, 1 }, { 1, 0, 0 }, { 0, 1, 0 } }, { { 0, 0, -1 }, { 0, 1, 0 }, { 1, 0, 0 } },
 	};
 	static const float corners[6][2] = { { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, -1 }, { 1, 1 }, { -1, 1 } };
 	for (int face = 0; face < 6; face++) {
@@ -84,10 +84,10 @@ static void demo_build_cube(DemoVertex out[36]) {
 
 static int demo_create(Demo* demo, AeronTextureFormat color_format) {
 	demo->vertex_shader   = Aeron_CreateShader(&(AeronShaderDesc) {
-		  .name                 = "xr_demo_cube.vert",
-		  .stage                = AERON_SHADER_STAGE_VERTEX,
-		  .uniform_buffer_count = 1,
-    });
+		.name                 = "xr_demo_cube.vert",
+		.stage                = AERON_SHADER_STAGE_VERTEX,
+		.uniform_buffer_count = 1,
+	});
 	demo->fragment_shader = Aeron_CreateShader(&(AeronShaderDesc) {
 		.name  = "xr_demo_cube.frag",
 		.stage = AERON_SHADER_STAGE_FRAGMENT,
@@ -97,8 +97,8 @@ static int demo_create(Demo* demo, AeronTextureFormat color_format) {
 
 	static const AeronVertexBufferLayoutDesc layout       = { .slot = 0, .stride = sizeof(DemoVertex) };
 	static const AeronVertexAttributeDesc    attributes[] = {
-		   { 0, 0, AERON_VERTEX_FORMAT_FLOAT3, offsetof(DemoVertex, position) },
-		   { 1, 0, AERON_VERTEX_FORMAT_FLOAT3, offsetof(DemoVertex, normal) },
+		{ 0, 0, AERON_VERTEX_FORMAT_FLOAT3, offsetof(DemoVertex, position) },
+		{ 1, 0, AERON_VERTEX_FORMAT_FLOAT3, offsetof(DemoVertex, normal) },
 	};
 	demo->pipeline = Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader       = demo->vertex_shader,
@@ -151,11 +151,11 @@ static int demo_ensure_depth(Demo* demo, int width, int height) {
 	if (demo->depth)
 		Aeron_DestroyDepthTarget(demo->depth);
 	demo->depth   = Aeron_CreateDepthTarget(&(AeronDepthTargetDesc) {
-		  .width      = width,
-		  .height     = height,
-		  .format     = AERON_TEXTURE_FORMAT_D32_FLOAT,
-		  .debug_name = "xr_demo depth",
-    });
+		.width      = width,
+		.height     = height,
+		.format     = AERON_TEXTURE_FORMAT_D32_FLOAT,
+		.debug_name = "xr_demo depth",
+	});
 	demo->depth_w = width;
 	demo->depth_h = height;
 	return demo->depth != NULL;
@@ -185,13 +185,13 @@ static void demo_view_clip(const AeronRigView* view, float out[4][4]) {
 	}
 	to_view[3][3] = 1.0f;
 
-	const float tan_left  = tanf(view->fov.angle_left);
-	const float tan_right = tanf(view->fov.angle_right);
-	const float tan_up    = tanf(view->fov.angle_up);
-	const float tan_down  = tanf(view->fov.angle_down);
-	const float n         = DEMO_NEAR_M;
-	const float f         = DEMO_FAR_M;
-	float to_clip[4][4] = {
+	const float tan_left      = tanf(view->fov.angle_left);
+	const float tan_right     = tanf(view->fov.angle_right);
+	const float tan_up        = tanf(view->fov.angle_up);
+	const float tan_down      = tanf(view->fov.angle_down);
+	const float n             = DEMO_NEAR_M;
+	const float f             = DEMO_FAR_M;
+	float       to_clip[4][4] = {
 		{ 2.0f / (tan_right - tan_left), 0.0f, (tan_right + tan_left) / (tan_right - tan_left), 0.0f },
 		{ 0.0f, 2.0f / (tan_up - tan_down), (tan_up + tan_down) / (tan_up - tan_down), 0.0f },
 		{ 0.0f, 0.0f, f / (n - f), n * f / (n - f) },
@@ -209,7 +209,7 @@ static void demo_draw_cubes(const Demo* demo, AeronRenderPass* pass, float view_
 		const float spin   = (float)demo->seconds * (0.4f + 0.1f * (float)i);
 		const float c = cosf(spin), s = sinf(spin);
 		const float size        = 0.4f;
-		float model[4][4] = {
+		float       model[4][4] = {
 			{ c * size, 0.0f, s * size, 2.0f * sinf(around) },
 			{ 0.0f, size, 0.0f, 0.3f * sinf((float)demo->seconds + around) },
 			{ -s * size, 0.0f, c * size, -2.0f * cosf(around) },
@@ -277,12 +277,12 @@ static int demo_frame_headset(Demo* demo) {
 
 /* The window path: a fixed stereo rig, with the two views side by side. */
 static int demo_frame_window(Demo* demo) {
-	const int          view_w = DEMO_LOGICAL_W / 2;
-	const int          view_h = DEMO_LOGICAL_H;
-	const float        half_h = 50.0f * DEMO_PI / 180.0f;
-	const float        half_v = atanf(tanf(half_h) * (float)view_h / (float)view_w);
-	const AeronViewFov fov    = { -half_h, half_h, half_v, -half_v };
-	const AeronViewPose head  = { .orientation = { 0.0f, 0.0f, 0.0f, 1.0f } };
+	const int           view_w = DEMO_LOGICAL_W / 2;
+	const int           view_h = DEMO_LOGICAL_H;
+	const float         half_h = 50.0f * DEMO_PI / 180.0f;
+	const float         half_v = atanf(tanf(half_h) * (float)view_h / (float)view_w);
+	const AeronViewFov  fov    = { -half_h, half_h, half_v, -half_v };
+	const AeronViewPose head   = { .orientation = { 0.0f, 0.0f, 0.0f, 1.0f } };
 	AeronViewRig        rig;
 	if (!AeronViewRig_DebugStereo(0.064f, &fov, &head, view_w, view_h, &rig))
 		return 0;
@@ -373,11 +373,11 @@ int main(int argc, char* argv[]) {
 	/* An sRGB format, as the eye images have. The shader writes linear values. */
 	const AeronTextureFormat color_format = AERON_TEXTURE_FORMAT_RGBA8_SRGB;
 	demo.window_rt                        = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
-							   .width      = DEMO_LOGICAL_W,
-							   .height     = DEMO_LOGICAL_H,
-							   .format     = color_format,
-							   .debug_name = "xr_demo window",
-    });
+		.width      = DEMO_LOGICAL_W,
+		.height     = DEMO_LOGICAL_H,
+		.format     = color_format,
+		.debug_name = "xr_demo window",
+	});
 	if (!demo.window_rt || !demo_create(&demo, color_format)) {
 		fprintf(stderr, "xr_demo: could not create the GPU resources: %s\n", Aeron_RenderLastError());
 		demo_destroy(&demo);

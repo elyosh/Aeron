@@ -95,10 +95,10 @@ typedef struct AeronEnvironmentDefinition {
 	char                            radiance_path[AERON_ENV_PATH_MAX]; /* empty: no sky */
 	char                            diffuse_path[AERON_ENV_PATH_MAX];  /* empty: no diffuse cube */
 	char                            specular_path[AERON_ENV_PATH_MAX]; /* empty: no reflections */
-	float                           intensity; /* scales the sky, diffuse and specular together */
-	float                           diffuse_strength;  /* 0 without a diffuse cube */
-	float                           specular_strength; /* 0 without a specular cube */
-	float                           ambient_fill[3];   /* linear radiance from every direction */
+	float                           intensity;           /* scales the sky, diffuse and specular together */
+	float                           diffuse_strength;    /* 0 without a diffuse cube */
+	float                           specular_strength;   /* 0 without a specular cube */
+	float                           ambient_fill[3];     /* linear radiance from every direction */
 	float                           rotation_degrees[3]; /* yaw, pitch, roll; each in [0, 360) */
 	char                            overlay_path[AERON_ENV_PATH_MAX]; /* empty: no overlay */
 	float                           overlay_rotation_degrees[3];      /* as rotation_degrees */
@@ -108,7 +108,7 @@ typedef struct AeronEnvironmentDefinition {
 	/* True when the environment has `directional_lights`, which is always the
 	 * case with a sky. Its lights replace the game's lights, even when the
 	 * list is empty. Without the field, the game keeps its own lights. */
-	bool                            has_directional_lights;
+	bool has_directional_lights;
 } AeronEnvironmentDefinition;
 
 /* A set of parsed environment definitions, fixed once in use. */
@@ -198,8 +198,8 @@ typedef struct AeronPreparedEnvironment {
 	AeronTexture*              specular; /* NULL without a specular cube */
 	AeronTexture*              overlay;  /* NULL without an overlay */
 	uint32_t                   specular_mip_count;
-	AeronSampler*              sampler;          /* the library's environment sampler */
-	float                      world_to_cube[9]; /* row-major: Q^T * B */
+	AeronSampler*              sampler;                  /* the library's environment sampler */
+	float                      world_to_cube[9];         /* row-major: Q^T * B */
 	float                      overlay_world_to_cube[9]; /* the same with the overlay's rotation */
 	AeronEnvironmentLight      lights[AERON_ENV_MAX_LIGHTS];
 	uint32_t                   light_count;

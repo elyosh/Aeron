@@ -73,8 +73,8 @@ typedef struct XwauGameTables {
 	uint8_t  soundCases[XWAU_GAME_SOUND_SWITCHES][XWAU_GAME_SOUND_CASES];
 	uint8_t* soundJumps[XWAU_GAME_SOUND_SWITCHES];
 	size_t   soundJumpSize[XWAU_GAME_SOUND_SWITCHES];
-	char**  rows[2]; /* the model names of the two lists, by row */
-	size_t  rowCount[2];
+	char**   rows[2]; /* the model names of the two lists, by row */
+	size_t   rowCount[2];
 	/* The executable that the tables come from, for the readers that need
 	   more of it. NULL for the stock tables of XwauGameTables_CreateStock. */
 	XwauGameExe* exe;

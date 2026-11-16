@@ -54,11 +54,11 @@ void AeronScene_AddBillboard(AeronScene3D* s, const AeronSceneBillboardDesc* d) 
 	}
 	AeronSceneBb3dEntry* e = &s->bb_entries[s->bb_count++];
 	/* A star has no texture, so it never joins a textured run. */
-	e->texture             = star ? NULL : d->texture;
-	e->blend               = (uint8_t)d->blend;
-	e->stage               = (uint8_t)d->stage;
-	e->view_mask           = d->view_mask;
-	e->depth_bias          = d->depth_bias_view;
+	e->texture    = star ? NULL : d->texture;
+	e->blend      = (uint8_t)d->blend;
+	e->stage      = (uint8_t)d->stage;
+	e->view_mask  = d->view_mask;
+	e->depth_bias = d->depth_bias_view;
 	memcpy(e->corners, d->corners, sizeof e->corners);
 	memcpy(e->uv, d->uv, sizeof e->uv);
 	memcpy(e->colors, d->colors, sizeof e->colors);
@@ -465,8 +465,8 @@ static void bb3d_draw(struct AeronScene3D* s, AeronRenderPass* pass, int stage, 
 		velocity ? (s->temporal_active ? s->bb_temporal_vel_pipe : s->bb_vel_pipe) : NULL;
 
 	for (int i = 0; i <= s->bb_count; i++) {
-		const AeronSceneBb3dEntry* e   = i < s->bb_count ? &s->bb_entries[i] : NULL;
-		const uint32_t             fv  = (uint32_t)i * BB3D_VERTS_PER_ENTRY;
+		const AeronSceneBb3dEntry* e  = i < s->bb_count ? &s->bb_entries[i] : NULL;
+		const uint32_t             fv = (uint32_t)i * BB3D_VERTS_PER_ENTRY;
 		const int use = e && e->stage == stage && (!velocity || e->has_prev) && bb3d_in_view(s, e);
 		if (use && e->texture == run_tex && (velocity || (int)e->blend == run_blend) && run_count &&
 			fv == run_first + run_count) {

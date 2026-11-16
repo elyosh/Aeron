@@ -401,10 +401,10 @@ static Ktx2* ktx2_parse_bytes(const uint8_t* bytes, size_t blob_size, const char
 	k->bytes_per_block  = bytes_per_block;
 	/* The flags are in the first descriptor block, after the total size
 	   and two header words. */
-	k->premultiplied    = dfdByteLength >= 16 && (uint64_t)dfdByteOffset + dfdByteLength <= blob_size &&
-						  (blob[dfdByteOffset + 15] & 1u) != 0;
-	k->levels           = levels;
-	k->level_owned      = level_owned;
+	k->premultiplied = dfdByteLength >= 16 && (uint64_t)dfdByteOffset + dfdByteLength <= blob_size &&
+					   (blob[dfdByteOffset + 15] & 1u) != 0;
+	k->levels        = levels;
+	k->level_owned   = level_owned;
 	if (status)
 		*status = KTX2_OPEN_SUCCESS;
 	return k;

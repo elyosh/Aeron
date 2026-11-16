@@ -87,8 +87,8 @@ struct SkinLayers {
 	AeronGltfCookUriImageSource images; /* NULL: the PNG files next to gltf_path */
 	void*                       images_context;
 	bool                        verbose;
-	char** uris; /* the file's image URIs, by image index */
-	size_t uri_count;
+	char**                      uris; /* the file's image URIs, by image index */
+	size_t                      uri_count;
 
 	CompositeImage* composites;
 	size_t          composite_count;
@@ -178,7 +178,9 @@ static int texture_image(const cJSON* document, const cJSON* info) {
 	return source->valueint;
 }
 
-static cJSON* flight_model(cJSON* object) { return (cJSON*)get(get(object, "extensions"), "AERON_flight_model"); }
+static cJSON* flight_model(cJSON* object) {
+	return (cJSON*)get(get(object, "extensions"), "AERON_flight_model");
+}
 
 /* The model root: the default scene's first node. */
 static cJSON* model_root(cJSON* document) {
@@ -264,13 +266,14 @@ static bool read_material_skins(const cJSON* document, Inputs* in) {
 			if (!out->name)
 				return fail("out of memory");
 			if (!valid_skin_name(skin->string))
-				return fail("material '%s': invalid skin name '%s'", material_name(document, m), skin->string);
+				return fail("material '%s': invalid skin name '%s'", material_name(document, m),
+							skin->string);
 			out->image[CH_BASE]     = texture_image(document, get(skin, "baseColorTexture"));
 			out->image[CH_EMISSIVE] = texture_image(document, get(skin, "emissiveTexture"));
 			out->image[CH_MR]       = texture_image(document, get(skin, "metallicRoughnessTexture"));
 			if (out->image[CH_BASE] < 0 || out->image[CH_EMISSIVE] == -2 || out->image[CH_MR] == -2)
-				return fail("material '%s', skin '%s': missing or invalid texture", material_name(document, m),
-							skin->string);
+				return fail("material '%s', skin '%s': missing or invalid texture",
+							material_name(document, m), skin->string);
 			const cJSON* strength  = get(skin, "emissiveStrength");
 			out->emissive_strength = cJSON_IsNumber(strength) ? (float)strength->valuedouble : -1.0f;
 			if (strength && (!cJSON_IsNumber(strength) || strength->valuedouble < 0.0))
@@ -373,7 +376,9 @@ static bool read_variants(cJSON* document, Inputs* in) {
 
 /* ---- Colour ---------------------------------------------------------- */
 
-static float srgb_to_linear(float c) { return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f); }
+static float srgb_to_linear(float c) {
+	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+}
 
 static float linear_to_srgb(float c) {
 	c = c < 0.0f ? 0.0f : c > 1.0f ? 1.0f : c;
@@ -435,7 +440,7 @@ static cJSON* composite_reference(const cJSON* own, const cJSON* base, int textu
 		cJSON_DeleteItemFromObjectCaseSensitive(info, "scale");
 		cJSON_DeleteItemFromObjectCaseSensitive(info, "strength");
 	} else {
-		info = cJSON_CreateObject();
+		info                   = cJSON_CreateObject();
 		const cJSON* tex_coord = get(base, "texCoord");
 		const cJSON* transform = get(get(base, "extensions"), "KHR_texture_transform");
 		if (info && tex_coord)
@@ -451,8 +456,9 @@ static cJSON* composite_reference(const cJSON* own, const cJSON* base, int textu
 
 static const cJSON* reference_sampler(const cJSON* document, const cJSON* info) {
 	const cJSON* index = get(info, "index");
-	return cJSON_IsNumber(index) ? get(cJSON_GetArrayItem(get(document, "textures"), index->valueint), "sampler")
-								 : NULL;
+	return cJSON_IsNumber(index)
+			   ? get(cJSON_GetArrayItem(get(document, "textures"), index->valueint), "sampler")
+			   : NULL;
 }
 
 /* Builds the composite image of channel `ch` of `mat` (a copy of material
@@ -467,7 +473,7 @@ static bool composite_channel(Expansion* x, cJSON* mat, size_t m, const Material
 
 	cJSON*       pbr       = get_or_add_object(mat, "pbrMetallicRoughness");
 	const cJSON* base_info = get(pbr, "baseColorTexture");
-	cJSON*       own_info  = (cJSON*)(ch == CH_BASE		 ? base_info
+	cJSON*       own_info  = (cJSON*)(ch == CH_BASE       ? base_info
 									  : ch == CH_EMISSIVE ? get(mat, "emissiveTexture")
 														  : get(pbr, "metallicRoughnessTexture"));
 	const int    own_image = texture_image(x->document, own_info);
@@ -509,9 +515,9 @@ static bool composite_channel(Expansion* x, cJSON* mat, size_t m, const Material
 
 	/* Emissive strength: the material's, else the first emissive layer's,
 	 * else 1. Sources with another strength are scaled to it. */
-	float  strength     = 1.0f;
-	cJSON* strength_ext = (cJSON*)get(get(mat, "extensions"), "KHR_materials_emissive_strength");
-	const bool own_has  = strength_ext != NULL;
+	float       strength     = 1.0f;
+	cJSON*      strength_ext = (cJSON*)get(get(mat, "extensions"), "KHR_materials_emissive_strength");
+	const bool  own_has      = strength_ext != NULL;
 	const float own_strength = own_has ? number_or(get(strength_ext, "emissiveStrength"), 1.0f) : 1.0f;
 	if (ch == CH_EMISSIVE) {
 		strength = own_strength;
@@ -532,16 +538,17 @@ static bool composite_channel(Expansion* x, cJSON* mat, size_t m, const Material
 		s->opacity     = chain[l].opacity;
 		s->scale       = 1.0f;
 		if (ch == CH_EMISSIVE && strength > 0.0f) {
-			const float layer = skins[l]->emissive_strength >= 0.0f ? skins[l]->emissive_strength : own_strength;
-			s->scale          = layer / strength;
+			const float layer =
+				skins[l]->emissive_strength >= 0.0f ? skins[l]->emissive_strength : own_strength;
+			s->scale = layer / strength;
 		}
 	}
 
 	char texture_name[512];
 	snprintf(texture_name, sizeof texture_name, "%s_%s", name, kChannelName[ch]);
-	const int texture = add_composite_texture(x, index, texture_name,
-											  reference_sampler(x->document, own_info ? own_info : base_info));
-	cJSON*    info    = texture >= 0 ? composite_reference(own_info, base_info, texture) : NULL;
+	const int texture = add_composite_texture(
+		x, index, texture_name, reference_sampler(x->document, own_info ? own_info : base_info));
+	cJSON* info = texture >= 0 ? composite_reference(own_info, base_info, texture) : NULL;
 	if (!info)
 		return fail("out of memory");
 	if (ch == CH_BASE) {
@@ -566,7 +573,8 @@ static bool composite_channel(Expansion* x, cJSON* mat, size_t m, const Material
 			cJSON_AddItemToObject(mat, "emissiveFactor", cJSON_CreateDoubleArray(one, 3));
 		}
 		if (strength != 1.0f || own_has) {
-			cJSON* ext = get_or_add_object(get_or_add_object(mat, "extensions"), "KHR_materials_emissive_strength");
+			cJSON* ext =
+				get_or_add_object(get_or_add_object(mat, "extensions"), "KHR_materials_emissive_strength");
 			cJSON_DeleteItemFromObjectCaseSensitive(ext, "emissiveStrength");
 			cJSON_AddNumberToObject(ext, "emissiveStrength", strength);
 			x->uses_strength = true;
@@ -610,7 +618,7 @@ static int composite_material(Expansion* x, size_t m, const SkinLayer* chain, si
 	char         name[384];
 	snprintf(name, sizeof name, "%s_skin%03zu", material_name(x->document, m), number);
 	const MaterialSkin** skins = (const MaterialSkin**)calloc(count, sizeof *skins);
-	bool                 ok    = mat && skins &&
+	bool ok = mat && skins &&
 			  grow((void**)&x->materials, x->material_count, &x->material_capacity, sizeof *x->materials);
 	for (size_t l = 0; ok && l < count; ++l)
 		skins[l] = material_skin(x->in, m, chain[l].skin);
@@ -682,7 +690,8 @@ static void unmap_variant(cJSON* primitive, int variant) {
 /* The material the primitive maps variant `variant` to, or -1. */
 static int mapped_material(const cJSON* primitive, int variant) {
 	const cJSON* mapping;
-	cJSON_ArrayForEach(mapping, get(get(get(primitive, "extensions"), "KHR_materials_variants"), "mappings")) {
+	cJSON_ArrayForEach(mapping,
+					   get(get(get(primitive, "extensions"), "KHR_materials_variants"), "mappings")) {
 		const cJSON* index;
 		cJSON_ArrayForEach(index, get(mapping, "variants")) {
 			const cJSON* to = get(mapping, "material");
@@ -703,10 +712,12 @@ static bool expand(Expansion* x) {
 	cJSON* variants = NULL;
 	if (in->variant_count)
 		variants = get_or_add_array(
-			get_or_add_object(get_or_add_object(document, "extensions"), "KHR_materials_variants"), "variants");
+			get_or_add_object(get_or_add_object(document, "extensions"), "KHR_materials_variants"),
+			"variants");
 	size_t appended = 0;
 	for (size_t v = 0; variants && v < in->variant_count; ++v) {
-		in->variants[v].index = in->variants[v].own >= 0 ? in->variants[v].own : (int)(khr_count + appended++);
+		in->variants[v].index =
+			in->variants[v].own >= 0 ? in->variants[v].own : (int)(khr_count + appended++);
 		if (in->variants[v].own >= 0)
 			continue;
 		cJSON* item = cJSON_CreateObject();
@@ -721,7 +732,9 @@ static bool expand(Expansion* x) {
 	if (!used)
 		return fail("out of memory");
 	const cJSON* name;
-	cJSON_ArrayForEach(name, used) { found |= cJSON_IsString(name) && strcmp(name->valuestring, "KHR_materials_variants") == 0; }
+	cJSON_ArrayForEach(name, used) {
+		found |= cJSON_IsString(name) && strcmp(name->valuestring, "KHR_materials_variants") == 0;
+	}
 	if (!found && in->variant_count)
 		cJSON_AddItemToArray(used, cJSON_CreateString("KHR_materials_variants"));
 
@@ -730,8 +743,8 @@ static bool expand(Expansion* x) {
 	 * the file's variant with the same name gives it, else the base's. All
 	 * materials are looked up in the file's mappings before any mapping
 	 * changes. */
-	SkinLayer*   chain = NULL;
-	size_t       most  = 1;
+	SkinLayer* chain = NULL;
+	size_t     most  = 1;
 	for (size_t v = 0; v < in->variant_count; ++v)
 		most = in->variants[v].layer_count > most ? in->variants[v].layer_count : most;
 	chain   = (SkinLayer*)calloc(most, sizeof *chain);
@@ -746,7 +759,8 @@ static bool expand(Expansion* x) {
 		cJSON* primitive;
 		cJSON_ArrayForEach(primitive, get(mesh, "primitives")) {
 			const cJSON* material = get(primitive, "material");
-			if (!cJSON_IsNumber(material) || material->valueint < 0 || (size_t)material->valueint >= in->material_count)
+			if (!cJSON_IsNumber(material) || material->valueint < 0 ||
+				(size_t)material->valueint >= in->material_count)
 				continue;
 			const size_t m = (size_t)material->valueint;
 			for (size_t v = 0; v < in->variant_count; ++v) {
@@ -798,7 +812,8 @@ static bool expand(Expansion* x) {
 	if (x->uses_strength) {
 		found = false;
 		cJSON_ArrayForEach(name, used) {
-			found |= cJSON_IsString(name) && strcmp(name->valuestring, "KHR_materials_emissive_strength") == 0;
+			found |=
+				cJSON_IsString(name) && strcmp(name->valuestring, "KHR_materials_emissive_strength") == 0;
 		}
 		if (!found)
 			cJSON_AddItemToArray(used, cJSON_CreateString("KHR_materials_emissive_strength"));
@@ -890,7 +905,7 @@ static const LoadedImage* load_image(SkinLayers* s, int image) {
 			free(img.rgba);
 		return NULL;
 	}
-	*item                         = img;
+	*item                        = img;
 	s->loaded[s->loaded_count++] = item;
 	return item;
 }
@@ -907,9 +922,9 @@ static bool composite(SkinLayers* s, CompositeImage* c) {
 		return true;
 	if (c->failed)
 		return false;
-	c->failed           = true;
-	const clock_t start = clock();
-	const LoadedImage* own = c->own_image >= 0 ? load_image(s, c->own_image) : NULL;
+	c->failed                = true;
+	const clock_t      start = clock();
+	const LoadedImage* own   = c->own_image >= 0 ? load_image(s, c->own_image) : NULL;
 	if (c->own_image >= 0 && !own)
 		return false;
 	int w = own ? own->w : 0, h = own ? own->h : 0;
@@ -955,15 +970,16 @@ static bool composite(SkinLayers* s, CompositeImage* c) {
 				continue;
 			uint8_t* d = &c->rgba[i * 4];
 			for (int k = 0; k < 3; ++k) {
-				const int v = c->channel == CH_EMISSIVE ? scale_srgb(layer[i * 4 + k], src->scale) : layer[i * 4 + k];
-				d[k]        = (uint8_t)(d[k] * (255 - a) / 255 + v * a / 255);
+				const int v =
+					c->channel == CH_EMISSIVE ? scale_srgb(layer[i * 4 + k], src->scale) : layer[i * 4 + k];
+				d[k] = (uint8_t)(d[k] * (255 - a) / 255 + v * a / 255);
 			}
 		}
 	}
-	c->w       = w;
-	c->h       = h;
-	c->done    = true;
-	c->failed  = false;
+	c->w      = w;
+	c->h      = h;
+	c->done   = true;
+	c->failed = false;
 	s->seconds += (double)(clock() - start) / CLOCKS_PER_SEC;
 	return true;
 }

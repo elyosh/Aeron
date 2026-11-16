@@ -136,10 +136,10 @@ static const char* const kHudAreas[]     = {
 	"target_and_lasers", "left_text_box",     "right_text_box", "top_left",
 	"top_right",         "text_radio_system", "text_command"
 };
-static const char*     kScreenSources[57];
-static XwauNames       g_names;
-static const uint16_t  kStockHullIcons[]        = { 0, 100, 200, 300 };
-static const uint8_t   kStockHardpointKinds[40] = { 0, 1, 1, 1 };
+static const char*    kScreenSources[57];
+static XwauNames      g_names;
+static const uint16_t kStockHullIcons[]        = { 0, 100, 200, 300 };
+static const uint8_t  kStockHardpointKinds[40] = { 0, 1, 1, 1 };
 /* The stock projectile tables of the tests. The fake exe holds them too. */
 static const XwauProjectileTables kStockProjectiles = {
 	.lifetime_seconds   = { 1, 1, 1, 1, 1, 2, 40, 25, 3, 3 },
@@ -192,6 +192,7 @@ static void init_names(void) {
 		.hud_areas           = list_of(kHudAreas, sizeof kHudAreas / sizeof kHudAreas[0]),
 	};
 }
+
 /* How many design pixels make one 640x480 unit in the importer's frontend
    files. */
 static const int kDesignScale[2] = { 4, 3 };
@@ -1428,10 +1429,10 @@ static void test_objects(const char* scratch) {
 	for (int i = 0; i < 2; ++i) {
 		fake_exe_init(&exes[i]);
 		/* Object types 1 and 2 are on the beam test; 70 and 71 aren't. */
-		fake_type(&exes[i], 1, 0, 0);  /* X-wing */
-		fake_type(&exes[i], 2, 1, 1);  /* Booster, then TIE Advanced x1 */
-		fake_type(&exes[i], 70, 2, 2); /* CorvetteExplode */
-		fake_type(&exes[i], 71, 3, 3); /* B-wing */
+		fake_type(&exes[i], 1, 0, 0);                        /* X-wing */
+		fake_type(&exes[i], 2, 1, 1);                        /* Booster, then TIE Advanced x1 */
+		fake_type(&exes[i], 70, 2, 2);                       /* CorvetteExplode */
+		fake_type(&exes[i], 71, 3, 3);                       /* B-wing */
 		fake_at(&exes[i], 0x5FB240 + 24 * 71 + 1)[0] = 0x81; /* not in Death Star missions */
 		put16(fake_at(&exes[i], 0x5B0F70 + 2 * 7), 2);
 		put16(fake_at(&exes[i], 0x5B0F70 + 2 * 9), 70);
@@ -1439,10 +1440,10 @@ static void test_objects(const char* scratch) {
 		fake_equipment(&exes[i], 297, 1);
 		fake_equipment(&exes[i], 280, 0); /* a laser that the mod doesn't change */
 	}
-	FakeExe* m = &exes[1];
+	FakeExe* m                            = &exes[1];
 	fake_at(m, 0x5FB240 + 24 * 71 + 1)[0] = 0x01; /* the B-wing loads in every mission */
 	fake_at(m, 0x5FB240 + 24 * 2 + 1)[0]  = 0x20; /* type 2 only loads in Death Star missions */
-	fake_equipment(m, 288, 2); /* both move to a new row */
+	fake_equipment(m, 288, 2);                    /* both move to a new row */
 	fake_equipment(m, 297, 2);
 	/* A new projectile in free slot 307, with the flags of the stock lasers:
 	   an OPT model that every mission loads. */
@@ -1713,13 +1714,20 @@ static void test_game_files(const char* scratch) {
 	snprintf(game, sizeof game, "%s/files_game", scratch);
 	snprintf(stock, sizeof stock, "%s/files_stock", scratch);
 	snprintf(out, sizeof out, "%s/files_out", scratch);
-	static const char* const kDirs[] = { "files_game/Missions",           "files_game/Combat",
-										 "files_game/Wave/FRONTEND/B1M1", "files_game/Wave/Other",
-										 "files_game/FRONTRES/Cutscene",  "files_stock/MISSIONS",
-										 "files_stock/WAVE/FRONTEND",     "files_stock/FrontRes/CUTSCENE",
-										 "files_game/Wave/FE_HIGH_RES",   "files_stock/WAVE/FE_HIGH_RES",
-										 "files_game/Wave/Custom",        "files_stock/WAVE/MISSIONVOICE",
-										 "files_game/Music",              "files_stock/MUSIC" };
+	static const char* const kDirs[] = { "files_game/Missions",
+										 "files_game/Combat",
+										 "files_game/Wave/FRONTEND/B1M1",
+										 "files_game/Wave/Other",
+										 "files_game/FRONTRES/Cutscene",
+										 "files_stock/MISSIONS",
+										 "files_stock/WAVE/FRONTEND",
+										 "files_stock/FrontRes/CUTSCENE",
+										 "files_game/Wave/FE_HIGH_RES",
+										 "files_stock/WAVE/FE_HIGH_RES",
+										 "files_game/Wave/Custom",
+										 "files_stock/WAVE/MISSIONVOICE",
+										 "files_game/Music",
+										 "files_stock/MUSIC" };
 	for (size_t i = 0; i < sizeof kDirs / sizeof kDirs[0]; ++i) {
 		snprintf(path, sizeof path, "%s/%s", scratch, kDirs[i]);
 		MakeDirs(path);
@@ -1799,8 +1807,7 @@ static void test_game_files(const char* scratch) {
 	snprintf(path, sizeof path, "%s/Music/StRival.IMC", out);
 	const bool same_music = IsFile(path);
 	snprintf(path, sizeof path, "%s/Music/Extra.IMC", out);
-	check(music && !same_music && !IsFile(path),
-		  "game files: only the changed stock music files are copied");
+	check(music && !same_music && !IsFile(path), "game files: only the changed stock music files are copied");
 	snprintf(path, sizeof path, "%s/Wave/Custom/Evacuate.wav", out);
 	const bool target = same_file(path, "evacuate");
 	snprintf(path, sizeof path, "%s/Wave/Custom/Unused.wav", out);
@@ -1812,7 +1819,8 @@ static void test_game_files(const char* scratch) {
 									 "# The original game files that the installation doesn't have.\n"
 									 "removed:\n  - \"Wave/FRONTEND/GONE.WAV\"\n"
 									 "  - \"Wave/MISSIONVOICE/V.WAV\"\n") == 0,
-		  "game files: the stock sounds that the mod doesn't have are removed, also in folders it doesn't have");
+		  "game files: the stock sounds that the mod doesn't have are removed, also in folders it doesn't "
+		  "have");
 	free(removed);
 
 	/* A mission's sound replacements. */
@@ -2897,8 +2905,9 @@ static void test_hangar_crafts(const char* scratch) {
 	g_names.object_type_renames                 = renames;
 	text                                        = flight_settings_text(game, settings);
 	g_names.object_type_renames                 = NULL;
-	check(text && strstr(text, "\nhangar_crafts:\n  fighters: [type_5, type_6, tie_advanced_x1]\n"
-								"  transports: []\n") &&
+	check(text &&
+			  strstr(text, "\nhangar_crafts:\n  fighters: [type_5, type_6, tie_advanced_x1]\n"
+						   "  transports: []\n") &&
 			  !strstr(text, "  all:"),
 		  "hangar crafts: the files become lists of object types, without bad lines, unknown types and "
 		  "repeats, an empty file gives an empty list, and a missing file gives no key");
@@ -3773,9 +3782,9 @@ static void write_glb(const char* path, const char* json) {
 	FILE* f = fopen(path, "wb");
 	if (!f)
 		return;
-	size_t length = strlen(json);
-	const size_t padded = (length + 3u) & ~(size_t)3u;
-	const uint32_t total = (uint32_t)(20u + padded);
+	size_t         length    = strlen(json);
+	const size_t   padded    = (length + 3u) & ~(size_t)3u;
+	const uint32_t total     = (uint32_t)(20u + padded);
 	const uint32_t values[5] = { 0x46546C67u, 2u, total, (uint32_t)padded, 0x4E4F534Au };
 	for (int i = 0; i < 5; ++i) {
 		const unsigned char bytes[4] = { (unsigned char)values[i], (unsigned char)(values[i] >> 8),
@@ -3803,14 +3812,16 @@ static void test_illumination_rule(const char* scratch) {
 	snprintf(path, sizeof path, "%s/FlightModels/Unlit.opt", game);
 	write_file(path, "");
 	snprintf(path, sizeof path, "%s/models/lit.glb", flight);
-	write_glb(path, "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{\"name\":\"Hull\"},{\"name\":\"Windows\","
-					"\"extensions\":{\"AERON_flight_model\":{\"tags\":[\"engine_glow\",\"illumination\"]}}}]}");
+	write_glb(path,
+			  "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{\"name\":\"Hull\"},{\"name\":\"Windows\","
+			  "\"extensions\":{\"AERON_flight_model\":{\"tags\":[\"engine_glow\",\"illumination\"]}}}]}");
 	snprintf(path, sizeof path, "%s/models/unlit.glb", flight);
 	write_glb(path, "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{\"name\":\"Hull\","
 					"\"extensions\":{\"AERON_flight_model\":{\"tags\":[\"engine_glow\"]}}}]}");
 	size_t size = 0;
 	snprintf(path, sizeof path, "%s/models/lit.yaml", flight);
-	char* text = XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
+	char* text =
+		XwauCraft_Write(game, flight, &g_names, &g_stock, NULL, NULL) ? ReadWholeFile(path, &size) : NULL;
 	check(text && strstr(text, "surfaces:\n  illumination: {dark_when_disabled: true}\n"),
 		  "craft: a model with illumination materials gets the rule that darkens them");
 	free(text);

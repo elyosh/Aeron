@@ -258,7 +258,9 @@ fail:
 
 AeronFaceBvh* AeronFaceBvh_Build(const AeronFaceBvhGeometry* geometry) { return build_tree(geometry, false); }
 
-AeronFaceBvh* AeronFaceBvh_BuildBoxes(const AeronFaceBvhGeometry* geometry) { return build_tree(geometry, true); }
+AeronFaceBvh* AeronFaceBvh_BuildBoxes(const AeronFaceBvhGeometry* geometry) {
+	return build_tree(geometry, true);
+}
 
 void AeronFaceBvh_Free(AeronFaceBvh* bvh) {
 	if (!bvh)
@@ -277,8 +279,8 @@ AeronFaceBvh* AeronFaceBvh_Clone(const AeronFaceBvh* bvh) {
 	copy->node_count   = bvh->node_count;
 	copy->face_count   = bvh->face_count;
 	copy->leaf_ordered = bvh->leaf_ordered;
-	copy->nodes      = malloc((size_t)bvh->node_count * sizeof *copy->nodes);
-	copy->face_order = malloc((size_t)bvh->face_count * sizeof *copy->face_order);
+	copy->nodes        = malloc((size_t)bvh->node_count * sizeof *copy->nodes);
+	copy->face_order   = malloc((size_t)bvh->face_count * sizeof *copy->face_order);
 	if (!copy->nodes || !copy->face_order) {
 		AeronFaceBvh_Free(copy);
 		return NULL;
@@ -318,13 +320,15 @@ static float get_f32(const uint8_t* in) {
  * staging them through a fixed buffer. */
 static uint64_t geometry_hash(const AeronFaceBvhGeometry* geometry, uint32_t second_count) {
 	enum { CHUNK = 1024 };
+
 	uint8_t       buffer[CHUNK * 12];
 	XXH64_state_t state;
 	XXH64_reset(&state, 0);
 	put_u32(buffer, geometry->position_count);
 	XXH64_update(&state, buffer, 4);
 	for (uint32_t first = 0; first < geometry->position_count; first += CHUNK) {
-		const uint32_t count = geometry->position_count - first < CHUNK ? geometry->position_count - first : CHUNK;
+		const uint32_t count =
+			geometry->position_count - first < CHUNK ? geometry->position_count - first : CHUNK;
 		for (uint32_t index = 0; index < count; ++index) {
 			const float* position = geometry_position(geometry, first + index);
 			for (int axis = 0; axis < 3; ++axis)
@@ -335,7 +339,8 @@ static uint64_t geometry_hash(const AeronFaceBvhGeometry* geometry, uint32_t sec
 	put_u32(buffer, second_count);
 	XXH64_update(&state, buffer, 4);
 	for (uint32_t first = 0; first < geometry->triangle_count; first += CHUNK) {
-		const uint32_t count = geometry->triangle_count - first < CHUNK ? geometry->triangle_count - first : CHUNK;
+		const uint32_t count =
+			geometry->triangle_count - first < CHUNK ? geometry->triangle_count - first : CHUNK;
 		for (uint32_t index = 0; index < count; ++index) {
 			const uint32_t* triangle = geometry_triangle(geometry, first + index);
 			for (int corner = 0; corner < 3; ++corner)
@@ -417,8 +422,8 @@ typedef struct VerifyItem {
 
 /* Single top-down pass over the tree: structure, coverage and
  * conservativeness. */
-static bool verify_tree(const AeronFaceBvh* bvh, const AeronFaceBvhGeometry* geometry, bool box_only, char* error,
-						size_t error_size) {
+static bool verify_tree(const AeronFaceBvh* bvh, const AeronFaceBvhGeometry* geometry, bool box_only,
+						char* error, size_t error_size) {
 	bool        ok           = false;
 	uint8_t*    node_visited = calloc(bvh->node_count, 1);
 	uint8_t*    face_seen    = calloc(bvh->face_count, 1);
@@ -439,7 +444,8 @@ static bool verify_tree(const AeronFaceBvh* bvh, const AeronFaceBvhGeometry* geo
 		node_visited[item.node] = 1;
 		++visited;
 		for (int axis = 0; axis < 3; ++axis) {
-			if (!isfinite(node->min[axis]) || !isfinite(node->max[axis]) || node->min[axis] > node->max[axis]) {
+			if (!isfinite(node->min[axis]) || !isfinite(node->max[axis]) ||
+				node->min[axis] > node->max[axis]) {
 				load_error(error, error_size, "cooked BVH node has invalid bounds");
 				goto done;
 			}
@@ -483,7 +489,8 @@ static bool verify_tree(const AeronFaceBvh* bvh, const AeronFaceBvhGeometry* geo
 				goto done;
 			}
 			if (entry > 0 && face <= bvh->face_order[node->first_or_child + entry - 1]) {
-				load_error(error, error_size, "cooked BVH leaf does not list its triangles in ascending order");
+				load_error(error, error_size,
+						   "cooked BVH leaf does not list its triangles in ascending order");
 				goto done;
 			}
 			face_seen[face] = 1;
@@ -514,8 +521,8 @@ done:
 
 static bool load_cooked(const uint8_t* bytes, size_t size, uint64_t expected_hash,
 						const AeronFaceBvhGeometry* geometry, bool box_only, uint32_t unique_vertex_count,
-						AeronFaceBvh** out_bvh, uint32_t** out_sample, uint32_t* out_sample_count, char* error,
-						size_t error_size) {
+						AeronFaceBvh** out_bvh, uint32_t** out_sample, uint32_t* out_sample_count,
+						char* error, size_t error_size) {
 	if (!bytes || !out_bvh || !geometry_valid(geometry, box_only))
 		return load_error(error, error_size, "invalid cooked BVH arguments");
 	if (size < COOKED_HEADER_BYTES)
@@ -529,7 +536,9 @@ static bool load_cooked(const uint8_t* bytes, size_t size, uint64_t expected_has
 		return load_error(error, error_size, "unsupported cooked BVH version");
 	const uint32_t expected_vertices = box_only ? geometry->position_count : unique_vertex_count;
 	const uint32_t expected_samples =
-		box_only ? 0u : (unique_vertex_count < AERON_FACE_BVH_SAMPLE_MAX ? unique_vertex_count : AERON_FACE_BVH_SAMPLE_MAX);
+		box_only ? 0u
+				 : (unique_vertex_count < AERON_FACE_BVH_SAMPLE_MAX ? unique_vertex_count
+																	: AERON_FACE_BVH_SAMPLE_MAX);
 	if (face_count != geometry->triangle_count || vertex_count != expected_vertices ||
 		sample_count != expected_samples || node_count == 0)
 		return load_error(error, error_size, "cooked BVH counts do not match the geometry");
@@ -662,8 +671,8 @@ bool AeronFaceBvh_ReorderToLeafOrder(AeronFaceBvh* bvh, void* items, size_t item
 		}
 		for (uint32_t entry = 0; entry < node->count; ++entry) {
 			const uint32_t face = bvh->face_order[node->first_or_child + entry];
-			memcpy(reordered + (size_t)(next + entry) * item_size, (const uint8_t*)items + (size_t)face * item_size,
-				   item_size);
+			memcpy(reordered + (size_t)(next + entry) * item_size,
+				   (const uint8_t*)items + (size_t)face * item_size, item_size);
 			if (old_to_new)
 				old_to_new[face] = next + entry;
 		}
@@ -723,8 +732,8 @@ typedef struct SegmentQuery {
 static bool segment_meets_node(const SegmentQuery* query, const AeronFaceBvhNode* node) {
 	const double margin =
 		query->tolerance * (double)node->max_inv_dominant + AERON_FACE_BVH_ABSOLUTE_SLACK + query->q;
-	double       t_min  = 0.0;
-	double       t_max  = 1.0;
+	double t_min = 0.0;
+	double t_max = 1.0;
 	for (int axis = 0; axis < 3; ++axis) {
 		const double lo = (double)node->min[axis] - margin;
 		const double hi = (double)node->max[axis] + margin;
@@ -750,7 +759,8 @@ static bool segment_meets_node(const SegmentQuery* query, const AeronFaceBvhNode
 	return true;
 }
 
-static bool node_meets_slabs(const AeronFaceBvhNode* node, const AeronFaceBvhSlab* slabs, uint32_t slab_count) {
+static bool node_meets_slabs(const AeronFaceBvhNode* node, const AeronFaceBvhSlab* slabs,
+							 uint32_t slab_count) {
 	for (uint32_t index = 0; index < slab_count; ++index) {
 		const AeronFaceBvhSlab* slab       = &slabs[index];
 		double                  center     = 0.0;
@@ -762,7 +772,8 @@ static bool node_meets_slabs(const AeronFaceBvhNode* node, const AeronFaceBvhSla
 			half_width += fabs(half * (double)slab->normal[axis]);
 		}
 		const double widen = ldexp(fabs((double)slab->min) + fabs((double)slab->max), -10) + 1.0e-3;
-		if (center + half_width < (double)slab->min - widen || center - half_width > (double)slab->max + widen)
+		if (center + half_width < (double)slab->min - widen ||
+			center - half_width > (double)slab->max + widen)
 			return false;
 	}
 	return true;
@@ -780,7 +791,8 @@ static bool query_meets_node(const Query* query, const AeronFaceBvhNode* node) {
 }
 
 /* Merges the ascending runs a[0..a_count) and b[0..b_count) into out. */
-static void merge_runs(const uint32_t* a, uint32_t a_count, const uint32_t* b, uint32_t b_count, uint32_t* out) {
+static void merge_runs(const uint32_t* a, uint32_t a_count, const uint32_t* b, uint32_t b_count,
+					   uint32_t* out) {
 	uint32_t i = 0, j = 0, k = 0;
 	while (i < a_count && j < b_count)
 		out[k++] = a[i] < b[j] ? a[i++] : b[j++];
@@ -896,9 +908,9 @@ uint32_t AeronFaceBvh_Collect(const AeronFaceBvh* bvh, const float start[3], con
 		}
 	}
 	for (int axis = 0; axis < 3; ++axis) {
-		const double from  = (double)start[axis];
-		const double to    = (double)end[axis];
-		const double delta = to - from;
+		const double from       = (double)start[axis];
+		const double to         = (double)end[axis];
+		const double delta      = to - from;
 		segment.start[axis]     = from;
 		segment.flat[axis]      = delta == 0.0;
 		segment.inv_delta[axis] = delta == 0.0 ? 0.0 : 1.0 / delta;
@@ -912,8 +924,8 @@ uint32_t AeronFaceBvh_Collect(const AeronFaceBvh* bvh, const float start[3], con
 	return run_query(bvh, &query, scratch);
 }
 
-uint32_t AeronFaceBvh_CollectSlabs(const AeronFaceBvh* bvh, const AeronFaceBvhSlab* slabs, uint32_t slab_count,
-								   AeronFaceBvhScratch* scratch) {
+uint32_t AeronFaceBvh_CollectSlabs(const AeronFaceBvh* bvh, const AeronFaceBvhSlab* slabs,
+								   uint32_t slab_count, AeronFaceBvhScratch* scratch) {
 	const Query query = { .slabs = slabs, .slab_count = slab_count };
 	return run_query(bvh, &query, scratch);
 }

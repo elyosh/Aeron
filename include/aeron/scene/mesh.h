@@ -53,7 +53,7 @@ typedef struct AeronPbrMaterialEntry {
 							*    alternative count << 16; 0 without
 							* w: energy mask (bits 0-2) | damage choice << 8 |
 							*    placement << 20 */
-} AeronPbrMaterialEntry;         /* 176 B */
+} AeronPbrMaterialEntry;   /* 176 B */
 
 /* Shader record of one screen rectangle (AeronGltfScreenRect): float4 and
  * uint4 members only, so the layout is the same on every backend. */
@@ -105,7 +105,7 @@ typedef struct AeronSceneMesh {
 	uint32_t*                cpu_indices;
 	/* Box-only BVH over cpu_vertices/cpu_indices triangles, copied from the
 	 * flight model; NULL for meshes built from stock OPTs. */
-	AeronFaceBvh*            render_bvh;
+	AeronFaceBvh* render_bvh;
 
 	/* Channel atlases (base_color / normal / metallic_rough / emissive).
 	 * Factor-only models have no atlases; textured models carry all four. */
@@ -181,8 +181,8 @@ typedef struct AeronSceneMesh {
 	 * no material animates, and the effect libraries they hold.
 	 * `has_details`: a material has detail layers, so the mesh draws with
 	 * the `_details` shaders. */
-	AeronBuffer*      anim_buffer;
-	bool              has_details;
+	AeronBuffer* anim_buffer;
+	bool         has_details;
 	/* What the animation records can show on an instance
 	 * (AeronSceneMaterialAnim):
 	 * - `anim_states`: the states that the flipbooks play in, one bit per
@@ -207,7 +207,7 @@ typedef struct AeronSceneMesh {
 	struct AeronSceneMesh*       lods[AERON_GLTF_MAX_LODS];
 	const struct AeronSceneMesh* lod_base;
 	/* On a level's mesh, its number (1 for the most detailed); 0 otherwise. */
-	uint32_t                     lod_level;
+	uint32_t lod_level;
 } AeronSceneMesh;
 
 typedef enum AeronSceneMeshCreateStatus {

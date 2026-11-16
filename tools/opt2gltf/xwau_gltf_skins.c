@@ -69,15 +69,16 @@ static const char* keep(XwauGltfSkins* s, const char* format, ...) {
 
 /* A skin name of the format (1 to 63 of a-z, 0-9, '.', '_', '-'), unique
  * among `names`. */
-static const char* layer_skin_name(XwauGltfSkins* s, const char* name, const char* const* names, size_t count) {
-	char base[64];
+static const char* layer_skin_name(XwauGltfSkins* s, const char* name, const char* const* names,
+								   size_t count) {
+	char   base[64];
 	size_t n = 0;
 	for (const char* c = name; *c && n < 56; ++c) {
 		const char lower = (*c >= 'A' && *c <= 'Z') ? (char)(*c - 'A' + 'a') : *c;
-		base[n++] = (lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9') || lower == '.' ||
-							lower == '-'
-						? lower
-						: '_';
+		base[n++] =
+			(lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9') || lower == '.' || lower == '-'
+				? lower
+				: '_';
 	}
 	if (!n)
 		base[n++] = '_';
@@ -110,7 +111,7 @@ static uint8_t* keep_pixels(XwauGltfSkins* s, uint8_t* rgba, size_t bytes, size_
 		return NULL;
 	}
 	sizes[s->pixel_count - 1] = bytes;
-	return *slot = rgba;
+	return *slot              = rgba;
 }
 
 static void mr_texel(const XwauBaked* b, size_t i, uint8_t out[4]) {
@@ -128,9 +129,9 @@ static void mr_texel(const XwauBaked* b, size_t i, uint8_t out[4]) {
  * channels its layers carry. */
 typedef struct LayerCandidate {
 	size_t   skin;
-	uint8_t* base;     /* baked base color, the skin's alpha as coverage */
-	uint8_t* emissive; /* baked emissive, NULL when neither it nor the texture emits */
-	uint8_t* mr;       /* baked metallic-roughness */
+	uint8_t* base;                         /* baked base color, the skin's alpha as coverage */
+	uint8_t* emissive;                     /* baked emissive, NULL when neither it nor the texture emits */
+	uint8_t* mr;                           /* baked metallic-roughness */
 	bool     emissive_differs, mr_differs; /* from the texture's own, under the coverage */
 } LayerCandidate;
 
@@ -144,10 +145,10 @@ static void candidate_free(LayerCandidate* c) {
 /* Bakes skin `skin` (image `img`) on texture `ti`: the skin's colors with the
  * texture's alpha, illumination and material. */
 static bool layer_bake(const opt_file_t* opt, int base_shade, const XwauGltfMaterial* xwau,
-					   const XwauGltfAnim* anims, const XwauBaked* own, int32_t ti, const OptGltfImageView* img,
-					   LayerCandidate* out) {
-	const opt_texture_t* t   = &opt->textures[ti];
-	const uint32_t       w   = (uint32_t)t->width, h = (uint32_t)t->height;
+					   const XwauGltfAnim* anims, const XwauBaked* own, int32_t ti,
+					   const OptGltfImageView* img, LayerCandidate* out) {
+	const opt_texture_t* t = &opt->textures[ti];
+	const uint32_t       w = (uint32_t)t->width, h = (uint32_t)t->height;
 	const size_t         n   = (size_t)w * h;
 	uint8_t*             raw = OptGltf_DecodeTexture(t, base_shade);
 	if (!raw)
@@ -233,7 +234,8 @@ static bool layers_finish(XwauGltfSkins* s, const char* basename, int32_t ti, ui
 			in->mr                       = NULL;
 			out->metallic_roughness.name = keep(s, "skin_%s_Tex%02d_mr", skin, (int)ti);
 			out->metallic_roughness.file = keep(s, "skins/%s/%s_Tex%02d_mr.png", skin, basename, (int)ti);
-			ok = out->metallic_roughness.view.rgba && out->metallic_roughness.name && out->metallic_roughness.file;
+			ok = out->metallic_roughness.view.rgba && out->metallic_roughness.name &&
+				 out->metallic_roughness.file;
 			s->metal_rough_layers++;
 		}
 		if (ok)
@@ -246,17 +248,17 @@ static bool layers_finish(XwauGltfSkins* s, const char* basename, int32_t ti, ui
  * variant with layers becomes a skin variant; one whose skins have no image
  * stays a plain variant, which shows its state. */
 static bool layers_build(XwauGltfSkins* s, const opt_file_t* opt, const char* basename,
-						 const XwauSkinVariants* skins, const char* const* skin_names, const OptGltfScreen* screens,
-						 int base_shade, const XwauGltfMaterial* xwau, const XwauGltfAnim* anims,
-						 const XwauBaked* baked) {
-	const size_t tc = (size_t)opt->texture_count;
-	s->first_layer  = (size_t*)calloc(tc + 1, sizeof *s->first_layer);
+						 const XwauSkinVariants* skins, const char* const* skin_names,
+						 const OptGltfScreen* screens, int base_shade, const XwauGltfMaterial* xwau,
+						 const XwauGltfAnim* anims, const XwauBaked* baked) {
+	const size_t tc   = (size_t)opt->texture_count;
+	s->first_layer    = (size_t*)calloc(tc + 1, sizeof *s->first_layer);
 	s->texture_layers = (size_t*)calloc(tc + 1, sizeof *s->texture_layers);
-	s->skin_names   = (const char**)calloc(skins->skin_count + 1, sizeof *s->skin_names);
-	s->layers       = (OptGltfSkinLayer*)calloc(skins->skin_count * tc + 1, sizeof *s->layers);
-	size_t* sizes   = (size_t*)calloc(skins->skin_count * tc * 3 + 1, sizeof *sizes);
-	bool*   has     = (bool*)calloc(skins->skin_count + 1, sizeof *has);
-	bool    ok      = s->first_layer && s->texture_layers && s->skin_names && s->layers && sizes && has;
+	s->skin_names     = (const char**)calloc(skins->skin_count + 1, sizeof *s->skin_names);
+	s->layers         = (OptGltfSkinLayer*)calloc(skins->skin_count * tc + 1, sizeof *s->layers);
+	size_t* sizes     = (size_t*)calloc(skins->skin_count * tc * 3 + 1, sizeof *sizes);
+	bool*   has       = (bool*)calloc(skins->skin_count + 1, sizeof *has);
+	bool    ok        = s->first_layer && s->texture_layers && s->skin_names && s->layers && sizes && has;
 	for (size_t k = 0; ok && k < skins->skin_count; ++k)
 		ok = (s->skin_names[k] = layer_skin_name(s, skin_names[k], s->skin_names, k)) != NULL;
 	/* Skinnable textures: state 0 of LOD 0 face groups, not screens. */
@@ -321,18 +323,20 @@ static bool layers_build(XwauGltfSkins* s, const opt_file_t* opt, const char* ba
 	s->skin_layers       = (OptGltfSkinVariantLayer*)calloc(total_layers + 1, sizeof *s->skin_layers);
 	s->variants          = (OptGltfVariant*)calloc(skins->variant_count + 1, sizeof *s->variants);
 	s->plain_material_of = (int32_t*)malloc((skins->variant_count * tc + 1) * sizeof *s->plain_material_of);
-	ok = ok && s->skin_variants && s->skin_layers && s->variants && s->plain_material_of;
+	ok                   = ok && s->skin_variants && s->skin_layers && s->variants && s->plain_material_of;
 	size_t skin_variant_count = 0, plain_count = 0, used_layers = 0;
 	for (size_t v = 0; ok && v < skins->variant_count; ++v) {
-		const XwauSkinVariant* in    = &skins->variants[v];
+		const XwauSkinVariant*   in    = &skins->variants[v];
 		OptGltfSkinVariantLayer* first = &s->skin_layers[used_layers];
 		size_t                   count = 0;
 		for (size_t l = 0; l < in->layer_count; ++l)
 			if (has[in->layers[l].skin])
-				first[count++] = (OptGltfSkinVariantLayer) { s->skin_names[in->layers[l].skin], in->layers[l].opacity };
+				first[count++] =
+					(OptGltfSkinVariantLayer) { s->skin_names[in->layers[l].skin], in->layers[l].opacity };
 		used_layers += count;
 		if (count)
-			s->skin_variants[skin_variant_count++] = (OptGltfSkinVariant) { in->name, in->state, first, count };
+			s->skin_variants[skin_variant_count++] =
+				(OptGltfSkinVariant) { in->name, in->state, first, count };
 		else
 			s->variants[plain_count++] = (OptGltfVariant) { in->name, in->state };
 	}
@@ -359,13 +363,14 @@ const OptGltfSkinLayer* XwauGltfSkins_Layers(const XwauGltfSkins* s, int32_t tex
 }
 
 XwauGltfSkins* XwauGltfSkins_Build(const opt_file_t* opt, const char* basename, const XwauSkinVariants* skins,
-								   const char* const* skin_names, const OptGltfScreen* screens, int base_shade,
-								   const XwauGltfMaterial* materials, const XwauGltfAnim* anims,
-								   const XwauBaked* baked) {
+								   const char* const* skin_names, const OptGltfScreen* screens,
+								   int base_shade, const XwauGltfMaterial* materials,
+								   const XwauGltfAnim* anims, const XwauBaked* baked) {
 	if (!skin_validate(skins, basename))
 		return NULL;
 	XwauGltfSkins* s = (XwauGltfSkins*)calloc(1, sizeof *s);
-	if (!s || !layers_build(s, opt, basename, skins, skin_names, screens, base_shade, materials, anims, baked)) {
+	if (!s ||
+		!layers_build(s, opt, basename, skins, skin_names, screens, base_shade, materials, anims, baked)) {
 		Report(NULL, "out of memory (skins)");
 		XwauGltfSkins_Free(s);
 		return NULL;

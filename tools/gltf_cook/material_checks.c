@@ -23,38 +23,38 @@
 #define TAG "[aeron_gltf_cook] materials"
 
 /* AERON_ANIM_STATE_* names, as the loader reads them. */
-static const char* const kStates[]   = { "threat.laser",
-										 "threat.turret",
-										 "threat.beam",
-										 "threat.missile_locking",
-										 "threat.missile_locked",
-										 "cannon.1",
-										 "cannon.2",
-										 "cannon.3",
-										 "cannon.4",
-										 "cannon.5",
-										 "cannon.6",
-										 "cannon.7",
-										 "cannon.8",
-										 "broken.cmd",
-										 "broken.laser_ion",
-										 "broken.beam_weapon",
-										 "broken.shields",
-										 "broken.throttle",
-										 "broken.sensors",
-										 "broken.laser_recharge",
-										 "broken.engine_power",
-										 "broken.shield_recharge",
-										 "broken.beam_recharge",
-										 "hull.25",
-										 "hull.50",
-										 "hull.75",
-										 "laser_lock",
-										 "warhead.locking",
-										 "warhead.locked",
-										 "hangar",
-										 "target",
-										 "always" };
+static const char* const kStates[] = { "threat.laser",
+									   "threat.turret",
+									   "threat.beam",
+									   "threat.missile_locking",
+									   "threat.missile_locked",
+									   "cannon.1",
+									   "cannon.2",
+									   "cannon.3",
+									   "cannon.4",
+									   "cannon.5",
+									   "cannon.6",
+									   "cannon.7",
+									   "cannon.8",
+									   "broken.cmd",
+									   "broken.laser_ion",
+									   "broken.beam_weapon",
+									   "broken.shields",
+									   "broken.throttle",
+									   "broken.sensors",
+									   "broken.laser_recharge",
+									   "broken.engine_power",
+									   "broken.shield_recharge",
+									   "broken.beam_recharge",
+									   "hull.25",
+									   "hull.50",
+									   "hull.75",
+									   "laser_lock",
+									   "warhead.locking",
+									   "warhead.locked",
+									   "hangar",
+									   "target",
+									   "always" };
 /* Flipbook layers, which are also the kinds of their frames. */
 static const char* const kLayers[]   = { "baseColor", "emissive" };
 static const char* const kModes[]    = { "loop", "once" };
@@ -237,7 +237,8 @@ static bool check_flipbook(Check* c, const cJSON* in) {
 		if (!key_known(c, library, key->valuestring, layer->valuestring))
 			return false;
 	}
-	if (strength && (!cJSON_IsNumber(strength) || !isfinite(strength->valuedouble) || strength->valuedouble < 0.0))
+	if (strength &&
+		(!cJSON_IsNumber(strength) || !isfinite(strength->valuedouble) || strength->valuedouble < 0.0))
 		return fail(c, "emissiveStrength is a number >= 0");
 	if (unlit && (!cJSON_IsNumber(unlit) || !(unlit->valuedouble >= 0.0 && unlit->valuedouble <= 1.0)))
 		return fail(c, "unlit is a number in [0, 1]");
@@ -268,7 +269,8 @@ static bool check_damage(Check* c, const cJSON* in) {
 		const cJSON* stages = cJSON_GetObjectItemCaseSensitive(alt, "stages");
 		const cJSON* scale  = cJSON_GetObjectItemCaseSensitive(alt, "scale");
 		const cJSON* offset = cJSON_GetObjectItemCaseSensitive(alt, "offset");
-		if (!cJSON_IsObject(alt) || !only_members(c, "damage alternative", alt, alt_fields, COUNT(alt_fields)))
+		if (!cJSON_IsObject(alt) ||
+			!only_members(c, "damage alternative", alt, alt_fields, COUNT(alt_fields)))
 			return false;
 		const bool offset_ok =
 			!offset || (cJSON_IsString(offset) && strcmp(offset->valuestring, "inside") == 0) ||
@@ -350,8 +352,8 @@ static bool is_tag_list(const cJSON* in) {
 }
 
 static bool check_screen(Check* c, const cJSON* in) {
-	static const char* const fields[]      = { "cover",  "transparent", "alwaysVisible", "hologram",
-											   "noisy",  "hide",        "rects" };
+	static const char* const fields[]      = { "cover", "transparent", "alwaysVisible", "hologram",
+											   "noisy", "hide",        "rects" };
 	static const char* const rect_fields[] = { "source", "dst",  "bg",     "highlight",
 											   "lock",   "gain", "layers", "bar" };
 	static const char* const flags[]       = { "cover", "transparent", "alwaysVisible", "hologram", "noisy" };
@@ -442,16 +444,18 @@ bool aeron_gltf_cook_check_materials(const char* path, const char* effects_dir, 
 	Check c  = { .path = path, .effects_dir = effects_dir, .project = project };
 	bool  ok = true;
 	for (cgltf_size m = 0; m < data->materials_count; m++) {
-		const char* json = flight_model_json(data->materials[m].extensions, data->materials[m].extensions_count);
+		const char* json =
+			flight_model_json(data->materials[m].extensions, data->materials[m].extensions_count);
 		if (!json)
 			continue;
-		snprintf(c.owner, sizeof c.owner, "material %s", data->materials[m].name ? data->materials[m].name : "?");
+		snprintf(c.owner, sizeof c.owner, "material %s",
+				 data->materials[m].name ? data->materials[m].name : "?");
 		ok = check_material(&c, json) && ok;
 	}
 	/* The model root's energy default. */
-	const cgltf_node* root = data->scene && data->scene->nodes_count ? data->scene->nodes[0] : NULL;
-	const char*       json = root ? flight_model_json(root->extensions, root->extensions_count) : NULL;
-	cJSON*            node = json ? cJSON_Parse(json) : NULL;
+	const cgltf_node* root   = data->scene && data->scene->nodes_count ? data->scene->nodes[0] : NULL;
+	const char*       json   = root ? flight_model_json(root->extensions, root->extensions_count) : NULL;
+	cJSON*            node   = json ? cJSON_Parse(json) : NULL;
 	const cJSON*      energy = cJSON_GetObjectItemCaseSensitive(node, "energy");
 	snprintf(c.owner, sizeof c.owner, "the model root");
 	ok = (!energy || check_energy(&c, energy)) && ok;

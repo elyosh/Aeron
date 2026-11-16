@@ -280,6 +280,7 @@ int AeronSceneLensFlare_Visibility(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!pass)
 		return 0;
 	const AeronRectI* vp = &s->camera.viewport;
+
 	struct {
 		float    disc[4];
 		float    viewport[4];
@@ -290,6 +291,7 @@ int AeronSceneLensFlare_Visibility(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		.ends     = { s->flare_shape_end[AERON_SCENE_LENS_FLARE_STREAK],
 					  s->flare_shape_end[AERON_SCENE_LENS_FLARE_HEXAGON], 0, 0 },
 	};
+
 	Aeron_BindComputePipeline(pass, s->flare_visibility_pipe);
 	Aeron_BindComputeTextureSampler(pass, 0, depth, s->flare_depth_sampler);
 	Aeron_BindComputeUniformData(pass, 0, &u, sizeof u);
@@ -403,20 +405,20 @@ void AeronSceneLensFlare_Release(AeronScene3D* s) {
 	Aeron_DestroySampler(s->flare_smooth_sampler);
 	Aeron_DestroyBuffer(s->flare_visibility);
 	Aeron_DestroyBuffer(s->flare_element_buffer);
-	s->flare_visibility_pipe = NULL;
-	s->flare_depth_sampler   = NULL;
+	s->flare_visibility_pipe       = NULL;
+	s->flare_depth_sampler         = NULL;
 	s->flare_depth_compare_sampler = NULL;
-	s->flare_pipe            = NULL;
-	s->flare_vs              = NULL;
-	s->flare_fs              = NULL;
-	s->flare_smooth_pipe     = NULL;
-	s->flare_smooth_fs       = NULL;
-	s->flare_smooth_rt       = NULL;
-	s->flare_smooth_sampler  = NULL;
-	s->flare_visibility      = NULL;
-	s->flare_element_buffer  = NULL;
-	s->flare_tried           = 0;
-	s->flare_frame           = 0;
+	s->flare_pipe                  = NULL;
+	s->flare_vs                    = NULL;
+	s->flare_fs                    = NULL;
+	s->flare_smooth_pipe           = NULL;
+	s->flare_smooth_fs             = NULL;
+	s->flare_smooth_rt             = NULL;
+	s->flare_smooth_sampler        = NULL;
+	s->flare_visibility            = NULL;
+	s->flare_element_buffer        = NULL;
+	s->flare_tried                 = 0;
+	s->flare_frame                 = 0;
 }
 
 /* ---- settings ---- */

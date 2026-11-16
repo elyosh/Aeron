@@ -268,10 +268,10 @@ int AeronScenePost_EnsureSsao(struct AeronScene3D* s) {
 	}
 
 	/* Half-resolution AO/directional-shadow visibility + ping-pong blur target. */
-	s->ao_rt_w    = (s->render_w + 1) / 2;
-	s->ao_rt_h    = (s->render_h + 1) / 2;
-	s->ao_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA16_FLOAT, s->ao_rt_w, s->ao_rt_h,
-												"scene.visibility");
+	s->ao_rt_w = (s->render_w + 1) / 2;
+	s->ao_rt_h = (s->render_h + 1) / 2;
+	s->ao_rt   = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA16_FLOAT, s->ao_rt_w, s->ao_rt_h,
+												  "scene.visibility");
 	s->ao_blur_rt = AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA16_FLOAT, s->ao_rt_w,
 													 s->ao_rt_h, "scene.visibility_blur");
 

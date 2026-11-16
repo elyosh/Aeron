@@ -754,7 +754,7 @@ bool XwauMissions_Articulations(const XwauMissions* missions, const char* model,
 	for (size_t i = 0; ok && i < entry->count; ++i) {
 		for (size_t g = 0; ok && g < sorted[i]->lists.count; ++g) {
 			const GroupList* list = &sorted[i]->lists.groups[g];
-			char       tag[1024];
+			char             tag[1024];
 			snprintf(tag, sizeof tag, "variant.%s.%s", sorted[i]->name, list->group);
 			if (strlen(tag) > TAG_MAX) {
 				ReportFatal(label, "variant %s: the group name '%s' is longer than %d characters",

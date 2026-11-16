@@ -15,12 +15,12 @@
  * its own tools.
  */
 
-#include "internal.h"
 #include "aeron/debug.h"
+#include "internal.h"
 
-#include <imgui.h>
 #include "backends/imgui_impl_sdl3.h"
 #include "backends/imgui_impl_sdlgpu3.h"
+#include <imgui.h>
 
 #define AERON_DEBUG_MAX_TOOLS 32
 
@@ -32,12 +32,12 @@ typedef struct AeronDebugTool {
 } AeronDebugTool;
 
 static struct {
-	bool           initialized = false;
-	bool           visible     = false;
+	bool                    initialized      = false;
+	bool                    visible          = false;
 	AeronDebugApplicationFn application_draw = nullptr;
-	void* application_user = nullptr;
-	AeronDebugTool tools[AERON_DEBUG_MAX_TOOLS];
-	int            tool_count = 0;
+	void*                   application_user = nullptr;
+	AeronDebugTool          tools[AERON_DEBUG_MAX_TOOLS];
+	int                     tool_count = 0;
 } g_debug;
 
 /* ===== Public API ==================================================== */
@@ -103,7 +103,7 @@ extern "C" void Aeron_DebugUiInitInternal(void) {
 	 * were tried and dropped). */
 
 	ImGui_ImplSDL3_InitForSDLGPU(g_aeron.window);
-	ImGui_ImplSDLGPU3_InitInfo info{};
+	ImGui_ImplSDLGPU3_InitInfo info {};
 	info.Device            = g_aeron.gpu_device;
 	info.ColorTargetFormat = g_aeron.swapchain_format;
 	info.MSAASamples       = SDL_GPU_SAMPLECOUNT_1;
@@ -134,7 +134,7 @@ extern "C" void Aeron_DebugUiOnSwapchainFormatChanged(SDL_GPUTextureFormat forma
 		return;
 	}
 	ImGui_ImplSDLGPU3_Shutdown();
-	ImGui_ImplSDLGPU3_InitInfo info{};
+	ImGui_ImplSDLGPU3_InitInfo info {};
 	info.Device            = g_aeron.gpu_device;
 	info.ColorTargetFormat = format;
 	info.MSAASamples       = SDL_GPU_SAMPLECOUNT_1;

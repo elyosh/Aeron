@@ -539,22 +539,22 @@ static void add_objects(AeronScene3D* scene, const Fixture* f, double time) {
 	 * until it renders. */
 	static AeronSceneMeshTable tables[sizeof objects / sizeof objects[0]];
 	for (size_t i = 0; i < sizeof objects / sizeof objects[0]; ++i) {
-		const CaptureMesh*     mesh = &f->meshes[f->config.model_count ? i % f->config.model_count : 0];
-		const float*           o    = objects[i];
-		float                  cs = cosf(o[6]), sn = sinf(o[6]);
-		AeronSceneMeshTable*   table = NULL;
+		const CaptureMesh*   mesh = &f->meshes[f->config.model_count ? i % f->config.model_count : 0];
+		const float*         o    = objects[i];
+		float                cs = cosf(o[6]), sn = sinf(o[6]);
+		AeronSceneMeshTable* table = NULL;
 		if (!f->config.model_count) {
 			table = &tables[i];
 			memset(table, 0, sizeof *table);
 			table->component_count = 1;
 			table->rows[0][0][0] = table->rows[0][1][1] = table->rows[0][2][2] = 1;
-			table->visibility_packed[0][0] = 1;
-			table->emissive_packed[0][0]   = o[7] * f->config.emissive_scale;
+			table->visibility_packed[0][0]                                     = 1;
+			table->emissive_packed[0][0] = o[7] * f->config.emissive_scale;
 		}
 		AeronSceneMeshInstance instance = {
-			.mesh       = mesh->mesh,
-			.mesh_table = table,
-			.cull_mode  = (AeronCullMode)f->config.cull_mode,
+			.mesh         = mesh->mesh,
+			.mesh_table   = table,
+			.cull_mode    = (AeronCullMode)f->config.cull_mode,
 			.shadow_flags = AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW,
 			.transform = { cs * o[0], -sn * o[1], 0, o[3], sn * o[0], cs * o[1], 0, o[4], 0, 0, o[2], o[5], 0,
 						   0, 0, 1 }
@@ -1051,7 +1051,8 @@ static AeronScene3D* fixture_submit(Fixture* f, AeronScene3D* scene, double time
 		add_game_instances(scene, f, time, &seat, &previous_seat);
 		add_game_bolts(scene, f);
 		AeronScene_SetEmissionMinWidth(scene, f->config.game.bolts.min_width_px);
-		AeronScene_SetEmissionFade(scene, f->config.game.bolts.fade_width_px, f->config.game.bolts.fade_power);
+		AeronScene_SetEmissionFade(scene, f->config.game.bolts.fade_width_px,
+								   f->config.game.bolts.fade_power);
 		/* Scaled to the render height, as flight.c does. */
 		const float px_per_1080 = (float)f->config.height / 1080.0f;
 		AeronScene_SetSmallInstanceCull(scene, f->config.game.small_prepass_min_size * px_per_1080,

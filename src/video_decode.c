@@ -64,9 +64,7 @@ typedef struct AeronVideoDecodeContext {
 } AeronVideoDecodeContext;
 
 /* Bytes per row of an RGBA frame buffer; see AERON_VIDEO_ROW_ALIGN. */
-static int AeronVideo_RowPitch(int width) {
-	return FFALIGN(width * 4, AERON_VIDEO_ROW_ALIGN);
-}
+static int AeronVideo_RowPitch(int width) { return FFALIGN(width * 4, AERON_VIDEO_ROW_ALIGN); }
 
 static void AeronVideo_FfmpegError(char* dst, size_t dst_size, int error) {
 	av_make_error_string(dst, dst_size, error);

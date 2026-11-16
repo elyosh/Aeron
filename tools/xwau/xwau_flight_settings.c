@@ -11,8 +11,8 @@
 #include "util.h"
 #include "xwau_config.h"
 #include "xwau_craft.h"
-#include "xwau_mission_settings.h"
 #include "xwau_hangar_crafts.h"
+#include "xwau_mission_settings.h"
 #include "xwau_object_limits.h"
 #include "xwau_original_films.h"
 #include "xwau_weapon_lock.h"
@@ -706,16 +706,16 @@ bool XwauFlightSettings_Write(const char* game, const XwauNames* names, const Xw
 	if (has_projectiles)
 		weapon_stock.projectiles = &mod_projectiles;
 	write_weapons(f, names, &weapon_stock, game, &impact, &rates);
-	const bool shields    = write_shield_recharge(f, game);
-	const bool docking    = write_docking(f, game);
-	const bool limits     = XwauObjectLimits_Write(f, game);
-	const bool hangar     = XwauHangarCrafts_Write(f, game, names);
-	const bool films      = XwauOriginalFilms_Write(f, game);
-	const bool camera     = write_camera(f, game);
-	const bool suns       = write_suns(f, game);
-	const bool speed      = write_speed_effect(f, game);
-	const bool hyperspace = XwauHyperspace_WriteFlightSettings(f, &config.hyperspace);
-	const bool formations = write_formations(f, exe, stock);
+	const bool shields     = write_shield_recharge(f, game);
+	const bool docking     = write_docking(f, game);
+	const bool limits      = XwauObjectLimits_Write(f, game);
+	const bool hangar      = XwauHangarCrafts_Write(f, game, names);
+	const bool films       = XwauOriginalFilms_Write(f, game);
+	const bool camera      = write_camera(f, game);
+	const bool suns        = write_suns(f, game);
+	const bool speed       = write_speed_effect(f, game);
+	const bool hyperspace  = XwauHyperspace_WriteFlightSettings(f, &config.hyperspace);
+	const bool formations  = write_formations(f, exe, stock);
 	const bool projectiles = has_projectiles && stock->projectiles &&
 							 write_projectiles(f, names, &mod_projectiles, stock->projectiles);
 	XwauGameExe_Free(exe);

@@ -39,15 +39,15 @@ static bool int_list(const char* text, bool auto_base, int** out, size_t* count)
 bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	memset(out, 0, sizeof *out);
 	char path[1024];
-	out->mission_tie  = Xwau_FindFile(game, "hook_mission_tie.dll", path, sizeof path);
-	out->engine_sound = Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path);
+	out->mission_tie            = Xwau_FindFile(game, "hook_mission_tie.dll", path, sizeof path);
+	out->engine_sound           = Xwau_FindFile(game, "hook_engine_sound.dll", path, sizeof path);
 	out->opt_limit_engine_glows = Xwau_DllHasText(game, "hook_opt_limit.dll", "EngineGlows");
-	out->weapon_switch = XwauCraft_ReadGlobalSwitchByIff(game, &out->weapon_switch_by_iff);
+	out->weapon_switch          = XwauCraft_ReadGlobalSwitchByIff(game, &out->weapon_switch_by_iff);
 	out->mission_tie_stats      = Xwau_DllHasText(game, "hook_mission_tie.dll", "StatsProfile");
 	if (Xwau_FindFile(game, "hook_weapon_rate.dll", path, sizeof path)) {
-		out->weapon_rate_fire_check = Xwau_FileHasText(path, "_EnergyLowHighSeparation");
-		out->weapon_rate_rack_check = Xwau_FileHasText(path, "Craft_Offset_292");
-		out->weapon_rate_slot_cap   = Xwau_FileHasText(path, "WarheadTypeCount_fg_");
+		out->weapon_rate_fire_check      = Xwau_FileHasText(path, "_EnergyLowHighSeparation");
+		out->weapon_rate_rack_check      = Xwau_FileHasText(path, "Craft_Offset_292");
+		out->weapon_rate_slot_cap        = Xwau_FileHasText(path, "WarheadTypeCount_fg_");
 		out->weapon_rate_hardpoint_types = Xwau_FileHasText(path, "WeaponHardpointTypes");
 		out->weapon_rate_rearm_statuses  = Xwau_FileHasText(path, "WarheadCapacity_00460904_Hook");
 		if (Xwau_FileHasText(path, "EnableFireMeshFilter")) {
@@ -164,7 +164,7 @@ static void write_ints(FILE* f, const int* values, size_t count) {
 bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config) {
 	const XwauExePatches* patches   = &config->exe_patches;
 	const bool            exe_rules = XwauExePatches_AnyRule(patches);
-	const bool rules =
+	const bool            rules =
 		exe_rules || config->mission_tie || config->opt_limit_engine_glows || config->weapon_switch ||
 		config->mission_tie_stats || config->weapon_rate_fire_check || config->weapon_rate_rack_check ||
 		config->starship_ambient || config->weapon_rate_slot_cap || config->gunner_seats ||
@@ -219,8 +219,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 	if (config->pilot_hangar_droids)
 		fputs("  hangar_droid_parts_from_model: true\n", f);
 	XwauExePatches_WriteRules(f, patches);
-	const bool warheads     = config->mission_tie && !config->warhead_collision_damage;
-	const bool shields      = config->mission_tie && config->damage_through_shields;
+	const bool     warheads = config->mission_tie && !config->warhead_collision_damage;
+	const bool     shields  = config->mission_tie && config->damage_through_shields;
 	const unsigned abort =
 		config->engine_sound
 			? region_bits(config->interdiction, config->interdiction_count, "FlightModels [Interdiction]")

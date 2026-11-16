@@ -141,10 +141,12 @@ void slot_editor(AeronEnvironmentLibrary* library, EnvSlot* slot) {
 	changed |= ImGui::SliderFloat("Pitch", &s->rotation_degrees[1], 0.0f, 360.0f, "%.1f deg");
 	changed |= ImGui::SliderFloat("Roll", &s->rotation_degrees[2], 0.0f, 360.0f, "%.1f deg");
 	if (s->overlay_path[0]) {
-		changed |= ImGui::SliderFloat("Overlay yaw", &s->overlay_rotation_degrees[0], 0.0f, 360.0f, "%.1f deg");
+		changed |=
+			ImGui::SliderFloat("Overlay yaw", &s->overlay_rotation_degrees[0], 0.0f, 360.0f, "%.1f deg");
 		changed |=
 			ImGui::SliderFloat("Overlay pitch", &s->overlay_rotation_degrees[1], 0.0f, 360.0f, "%.1f deg");
-		changed |= ImGui::SliderFloat("Overlay roll", &s->overlay_rotation_degrees[2], 0.0f, 360.0f, "%.1f deg");
+		changed |=
+			ImGui::SliderFloat("Overlay roll", &s->overlay_rotation_degrees[2], 0.0f, 360.0f, "%.1f deg");
 	}
 	for (uint32_t i = 0; i < s->light_count; ++i)
 		changed |= light_editor(slot, i);

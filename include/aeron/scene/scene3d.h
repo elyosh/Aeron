@@ -145,10 +145,10 @@ typedef struct AeronSceneMaterialAnim {
  * the material variant column (TIE: decal_color). Mesh-table pointers are
  * borrowed for the frame (NULL = identity/all-visible). */
 typedef struct AeronSceneMeshInstance {
-	const AeronSceneMesh* mesh;
-	float                 transform[16];
-	float                 prev_transform[16];
-	uint32_t              variant;
+	const AeronSceneMesh*      mesh;
+	float                      transform[16];
+	float                      prev_transform[16];
+	uint32_t                   variant;
 	const AeronSceneMeshTable* mesh_table;
 	/* Optional previous-frame articulation used only for velocity. NULL
 	 * reuses mesh_table, which is correct for rigid or unchanged meshes. */
@@ -577,6 +577,7 @@ typedef struct AeronSceneLodStats {
 	uint32_t instances[AERON_GLTF_MAX_LODS + 1];
 	uint64_t triangles[AERON_GLTF_MAX_LODS + 1];
 } AeronSceneLodStats;
+
 void AeronScene_GetLodStats(const AeronScene3D* scene, AeronSceneLodStats* out);
 
 /* Counts for the last rendered frame, used by benchmarks. The instances

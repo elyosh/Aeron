@@ -73,9 +73,9 @@ int AeronXrSession_HandleEvent(AeronXrSessionMachine* machine, const AeronXrFunc
 /* Rotates `v` by the unit quaternion `q`. */
 static XrVector3f rotate(XrQuaternionf q, XrVector3f v) {
 	/* v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v) */
-	const float cx = q.y * v.z - q.z * v.y + q.w * v.x;
-	const float cy = q.z * v.x - q.x * v.z + q.w * v.y;
-	const float cz = q.x * v.y - q.y * v.x + q.w * v.z;
+	const float      cx  = q.y * v.z - q.z * v.y + q.w * v.x;
+	const float      cy  = q.z * v.x - q.x * v.z + q.w * v.y;
+	const float      cz  = q.x * v.y - q.y * v.x + q.w * v.z;
 	const XrVector3f out = {
 		v.x + 2.0f * (q.y * cz - q.z * cy),
 		v.y + 2.0f * (q.z * cx - q.x * cz),

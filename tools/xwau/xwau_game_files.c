@@ -17,7 +17,7 @@ typedef struct Copy {
 	const char* stock_game;
 	const char* out;
 	size_t      missions, lists, sounds, music, replacements, converted;
-	XwauLines   targets; /* the sound replacement files seen */
+	XwauLines   targets;             /* the sound replacement files seen */
 	XwauLines   missing_stock_files; /* the stock files that the installation doesn't have */
 } Copy;
 
@@ -58,8 +58,8 @@ static bool copy_file(Copy* c, const char* path, bool if_changed, bool* copied) 
 		return true;
 	}
 	/* A sound that the game can't play is converted to 16-bit PCM. */
-	uint8_t* converted      = NULL;
-	size_t   converted_size = 0;
+	uint8_t*            converted      = NULL;
+	size_t              converted_size = 0;
 	const XwauWavResult wav =
 		EndsWithNoCase(rel, ".wav")
 			? XwauSoundBanks_ConvertWav((const uint8_t*)data, size, &converted, &converted_size)
@@ -346,7 +346,8 @@ bool XwauGameFiles_Copy(const char* game, const char* stock_game, const char* ou
 	   that every sound is removed. */
 	char wave[1024];
 	ok = ok && copy_music(&c) && copy_wave(&c) &&
-		 (!Xwau_FindDir(game, "Wave", wave, sizeof wave) || find_missing_stock_files(&c, "Wave")) && write_removed_files(&c);
+		 (!Xwau_FindDir(game, "Wave", wave, sizeof wave) || find_missing_stock_files(&c, "Wave")) &&
+		 write_removed_files(&c);
 	if (ok)
 		ReportDetail(
 			NULL,

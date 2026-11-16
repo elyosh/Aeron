@@ -156,7 +156,7 @@ bool XwauAwards_Write(const char* game, const char* path) {
 		unlock_mission(&doors, "familyroom_ladyblue_mission", STOCK_LADY_BLUE_MISSION);
 	const long long cologne     = unlock_mission(&doors, "familyroom_cologne_mission", STOCK_COLOGNE_MISSION);
 	const bool      unlocks     = lady_blue != STOCK_LADY_BLUE_MISSION || cologne != STOCK_COLOGNE_MISSION;
-	size_t medal_count = medals.count;
+	size_t          medal_count = medals.count;
 	if (ok && medal_count > BATTLE_MAX) {
 		ReportFatal("MedalsDescriptions.txt", "%zu names, and OpenXWA has at most %d battle medals",
 					medal_count, BATTLE_MAX);

@@ -55,11 +55,11 @@ typedef struct AeronSpriteAtlas {
 	 * without the key has -1 in each. NULL when no frame has it. */
 	float* light;
 	/* `units: game`: the sizes and offsets are in the game's own units. */
-	bool     game_units;
-	int      page_count; /* 1 when pages == NULL */
-	int      frame_count;
-	int      atlas_w; /* the size of page 0 */
-	int      atlas_h;
+	bool game_units;
+	int  page_count; /* 1 when pages == NULL */
+	int  frame_count;
+	int  atlas_w; /* the size of page 0 */
+	int  atlas_h;
 } AeronSpriteAtlas;
 
 /* Parse `yaml_path`. On success populates *out and returns true; on

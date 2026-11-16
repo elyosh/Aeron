@@ -275,8 +275,8 @@ AeronProbeSet* AeronProbeSet_Create(AeronCommandBuffer* cmd, const AeronFlightPr
 		set->has_reflection_plane    = reflection_plane != NULL;
 		if (reflection_plane)
 			set->reflection_plane = *reflection_plane;
-		set->cubes                   = Aeron_ImageUploadKtx2(cmd, cubes, label);
-		set->grid                    = upload_grid(cmd, &level, probes->layout.grid_resolution, label);
+		set->cubes          = Aeron_ImageUploadKtx2(cmd, cubes, label);
+		set->grid           = upload_grid(cmd, &level, probes->layout.grid_resolution, label);
 		set->buffer         = build_probe_buffer(cmd, &probes->layout, &cells, &level, &buffer_bytes);
 		set->sampler        = Aeron_CreateSampler(&(AeronSamplerDesc) {
 			.min_filter = AERON_FILTER_LINEAR,

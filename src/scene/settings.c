@@ -112,14 +112,14 @@ static int ssao_valid(const AeronSceneSsaoSettings* value) {
 static int shadows_valid(const AeronSceneShadowSettings* value) {
 	return value->atlas_size >= 1024 && value->atlas_size <= 8192 && value->fit_mode <= 2 &&
 		   (value->atlas_size & (value->atlas_size - 1)) == 0 && value->cascade_count >= 1 &&
-		   value->cascade_count <= AERON_SCENE_SHADOW_MAX_CASCADES &&
-		   isfinite(value->max_distance) && value->max_distance > 1.0f && isfinite(value->split_lambda) &&
-		   value->split_lambda >= 0.0f && value->split_lambda <= 1.0f && value->split_positions[0] > 0.0f &&
+		   value->cascade_count <= AERON_SCENE_SHADOW_MAX_CASCADES && isfinite(value->max_distance) &&
+		   value->max_distance > 1.0f && isfinite(value->split_lambda) && value->split_lambda >= 0.0f &&
+		   value->split_lambda <= 1.0f && value->split_positions[0] > 0.0f &&
 		   value->split_positions[0] < value->split_positions[1] &&
 		   value->split_positions[1] < value->split_positions[2] && value->split_positions[2] < 1.0f &&
 		   value->light_angular_radius_degrees >= 0.0f && value->light_angular_radius_degrees <= 5.0f &&
-		   value->pcss_min_filter_radius >= 0.5f && value->max_filter_radius >= value->pcss_min_filter_radius &&
-		   value->max_filter_radius <= 16.0f &&
+		   value->pcss_min_filter_radius >= 0.5f &&
+		   value->max_filter_radius >= value->pcss_min_filter_radius && value->max_filter_radius <= 16.0f &&
 		   value->normal_bias_texels >= 0.0f && value->normal_bias_texels <= 4.0f &&
 		   value->depth_bias_texels >= 0.0f && value->depth_bias_texels <= 4.0f &&
 		   value->transition_fraction >= 0.0f && value->transition_fraction <= 0.5f &&
@@ -250,8 +250,8 @@ static int parse_shadows(const AeronConfigNode* map, int required, AeronSceneSha
 		return 0;
 	if (atlas < 0 || cascades < 0)
 		return settings_error(error, map, "invalid negative shadow integer setting");
-	value->atlas_size     = (uint32_t)atlas;
-	value->cascade_count  = (uint32_t)cascades;
+	value->atlas_size    = (uint32_t)atlas;
+	value->cascade_count = (uint32_t)cascades;
 	return shadows_valid(value) ? 1 : settings_error(error, map, "invalid directional-shadow settings");
 }
 

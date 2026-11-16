@@ -105,7 +105,7 @@ typedef struct ModelConversion {
 	float smooth_angle; /* stock mode, in degrees (0..180); negative means 90 */
 	bool  xwau;
 	/* XWAU mode (ModelConversion_InitXwau). */
-	const char*   game;   /* the XWAU installation */
+	const char*     game;   /* the XWAU installation */
 	XwauMatParams   global; /* Materials/DefaultGlobalMaterial.mat, or the built-in defaults */
 	XwauMissions*   missions;
 	XwauGameTables* tables; /* the game's object types and model lists, or NULL when they can't be read */

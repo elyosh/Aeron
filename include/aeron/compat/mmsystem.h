@@ -95,9 +95,9 @@ typedef struct MCI_STATUS_PARMS {
 
 typedef struct MCI_PLAY_PARMS {
 	/* MCI_NOTIFY receives a window handle; keep its pointer identity and native width. */
-	void*      dwCallback;
-	uint32_t    dwFrom;
-	uint32_t    dwTo;
+	void*    dwCallback;
+	uint32_t dwFrom;
+	uint32_t dwTo;
 } MCI_PLAY_PARMS;
 
 typedef struct MCI_GENERIC_PARMS {

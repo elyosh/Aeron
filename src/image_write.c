@@ -57,8 +57,8 @@ bool Aeron_ImageWriteHdr(AeronVfs* vfs, AeronVfsRoot root, const char* path, int
 		return false;
 	/* RGBE rows hold about 4 bytes per pixel; reserve that up front. */
 	ImageBuffer buffer = { NULL, 0, 0, true };
-	buffer.capacity  = (size_t)width * (size_t)height * 4u + 256u;
-	buffer.data      = (uint8_t*)malloc(buffer.capacity);
+	buffer.capacity    = (size_t)width * (size_t)height * 4u + 256u;
+	buffer.data        = (uint8_t*)malloc(buffer.capacity);
 	if (!buffer.data)
 		return false;
 	const bool ok = stbi_write_hdr_to_func(image_append, &buffer, width, height, 3, rgb) && buffer.ok &&
@@ -72,8 +72,8 @@ bool Aeron_ImageWritePngRgb8(AeronVfs* vfs, AeronVfsRoot root, const char* path,
 	if (!vfs || !path || !rgb || width <= 0 || height <= 0)
 		return false;
 	ImageBuffer buffer = { NULL, 0, 0, true };
-	const bool ok = stbi_write_png_to_func(image_append, &buffer, width, height, 3, rgb, width * 3) &&
-					buffer.ok && AeronVfs_WriteAllAtomic(vfs, root, path, buffer.data, buffer.size);
+	const bool  ok     = stbi_write_png_to_func(image_append, &buffer, width, height, 3, rgb, width * 3) &&
+						 buffer.ok && AeronVfs_WriteAllAtomic(vfs, root, path, buffer.data, buffer.size);
 	free(buffer.data);
 	return ok;
 }

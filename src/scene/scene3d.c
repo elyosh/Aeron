@@ -588,11 +588,11 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->instance_count       = 0;
 	s->emission_frame_valid = 0;
 	s->instances_dropped    = 0;
-	s->light_count         = 0;
-	s->lights_dropped      = 0;
-	s->cluster_active      = 0;
-	s->cluster_ready       = 0;
-	s->frame_uniform_count = 0;
+	s->light_count          = 0;
+	s->lights_dropped       = 0;
+	s->cluster_active       = 0;
+	s->cluster_ready        = 0;
+	s->frame_uniform_count  = 0;
 	memset(&s->pbr_environment, 0, sizeof s->pbr_environment);
 	s->pbr_environment_set       = 0;
 	s->probe_set_count           = 0;
@@ -605,23 +605,23 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	memset(&s->directional_shadow, 0, sizeof s->directional_shadow);
 	memset(&s->shadow_uniform, 0, sizeof s->shadow_uniform);
 	memset(&s->shadow_stats, 0, sizeof s->shadow_stats);
-	s->shadow_only_count    = 0;
-	s->shadow_only_dropped  = 0;
-	s->sky_cube             = NULL;
-	s->sky_overlay          = NULL;
-	s->sky_sun_count        = 0;
-	s->bb_count             = 0;
-	s->bb_dropped           = 0;
-	s->bb_frame_verts       = 0;
-	s->bb_frame_has_vel     = 0;
-	s->flare_set            = 0;
-	s->flare_frame          = 0;
-	s->overlay_count        = 0;
-	s->overlays_dropped     = 0;
-	s->overlay_vertex_count = 0;
-	s->overlay_frame_ready  = 0;
-	s->storage_ready        = 0;
-	s->after_meshes_fn      = NULL;
+	s->shadow_only_count     = 0;
+	s->shadow_only_dropped   = 0;
+	s->sky_cube              = NULL;
+	s->sky_overlay           = NULL;
+	s->sky_sun_count         = 0;
+	s->bb_count              = 0;
+	s->bb_dropped            = 0;
+	s->bb_frame_verts        = 0;
+	s->bb_frame_has_vel      = 0;
+	s->flare_set             = 0;
+	s->flare_frame           = 0;
+	s->overlay_count         = 0;
+	s->overlays_dropped      = 0;
+	s->overlay_vertex_count  = 0;
+	s->overlay_frame_ready   = 0;
+	s->storage_ready         = 0;
+	s->after_meshes_fn       = NULL;
 	s->after_meshes_user     = NULL;
 	s->mb_velocity_regen     = 0;
 	s->scene_rt_out          = s->color_rt;
@@ -865,8 +865,8 @@ static int scene_flight_light(const AeronFlightLight* light, const float (*rows)
 	}
 	const float range_m =
 		light->range > 0.0f ? light->range : sqrtf(peak * exposure / AERON_SCENE_LIGHT_CUTOFF);
-	out->radius         = range_m * units_per_meter;
-	out->source_radius  = source_radius;
+	out->radius        = range_m * units_per_meter;
+	out->source_radius = source_radius;
 	return 1;
 }
 
@@ -927,15 +927,15 @@ void AeronScene_GetClusteredLightStats(const AeronScene3D* s, AeronSceneClustere
 	if (!s) {
 		return;
 	}
-	out->submitted_light_count  = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
-	out->dropped_light_count    = s->lights_dropped > 0 ? (uint32_t)s->lights_dropped : 0u;
-	out->grid_x                 = s->cluster_uniform.grid_x;
-	out->grid_y                 = s->cluster_uniform.grid_y;
-	out->grid_z                 = s->cluster_uniform.grid_z;
-	out->effective_tile_size    = s->cluster_uniform.tile_size;
-	out->cluster_count          = s->cluster_count;
-	out->clustered_active       = (uint32_t)(s->cluster_active != 0);
-	out->allocated_buffer_bytes = (uint64_t)s->cluster_light_buffer_cap + s->cluster_data_buffer_cap;
+	out->submitted_light_count    = s->light_count > 0 ? (uint32_t)s->light_count : 0u;
+	out->dropped_light_count      = s->lights_dropped > 0 ? (uint32_t)s->lights_dropped : 0u;
+	out->grid_x                   = s->cluster_uniform.grid_x;
+	out->grid_y                   = s->cluster_uniform.grid_y;
+	out->grid_z                   = s->cluster_uniform.grid_z;
+	out->effective_tile_size      = s->cluster_uniform.tile_size;
+	out->cluster_count            = s->cluster_count;
+	out->clustered_active         = (uint32_t)(s->cluster_active != 0);
+	out->allocated_buffer_bytes   = (uint64_t)s->cluster_light_buffer_cap + s->cluster_data_buffer_cap;
 	out->grouped_spot_light_count = s->grouped_spot_light_count;
 	out->merged_spot_light_count  = s->merged_spot_light_count;
 }
@@ -1674,8 +1674,8 @@ int AeronScene_DrawEmissionBloom(AeronScene3D* s, AeronRenderPass* pass, int tar
 	const AeronRectI out = s->output_camera.viewport;
 	const int        x0  = scene_scale_edge(out.x, target_w, s->output_w, 0);
 	const int        y0  = scene_scale_edge(out.y, target_h, s->output_h, 0);
-	draw.viewport        = (AeronRectI) { x0, y0, scene_scale_edge(out.x + out.width, target_w, s->output_w, 1) - x0,
-										  scene_scale_edge(out.y + out.height, target_h, s->output_h, 1) - y0 };
+	draw.viewport = (AeronRectI) { x0, y0, scene_scale_edge(out.x + out.width, target_w, s->output_w, 1) - x0,
+								   scene_scale_edge(out.y + out.height, target_h, s->output_h, 1) - y0 };
 	const AeronRectI* vp  = &draw.viewport;
 	const AeronRectI* rvp = &s->camera.viewport;
 	if (vp->width <= 0 || vp->height <= 0 || rvp->width <= 0 || rvp->height <= 0) {
@@ -1696,7 +1696,7 @@ int AeronScene_DrawEmissionBloom(AeronScene3D* s, AeronRenderPass* pass, int tar
 	 * (scene_pbr_emission_bloom.frag). */
 	const float min_px = 3.0f * (rx > ry ? rx : ry);
 	draw.min_width_px  = p->min_width_px > min_px ? p->min_width_px : min_px;
-	draw.scale        = extra;
+	draw.scale         = extra;
 	return AeronScenePbr_DrawEmissionBloom(s, pass, p, &draw);
 }
 
@@ -2450,12 +2450,12 @@ static void scene_instance_record(const AeronSceneMeshInstance*     instance,
 	memcpy(out->model_to_world, instance->transform, sizeof out->model_to_world);
 	memcpy(out->prev_model_to_world, moving ? instance->prev_transform : instance->transform,
 		   sizeof out->prev_model_to_world);
-	out->variant_row_base             = variant * m->variant_groups_per_row;
-	out->current_table_base           = prepared->current_table_base;
-	out->previous_table_base          = moving ? prepared->previous_table_base : prepared->current_table_base;
-	out->table_component_count        = prepared->table_component_count;
-	out->receive_shadow = (instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 ? 1u : 0u;
-	out->zero_velocity  = moving ? 0u : 1u;
+	out->variant_row_base      = variant * m->variant_groups_per_row;
+	out->current_table_base    = prepared->current_table_base;
+	out->previous_table_base   = moving ? prepared->previous_table_base : prepared->current_table_base;
+	out->table_component_count = prepared->table_component_count;
+	out->receive_shadow    = (instance->shadow_flags & AERON_SCENE_INSTANCE_NO_RECEIVE_SHADOW) == 0 ? 1u : 0u;
+	out->zero_velocity     = moving ? 0u : 1u;
 	out->hidden_tag_groups = instance->hidden_tag_groups;
 	out->dark_tag_groups   = instance->dark_tag_groups;
 }
@@ -2515,7 +2515,7 @@ static uint32_t scene_prepare_batches(AeronScene3D* s) {
  * transform's axes, so that a stretched instance stays on the detailed
  * side. */
 static float scene_instance_px_per_unit(const AeronScene3D* s, const AeronSceneMeshInstance* instance,
-										 float focal_px) {
+										float focal_px) {
 	AeronSceneInstanceBox        box_storage;
 	const AeronSceneInstanceBox* box = scene_instance_world_box(instance, &box_storage);
 	if (!box) {
@@ -2541,7 +2541,7 @@ static float scene_instance_px_per_unit(const AeronScene3D* s, const AeronSceneM
  * mesh becomes the level's mesh, for every pass of the frame. */
 static void scene_choose_lods(AeronScene3D* s) {
 	memset(&s->lod_stats, 0, sizeof s->lod_stats);
-	const bool  choose   = s->lod_force >= 0 || (s->lod_max_error_px > 0.0f && s->render_h > 0);
+	const bool choose = s->lod_force >= 0 || (s->lod_max_error_px > 0.0f && s->render_h > 0);
 	/* All views use the same level of detail. Pick it for the narrowest view,
 	 * which shows the most pixels per unit. */
 	float tan_v = tanf(s->views[0].camera.v_half_rad);
@@ -3001,11 +3001,11 @@ int AeronSceneStorage_PrepareView(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			const float py = source->pos[1] - s->camera.pos[1];
 			const float pz = source->pos[2] - s->camera.pos[2];
 			for (int row = 0; row < 3; ++row) {
-				const float* r = &view_rotation[row * 3];
+				const float* r                         = &view_rotation[row * 3];
 				cluster->view_spot_position_range[row] = r[0] * px + r[1] * py + r[2] * pz;
 				cluster->view_spot_direction_cos[row]  = r[0] * destination->direction[0] +
-													   r[1] * destination->direction[1] +
-													   r[2] * destination->direction[2];
+														 r[1] * destination->direction[1] +
+														 r[2] * destination->direction[2];
 			}
 			cluster->view_spot_position_range[3] = source->radius;
 			cluster->view_spot_direction_cos[3]  = cos_outer;
@@ -3286,7 +3286,8 @@ int AeronScene_PrepareFrame(AeronScene3D* s, AeronCommandBuffer* cmd) {
 
 	/* With MSAA, the colour pass has its own depth, so the prepass can leave
 	 * instances out; FSR needs every instance's depth and motion. */
-	s->small_cull_active = s->sample_count != AERON_SAMPLE_COUNT_1 && s->temporal_active_mode == AERON_TEMPORAL_OFF &&
+	s->small_cull_active = s->sample_count != AERON_SAMPLE_COUNT_1 &&
+						   s->temporal_active_mode == AERON_TEMPORAL_OFF &&
 						   (s->small_cull_prepass_px > 0.0f || s->small_cull_draw_px > 0.0f);
 
 	/* Load the PBR shaders before preparing the storage. Preparing the

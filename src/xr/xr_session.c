@@ -43,7 +43,8 @@ int AeronXr_SetDeviceProperties(SDL_PropertiesID properties) {
 	g_xr.instance  = XR_NULL_HANDLE;
 	g_xr.system_id = XR_NULL_SYSTEM_ID;
 	return SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_ENABLE_BOOLEAN, true) &&
-		   SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_INSTANCE_POINTER, &g_xr.instance) &&
+		   SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_INSTANCE_POINTER,
+								  &g_xr.instance) &&
 		   SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_SYSTEM_ID_POINTER,
 								  &g_xr.system_id) &&
 		   SDL_SetStringProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_ENGINE_NAME_STRING, "Aeron") &&
@@ -57,9 +58,8 @@ int AeronXr_SetDeviceProperties(SDL_PropertiesID properties) {
 static int xr_read_view_configuration(char* error, size_t error_size) {
 	XrViewConfigurationType types[8];
 	uint32_t                type_count = 0;
-	XrResult                result =
-		g_xr.fn.xrEnumerateViewConfigurations(g_xr.instance, g_xr.system_id, SDL_arraysize(types),
-											  &type_count, types);
+	XrResult result = g_xr.fn.xrEnumerateViewConfigurations(g_xr.instance, g_xr.system_id,
+															SDL_arraysize(types), &type_count, types);
 	if (XR_FAILED(result)) {
 		AeronXr_ResultError(error, error_size, "could not list the view configurations", result);
 		return 0;
@@ -78,15 +78,14 @@ static int xr_read_view_configuration(char* error, size_t error_size) {
 		SDL_zero(views[i]);
 		views[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
 	}
-	result = g_xr.fn.xrEnumerateViewConfigurationViews(g_xr.instance, g_xr.system_id,
-													   XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2,
-													   &view_count, views);
+	result = g_xr.fn.xrEnumerateViewConfigurationViews(
+		g_xr.instance, g_xr.system_id, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &view_count, views);
 	if (XR_FAILED(result) || view_count != 2) {
 		AeronXr_ResultError(error, error_size, "could not read the stereo views", result);
 		return 0;
 	}
-	g_xr.view_width      = (int)SDL_max(views[0].recommendedImageRectWidth, views[1].recommendedImageRectWidth);
-	g_xr.view_height     = (int)SDL_max(views[0].recommendedImageRectHeight, views[1].recommendedImageRectHeight);
+	g_xr.view_width  = (int)SDL_max(views[0].recommendedImageRectWidth, views[1].recommendedImageRectWidth);
+	g_xr.view_height = (int)SDL_max(views[0].recommendedImageRectHeight, views[1].recommendedImageRectHeight);
 	g_xr.view_max_width  = (int)SDL_min(views[0].maxImageRectWidth, views[1].maxImageRectWidth);
 	g_xr.view_max_height = (int)SDL_min(views[0].maxImageRectHeight, views[1].maxImageRectHeight);
 	if (g_xr.view_width <= 0 || g_xr.view_height <= 0) {
@@ -96,9 +95,9 @@ static int xr_read_view_configuration(char* error, size_t error_size) {
 
 	/* The runtime lists the blend modes in its order of preference. */
 	uint32_t blend_count = 0;
-	result = g_xr.fn.xrEnumerateEnvironmentBlendModes(
-		g_xr.instance, g_xr.system_id, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 1, &blend_count,
-		&g_xr.blend_mode);
+	result = g_xr.fn.xrEnumerateEnvironmentBlendModes(g_xr.instance, g_xr.system_id,
+													  XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 1,
+													  &blend_count, &g_xr.blend_mode);
 	if (result != XR_ERROR_SIZE_INSUFFICIENT && (XR_FAILED(result) || blend_count == 0))
 		g_xr.blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 	return 1;
@@ -157,7 +156,8 @@ static void xr_log_runtime(void) {
 				  (unsigned)XR_VERSION_PATCH(instance.runtimeVersion), system.systemName);
 	Aeron_LogInfo("aeron.xr", "eye images %dx%d (at most %dx%d), %s, visibility mask %s", g_xr.view_width,
 				  g_xr.view_height, g_xr.view_max_width, g_xr.view_max_height,
-				  g_xr.color_format == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB ? "RGBA8 sRGB" : "BGRA8 sRGB",
+				  g_xr.color_format == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB ? "RGBA8 sRGB"
+																				 : "BGRA8 sRGB",
 				  g_xr.extension_count ? "yes" : "no");
 }
 
@@ -170,7 +170,7 @@ int AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size)
 		return 0;
 
 	const XrSessionCreateInfo session_info = { .type = XR_TYPE_SESSION_CREATE_INFO };
-	XrResult                  result       = SDL_CreateGPUXRSession(device, &session_info, &g_xr.machine.session);
+	XrResult                  result = SDL_CreateGPUXRSession(device, &session_info, &g_xr.machine.session);
 	if (XR_FAILED(result)) {
 		g_xr.machine.session = XR_NULL_HANDLE;
 		AeronXr_ResultError(error, error_size, "could not create the OpenXR session", result);
@@ -256,8 +256,7 @@ void AeronXr_PollEvents(void) {
 		Aeron_OnXrSessionRunningChanged(g_xr.machine.running);
 	}
 	if (g_xr.machine.focused != was_focused)
-		Aeron_LogInfo("aeron.xr", "the VR session %s the input focus",
-					  g_xr.machine.focused ? "has" : "lost");
+		Aeron_LogInfo("aeron.xr", "the VR session %s the input focus", g_xr.machine.focused ? "has" : "lost");
 	if (g_xr.machine.exit_requested) {
 		g_xr.machine.exit_requested = 0;
 		Aeron_LogInfo("aeron.xr", "the OpenXR runtime asked the application to quit");
@@ -265,13 +264,9 @@ void AeronXr_PollEvents(void) {
 	}
 }
 
-int Aeron_XrSessionRunning(void) {
-	return g_xr.machine.running;
-}
+int Aeron_XrSessionRunning(void) { return g_xr.machine.running; }
 
-int Aeron_XrFocused(void) {
-	return g_xr.machine.focused;
-}
+int Aeron_XrFocused(void) { return g_xr.machine.focused; }
 
 void Aeron_XrRecenter(void) {
 	if (g_xr.machine.session)
@@ -287,9 +282,7 @@ void AeronXr_DestroyInstance(void) {
 	SDL_zero(g_xr);
 }
 
-int Aeron_XrEnabled(void) {
-	return g_xr.machine.session != XR_NULL_HANDLE;
-}
+int Aeron_XrEnabled(void) { return g_xr.machine.session != XR_NULL_HANDLE; }
 
 int Aeron_XrViewSize(int* width, int* height) {
 	const int enabled = Aeron_XrEnabled();
@@ -318,40 +311,25 @@ int AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size)
 	return 0;
 }
 
-void AeronXr_DeviceCreateFailed(void) {
-}
+void AeronXr_DeviceCreateFailed(void) {}
 
-void AeronXr_DestroySession(void) {
-}
+void AeronXr_DestroySession(void) {}
 
-void AeronXr_DestroyInstance(void) {
-}
+void AeronXr_DestroyInstance(void) {}
 
-void AeronXr_PollEvents(void) {
-}
+void AeronXr_PollEvents(void) {}
 
-int AeronXr_BeginFrame(void) {
-	return 1;
-}
+int AeronXr_BeginFrame(void) { return 1; }
 
-int AeronXr_EndFrame(void) {
-	return 1;
-}
+int AeronXr_EndFrame(void) { return 1; }
 
-int Aeron_XrSessionRunning(void) {
-	return 0;
-}
+int Aeron_XrSessionRunning(void) { return 0; }
 
-int Aeron_XrFocused(void) {
-	return 0;
-}
+int Aeron_XrFocused(void) { return 0; }
 
-void Aeron_XrRecenter(void) {
-}
+void Aeron_XrRecenter(void) {}
 
-int Aeron_XrEnabled(void) {
-	return 0;
-}
+int Aeron_XrEnabled(void) { return 0; }
 
 int Aeron_XrViewSize(int* width, int* height) {
 	if (width)
@@ -363,9 +341,7 @@ int Aeron_XrViewSize(int* width, int* height) {
 
 #endif /* AERON_XR */
 
-int Aeron_XrSupported(void) {
-	return AERON_XR != 0;
-}
+int Aeron_XrSupported(void) { return AERON_XR != 0; }
 
 int Aeron_XrBeginViews(AeronXrFrame* out) {
 	if (out)
@@ -373,8 +349,7 @@ int Aeron_XrBeginViews(AeronXrFrame* out) {
 	return 0;
 }
 
-void Aeron_XrSubmitViews(void) {
-}
+void Aeron_XrSubmitViews(void) {}
 
 int Aeron_XrSubmitMirror(const AeronSwapchainRenderLayerDesc* desc) {
 	(void)desc;

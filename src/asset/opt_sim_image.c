@@ -36,8 +36,8 @@ static opt_wnode_t mesh_root(opt_writer_t* writer, const AeronOptSimMesh* mesh, 
 	 * empty mesh for replacement models and must read the side data. */
 	*stub                         = opt_w_face_data_stub(writer);
 	const opt_wnode_t lod_items[] = { texture, *stub };
-	const opt_wnode_t lod0        = texture ? opt_w_group(writer, lod_items, 2) : opt_w_group(writer, stub, 1);
-	const opt_wnode_t grouping    = opt_w_face_grouping(writer, always, &lod0, 1);
+	const opt_wnode_t lod0     = texture ? opt_w_group(writer, lod_items, 2) : opt_w_group(writer, stub, 1);
+	const opt_wnode_t grouping = opt_w_face_grouping(writer, always, &lod0, 1);
 	const opt_wnode_t faces_group = opt_w_group(writer, (const opt_wnode_t[]) { 0, 0, 0, grouping }, 4);
 
 	const uint32_t glow_count = v5 ? mesh->glow_count : 0;
@@ -45,10 +45,12 @@ static opt_wnode_t mesh_root(opt_writer_t* writer, const AeronOptSimMesh* mesh, 
 	opt_wnode_t*   children   = malloc((size_t)count * sizeof *children);
 	if (!children)
 		return 0;
-	uint32_t child    = 0;
-	children[child++] = opt_w_vertices(writer, (const float (*)[3])mesh->vertices, (int)mesh->vertex_count + 2);
+	uint32_t child = 0;
+	children[child++] =
+		opt_w_vertices(writer, (const float (*)[3])mesh->vertices, (int)mesh->vertex_count + 2);
 	children[child++] = opt_w_texcoords(writer, origin_uv, 1);
-	children[child++] = opt_w_vertex_normals(writer, (const float (*)[3])mesh->normals, (int)mesh->vertex_count);
+	children[child++] =
+		opt_w_vertex_normals(writer, (const float (*)[3])mesh->normals, (int)mesh->vertex_count);
 	children[child++] = opt_w_descriptor(writer, &mesh->descriptor);
 	for (uint32_t index = 0; index < mesh->hardpoint_count; ++index)
 		children[child++] = opt_w_hardpoint(writer, &mesh->hardpoints[index]);
@@ -68,7 +70,8 @@ bool Aeron_OptSimModelWriteImage(const AeronOptSimModel* model, const AeronOptIm
 		return image_error(error, error_size, "invalid OPT image arguments", NULL);
 	for (uint32_t index = 0; index < model->mesh_count; ++index)
 		if (!model->meshes[index].vertices || !model->meshes[index].normals)
-			return image_error(error, error_size, "OPT simulation model was trimmed before writing its image", NULL);
+			return image_error(error, error_size, "OPT simulation model was trimmed before writing its image",
+							   NULL);
 	const bool    v5     = options->profile == AERON_OPT_IMAGE_PROFILE_V5;
 	opt_writer_t* writer = opt_writer_create(v5 ? OPT_WRITE_PROFILE_V5 : OPT_WRITE_PROFILE_V2);
 	opt_wnode_t*  roots  = malloc((size_t)model->mesh_count * sizeof *roots);
@@ -81,11 +84,13 @@ bool Aeron_OptSimModelWriteImage(const AeronOptSimModel* model, const AeronOptIm
 	for (uint32_t index = 0; index < model->mesh_count; ++index) {
 		opt_wnode_t texture = 0;
 		if (options->placeholder_texture)
-			texture = index == 0 ? placeholder_texture(writer) : opt_w_node_ref(writer, AERON_OPT_PLACEHOLDER_TEXTURE_NAME);
+			texture = index == 0 ? placeholder_texture(writer)
+								 : opt_w_node_ref(writer, AERON_OPT_PLACEHOLDER_TEXTURE_NAME);
 		roots[index] = mesh_root(writer, &model->meshes[index], v5, texture, &stubs[index]);
 	}
 	char detail[160] = { 0 };
-	if (!opt_writer_finish(writer, roots, (int)model->mesh_count, payload, payload_size, detail, sizeof detail)) {
+	if (!opt_writer_finish(writer, roots, (int)model->mesh_count, payload, payload_size, detail,
+						   sizeof detail)) {
 		image_error(error, error_size, "OPT image serialization failed", detail);
 		goto done;
 	}

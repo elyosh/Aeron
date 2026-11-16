@@ -60,7 +60,7 @@ typedef struct AeronFaceBvh {
 	/* Set by AeronFaceBvh_ReorderToLeafOrder: face_order is the identity and
 	 * a depth-first walk, left child first, meets the leaves in ascending
 	 * face order, so queries need not sort. */
-	bool              leaf_ordered;
+	bool leaf_ordered;
 } AeronFaceBvh;
 
 /* Caller-owned query scratch; zero-initialize before first use. */
@@ -142,8 +142,8 @@ uint32_t AeronFaceBvh_Collect(const AeronFaceBvh* bvh, const float start[3], con
 /* Collects every triangle in leaves whose box overlaps all slabs (each slab
  * widened by 2^-10 * (|min| + |max|) + 1e-3), unique and ascending. Returns
  * UINT32_MAX on allocation failure. */
-uint32_t AeronFaceBvh_CollectSlabs(const AeronFaceBvh* bvh, const AeronFaceBvhSlab* slabs, uint32_t slab_count,
-								   AeronFaceBvhScratch* scratch);
+uint32_t AeronFaceBvh_CollectSlabs(const AeronFaceBvh* bvh, const AeronFaceBvhSlab* slabs,
+								   uint32_t slab_count, AeronFaceBvhScratch* scratch);
 
 void AeronFaceBvhScratch_Free(AeronFaceBvhScratch* scratch);
 

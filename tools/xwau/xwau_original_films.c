@@ -5,11 +5,11 @@
 
 enum {
 	STOCK_CRAFT_SIZE = 1017,
-	STOCK_MESHES = 50,
-	MAX_MESHES = 255,
-	HOOK_ENGINES = 255,
-	HOOK_RACKS = 128,
-	RACK_SIZE = 14,
+	STOCK_MESHES     = 50,
+	MAX_MESHES       = 255,
+	HOOK_ENGINES     = 255,
+	HOOK_RACKS       = 128,
+	RACK_SIZE        = 14,
 };
 
 bool XwauOriginalFilms_Write(FILE* f, const char* game) {
@@ -27,18 +27,21 @@ bool XwauOriginalFilms_Write(FILE* f, const char* game) {
 		return false;
 	}
 	/* The hook's offsets are from the end of the stock record. */
-	const long long size = STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_ExtraSize",
-																 meshes * 3 + HOOK_ENGINES + HOOK_RACKS * RACK_SIZE);
-	const long long state     = STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_22E", 0);
-	const long long rotation  = STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_260", meshes);
-	const long long hp        = STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_292", meshes * 2);
-	const long long engine_health   = STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_2CF", meshes * 3);
-	const long long rack_data     = STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_2DF",
-																	 meshes * 3 + HOOK_ENGINES);
+	const long long size =
+		STOCK_CRAFT_SIZE +
+		XwauSection_IntOr(&settings, "Craft_ExtraSize", meshes * 3 + HOOK_ENGINES + HOOK_RACKS * RACK_SIZE);
+	const long long state    = STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_22E", 0);
+	const long long rotation = STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_260", meshes);
+	const long long hp = STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_292", meshes * 2);
+	const long long engine_health =
+		STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_2CF", meshes * 3);
+	const long long rack_data =
+		STOCK_CRAFT_SIZE + XwauSection_IntOr(&settings, "Craft_Offset_2DF", meshes * 3 + HOOK_ENGINES);
 	XwauSection_Free(&settings);
 	if (meshes < STOCK_MESHES || meshes > MAX_MESHES) {
-		Report(source, "MeshesCount = %lld: films with this many meshes can't be played; the film settings are "
-					   "left out",
+		Report(source,
+			   "MeshesCount = %lld: films with this many meshes can't be played; the film settings are "
+			   "left out",
 			   meshes);
 		return false;
 	}

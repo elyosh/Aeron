@@ -31,23 +31,23 @@ void AeronXr_UnloadRuntime(void);
 
 /* The OpenXR functions that aeron calls. SDL creates the instance, so aeron
  * gets them from the loader with xrGetInstanceProcAddr. */
-#define AERON_XR_FUNCTIONS(X)            \
-	X(xrDestroyInstance)                 \
-	X(xrGetInstanceProperties)           \
-	X(xrGetSystemProperties)             \
-	X(xrResultToString)                  \
-	X(xrDestroySession)                  \
-	X(xrCreateReferenceSpace)            \
-	X(xrDestroySpace)                    \
-	X(xrEnumerateViewConfigurations)     \
-	X(xrEnumerateViewConfigurationViews) \
-	X(xrEnumerateEnvironmentBlendModes)  \
-	X(xrPollEvent)                       \
-	X(xrBeginSession)                    \
-	X(xrEndSession)                      \
-	X(xrWaitFrame)                       \
-	X(xrBeginFrame)                      \
-	X(xrEndFrame)                        \
+#define AERON_XR_FUNCTIONS(X)                                                                                \
+	X(xrDestroyInstance)                                                                                     \
+	X(xrGetInstanceProperties)                                                                               \
+	X(xrGetSystemProperties)                                                                                 \
+	X(xrResultToString)                                                                                      \
+	X(xrDestroySession)                                                                                      \
+	X(xrCreateReferenceSpace)                                                                                \
+	X(xrDestroySpace)                                                                                        \
+	X(xrEnumerateViewConfigurations)                                                                         \
+	X(xrEnumerateViewConfigurationViews)                                                                     \
+	X(xrEnumerateEnvironmentBlendModes)                                                                      \
+	X(xrPollEvent)                                                                                           \
+	X(xrBeginSession)                                                                                        \
+	X(xrEndSession)                                                                                          \
+	X(xrWaitFrame)                                                                                           \
+	X(xrBeginFrame)                                                                                          \
+	X(xrEndFrame)                                                                                            \
 	X(xrLocateSpace)
 
 typedef struct AeronXrFunctions {

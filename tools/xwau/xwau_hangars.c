@@ -796,9 +796,9 @@ static bool read_hangar_map_section(const Models* m, const XwauLines* lines, con
 
 /* Reads a camera section, with every key that the hook reads. */
 static void read_hangar_camera_section(const XwauLines* lines, bool family, Layer* out) {
-	const int*   keys  = family ? kFamCameraKeys : kCameraKeys;
-	const size_t count = family ? sizeof kFamCameraKeys / sizeof kFamCameraKeys[0]
-								: sizeof kCameraKeys / sizeof kCameraKeys[0];
+	const int*   keys           = family ? kFamCameraKeys : kCameraKeys;
+	const size_t count          = family ? sizeof kFamCameraKeys / sizeof kFamCameraKeys[0]
+										 : sizeof kCameraKeys / sizeof kCameraKeys[0];
 	out->camera_present[family] = true;
 	for (size_t i = 0; i < count; ++i) {
 		for (int a = 0; a < 3; ++a) {
@@ -1743,8 +1743,8 @@ bool XwauHangars_Write(const char* xwau, const XwauGameTables* stock, const Xwau
 	XwauLines names = { 0 }, ship_keys = { 0 };
 	Craft*    crafts      = NULL;
 	size_t    craft_count = 0;
-	Layer*    ships      = NULL;
-	size_t    ship_count = 0;
+	Layer*    ships       = NULL;
+	size_t    ship_count  = 0;
 	ok                    = ok && list_model_names(xwau, &names);
 	for (size_t i = 0; ok && i < names.count; ++i) {
 		char*       tab  = strchr(names.items[i], '\t');

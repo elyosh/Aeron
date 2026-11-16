@@ -149,9 +149,10 @@ static void usage(void) {
 
 /* Prints effect library file `file` as JSON on stdout, once checked. */
 static bool print_library(const char* file) {
-	cJSON* library = EffectLibrary_ReadLibrary(LIBRARY_TAG, file);
-	char*  printed = library ? cJSON_PrintUnformatted(library) : NULL;
-	const bool ok  = printed && fputs(printed, stdout) >= 0 && fputc('\n', stdout) != EOF && fflush(stdout) == 0;
+	cJSON*     library = EffectLibrary_ReadLibrary(LIBRARY_TAG, file);
+	char*      printed = library ? cJSON_PrintUnformatted(library) : NULL;
+	const bool ok =
+		printed && fputs(printed, stdout) >= 0 && fputc('\n', stdout) != EOF && fflush(stdout) == 0;
 	free(printed);
 	cJSON_Delete(library);
 	return ok;
@@ -200,7 +201,7 @@ static int read_separate_pages_option(int argc, char** argv, int* i, AeronGltfCo
 	const char* a = argv[*i];
 	char*       end;
 	if (strcmp(a, "--separate-pages-budget") == 0 && *i + 1 < argc) {
-		const char* value          = argv[++*i];
+		const char* value           = argv[++*i];
 		cook->separate_pages_budget = strtoll(value, &end, 10);
 		if (!value[0] || *end) {
 			fprintf(stderr, "[aeron_gltf_cook] --separate-pages-budget must be a number of texels\n");
@@ -209,8 +210,8 @@ static int read_separate_pages_option(int argc, char** argv, int* i, AeronGltfCo
 		return 1;
 	}
 	if (strcmp(a, "--separate-pages-max-layers") == 0 && *i + 1 < argc) {
-		const char* value              = argv[++*i];
-		const long  layers             = strtol(value, &end, 10);
+		const char* value               = argv[++*i];
+		const long  layers              = strtol(value, &end, 10);
 		cook->separate_pages_max_layers = (int)layers;
 		if (!value[0] || *end || layers < 1 || layers > 4096) {
 			fprintf(stderr, "[aeron_gltf_cook] --separate-pages-max-layers must be 1 to 4096\n");
@@ -276,7 +277,8 @@ int main(int argc, char** argv) {
 			(argc == 6 && strcmp(argv[5], "--verbose") != 0))
 			usage();
 		ToolLog_SetDetails(argc == 6);
-		return EffectLibrary_BuildLibrary(LIBRARY_TAG, argv[2], NULL, argv[4]) != EFFECT_LIBRARY_FAILED ? 0 : 1;
+		return EffectLibrary_BuildLibrary(LIBRARY_TAG, argv[2], NULL, argv[4]) != EFFECT_LIBRARY_FAILED ? 0
+																										: 1;
 	}
 	if (strcmp(argv[1], "--build-project") == 0)
 		return build_project(argc, argv);

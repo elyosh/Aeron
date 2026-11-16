@@ -629,13 +629,13 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 		q->q[i]         = in->q[i] != 0.0f ? in->q[i] : 1.0f;
 		q->ndc_depth[i] = in->ndc_depth[i];
 	}
-	q->tint_r = in->tint[0];
-	q->tint_g = in->tint[1];
-	q->tint_b = in->tint[2];
-	q->tint_a = in->tint[3];
-	q->bias_r = in->bias[0];
-	q->bias_g = in->bias[1];
-	q->bias_b = in->bias[2];
+	q->tint_r     = in->tint[0];
+	q->tint_g     = in->tint[1];
+	q->tint_b     = in->tint[2];
+	q->tint_a     = in->tint[3];
+	q->bias_r     = in->bias[0];
+	q->bias_g     = in->bias[1];
+	q->bias_b     = in->bias[2];
 	q->bias_a     = in->bias[3];
 	q->monochrome = in->monochrome;
 	q->source     = dl2d_source(l, in->texture);

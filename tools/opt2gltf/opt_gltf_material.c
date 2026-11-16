@@ -321,11 +321,11 @@ static char* screen_json(const OptGltfScreen* s) {
 	ok            = ok && (hide || !s->hide_count);
 	for (uint32_t i = 0; ok && i < s->hide_count; ++i)
 		ok = OptJson_Add(hide, NULL, cJSON_CreateString(s->hide[i]));
-	cJSON* rects  = ok ? OptJson_AddArray(object, "rects") : NULL;
-	ok            = rects != NULL;
+	cJSON* rects = ok ? OptJson_AddArray(object, "rects") : NULL;
+	ok           = rects != NULL;
 	for (uint32_t i = 0; ok && i < s->rect_count; ++i) {
-		const OptGltfScreenRect* r    = &s->rects[i];
-		cJSON*                   rect = OptJson_AddObject(rects, NULL);
+		const OptGltfScreenRect* r      = &s->rects[i];
+		cJSON*                   rect   = OptJson_AddObject(rects, NULL);
 		cJSON*                   layers = cJSON_CreateArray();
 		for (uint32_t bit = 0; layers && bit < AERON_FLIGHT_SCREEN_LAYER_COUNT; ++bit)
 			if (r->layers & (1u << bit))
@@ -408,8 +408,9 @@ static bool skins_json(const OptGltfDocument* document, cJSON* entry, const OptG
 	cJSON* skins = OptJson_AddObject(entry, "skins");
 	bool   ok    = skins != NULL;
 	for (size_t l = 0; ok && l < given->skin_count; ++l) {
-		const OptGltfSkinLayer* layer   = &given->skins[l];
-		static const char* const keys[] = { "baseColorTexture", "emissiveTexture", "metallicRoughnessTexture" };
+		const OptGltfSkinLayer*  layer   = &given->skins[l];
+		static const char* const keys[]  = { "baseColorTexture", "emissiveTexture",
+											 "metallicRoughnessTexture" };
 		const OptGltfImage*      skin[3] = { &layer->base, &layer->emissive, &layer->metallic_roughness };
 		cJSON*                   object  = OptJson_AddObject(skins, layer->skin);
 		ok                               = object != NULL;
@@ -664,8 +665,7 @@ bool opt_gltf_prepare_textures(Build* b) {
 	b->document->image_pixels_count = images;
 	b->image_count                  = images;
 	if (!gb->images || !gb->textures || !gb->materials || !gb->material_anim || !gb->material_screen ||
-		!gb->material_given ||
-		!b->document->image_pixels)
+		!gb->material_given || !b->document->image_pixels)
 		return opt_gltf_build_fail(b, "out of memory (textures)");
 	b->image_slot = (size_t)opt->texture_count;
 	return true;

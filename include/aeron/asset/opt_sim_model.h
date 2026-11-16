@@ -31,9 +31,9 @@ typedef struct AeronOptSimOptions {
 } AeronOptSimOptions;
 
 typedef struct AeronOptSimMesh {
-	uint32_t               vertex_count; /* V, excluding the two trailing box entries */
-	float (*vertices)[3];                /* V + 2: vertices, then trailing box min, max */
-	float (*normals)[3];                 /* V, parallel to vertices */
+	uint32_t vertex_count; /* V, excluding the two trailing box entries */
+	float (*vertices)[3];  /* V + 2: vertices, then trailing box min, max */
+	float (*normals)[3];   /* V, parallel to vertices */
 	uint32_t               face_count;
 	AeronOptFace*          faces;
 	AeronOptMeshDescriptor descriptor;
@@ -46,7 +46,7 @@ typedef struct AeronOptSimMesh {
 	bool                   bvh_cooked;
 	/* After Aeron_OptSimModelReorderFacesToLeafOrder: authored face a is
 	 * faces[authored_order[a]]. NULL while faces are in authored order. */
-	uint32_t*              authored_order;
+	uint32_t* authored_order;
 } AeronOptSimMesh;
 
 typedef struct AeronOptSimModel {
@@ -59,7 +59,8 @@ typedef struct AeronOptSimModel {
  * receives each position's unique index and `unique` (position_count entries)
  * the unique position indices in first-occurrence order. Returns the unique
  * count, or 0 on failure. */
-uint32_t Aeron_FlightTopologyDeduplicate(const AeronFlightTopology* topology, uint32_t* remap, uint32_t* unique);
+uint32_t Aeron_FlightTopologyDeduplicate(const AeronFlightTopology* topology, uint32_t* remap,
+										 uint32_t* unique);
 
 /* Deterministic farthest-point sample over the unique positions (indices
  * into topology->positions, metres). The seed is the lexicographically
@@ -86,7 +87,7 @@ typedef struct AeronOptImageOptions {
 } AeronOptImageOptions;
 
 #define AERON_OPT_PLACEHOLDER_TEXTURE_NAME "AeronPlaceholder"
-#define AERON_OPT_PLACEHOLDER_TEXTURE_ID   0x0A3E5E01u
+#define AERON_OPT_PLACEHOLDER_TEXTURE_ID 0x0A3E5E01u
 
 /* Writes the standard replacement OPT payload (the bytes after the file's
  * -version/size header): one root per mesh, in mesh order, each holding

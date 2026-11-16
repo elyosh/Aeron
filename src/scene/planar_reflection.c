@@ -209,14 +209,14 @@ static int ensure_targets(AeronScene3D* s) {
 	const int height = align_up(h, PLANAR_ALIGN);
 	p->color =
 		AeronSceneInternal_CreateColorRt(AERON_TEXTURE_FORMAT_RGBA16_FLOAT, w, h, "scene.planar_color");
-	p->depth   = Aeron_CreateDepthTarget(&(AeronDepthTargetDesc) {
+	p->depth = Aeron_CreateDepthTarget(&(AeronDepthTargetDesc) {
 		.width      = w,
 		.height     = h,
 		.format     = AERON_TEXTURE_FORMAT_D32_FLOAT,
 		.sampled    = 1,
 		.debug_name = "scene.planar_depth",
 	});
-	p->image   = Aeron_CreateTexture(&(AeronTextureDesc) {
+	p->image = Aeron_CreateTexture(&(AeronTextureDesc) {
 		.width      = 2 * half,
 		.height     = height,
 		.mip_count  = PLANAR_MIPS,

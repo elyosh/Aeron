@@ -119,7 +119,7 @@ uint8_t* Aeron_ImageDownsampleStraightAlphaRgba8(const uint8_t* source, int widt
 /* The Mitchell-Netravali filter with B = C = 1/3, which is 0 past 2. */
 static float image_mitchell(float x) {
 	const float B = 1.0f / 3.0f, C = 1.0f / 3.0f;
-	x         = fabsf(x);
+	x = fabsf(x);
 	if (x < 1.0f)
 		return ((12.0f - 9.0f * B - 6.0f * C) * x * x * x + (-18.0f + 12.0f * B + 6.0f * C) * x * x +
 				(6.0f - 2.0f * B)) /
@@ -147,7 +147,7 @@ static void image_free_taps(ImageTaps* t) {
 }
 
 static int image_build_taps(int in_size, int out_size, ImageTaps* t) {
-	const float scale   = (float)in_size / (float)out_size;
+	const float scale = (float)in_size / (float)out_size;
 	/* When the image shrinks, the filter widens so that every source pixel
 	   counts. */
 	const float width   = scale > 1.0f ? scale : 1.0f;
@@ -223,8 +223,8 @@ static void image_srgb_tables(ImageSrgbTables* t) {
  * doesn't branch on the value: a branch there is often mispredicted on real
  * textures, and took most of the downsample's time. */
 static uint8_t image_srgb_encode(const ImageSrgbTables* t, float value) {
-	int step = (int)(value * IMAGE_SRGB_STEPS);
-	step     = step < 0 ? 0 : step >= IMAGE_SRGB_STEPS ? IMAGE_SRGB_STEPS - 1 : step;
+	int step       = (int)(value * IMAGE_SRGB_STEPS);
+	step           = step < 0 ? 0 : step >= IMAGE_SRGB_STEPS ? IMAGE_SRGB_STEPS - 1 : step;
 	const int code = t->code[step];
 	/* Past the start of the step, the value may cross one more halfway value
 	   (IMAGE_SRGB_STEPS). */
@@ -341,8 +341,8 @@ uint8_t* Aeron_ImageResizeSrgbRgba8(const uint8_t* source, int width, int height
 			const float* w      = across.weights + (size_t)x * across.taps;
 			float        sum[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 			for (int k = 0; k < across.count[x]; k++) {
-				int i = across.first[x] + k;
-				i     = i < 0 ? 0 : i >= width ? width - 1 : i;
+				int i                = across.first[x] + k;
+				i                    = i < 0 ? 0 : i >= width ? width - 1 : i;
 				const uint8_t* p     = row + (size_t)i * 4u;
 				const float    alpha = (float)p[3] / 255.0f;
 				sum[0] += w[k] * linear[p[0]] * alpha;
@@ -358,8 +358,8 @@ uint8_t* Aeron_ImageResizeSrgbRgba8(const uint8_t* source, int width, int height
 		for (int x = 0; x < out_width; x++) {
 			float sum[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 			for (int k = 0; k < down.count[y]; k++) {
-				int i = down.first[y] + k;
-				i     = i < 0 ? 0 : i >= height ? height - 1 : i;
+				int i          = down.first[y] + k;
+				i              = i < 0 ? 0 : i >= height ? height - 1 : i;
 				const float* p = rows + ((size_t)i * out_width + x) * 4u;
 				for (int c = 0; c < 4; c++)
 					sum[c] += w[k] * p[c];

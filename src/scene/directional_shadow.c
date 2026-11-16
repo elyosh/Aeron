@@ -901,9 +901,9 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 					continue;
 				}
 				const AeronSceneInstanceBox* bound = &object_bounds[candidate];
-				const float        bx    = shadow_dot3(bound->center, x_axis);
-				const float        by    = shadow_dot3(bound->center, y_axis);
-				const float        bz    = shadow_dot3(bound->center, light_dir);
+				const float                  bx    = shadow_dot3(bound->center, x_axis);
+				const float                  by    = shadow_dot3(bound->center, y_axis);
+				const float                  bz    = shadow_dot3(bound->center, light_dir);
 				if (!shadow_bounds_overlap_xy(&split_bounds, bx, by, bound->half[0], bound->half[1]) ||
 					bz + bound->half[2] < receiver_bounds.min[2] ||
 					bz - bound->half[2] > receiver_bounds.max[2] + desc->max_distance) {
@@ -1001,9 +1001,9 @@ static void shadow_prepare_cascade(struct AeronScene3D* scene, const AeronSceneD
 			continue;
 		}
 		const AeronSceneInstanceBox* bound = &object_bounds[candidate];
-		const float        bx    = shadow_dot3(bound->center, x_axis);
-		const float        by    = shadow_dot3(bound->center, y_axis);
-		const float        bz    = shadow_dot3(bound->center, light_dir);
+		const float                  bx    = shadow_dot3(bound->center, x_axis);
+		const float                  by    = shadow_dot3(bound->center, y_axis);
+		const float                  bz    = shadow_dot3(bound->center, light_dir);
 		if (fabsf(bx - center[0]) > extent[0] + bound->half[0] ||
 			fabsf(by - center[1]) > extent[1] + bound->half[1] || bz + bound->half[2] < receiver_z_min ||
 			bz - bound->half[2] > receiver_z_max + desc->max_distance ||
@@ -1141,9 +1141,9 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 		fminf(fmaxf(desc.split_positions[2], desc.split_positions[1] + split_gap), 1.0f - split_gap);
 	desc.light_angular_radius_degrees = fminf(fmaxf(desc.light_angular_radius_degrees, 0.0f), 5.0f);
 	desc.max_filter_radius            = fminf(fmaxf(desc.max_filter_radius, 1.0f), 16.0f);
-	desc.pcss_min_filter_radius       = fminf(fmaxf(desc.pcss_min_filter_radius, 0.5f), desc.max_filter_radius);
-	desc.normal_bias_texels           = fminf(fmaxf(desc.normal_bias_texels, 0.0f), 4.0f);
-	desc.depth_bias_texels            = fminf(fmaxf(desc.depth_bias_texels, 0.0f), 4.0f);
+	desc.pcss_min_filter_radius = fminf(fmaxf(desc.pcss_min_filter_radius, 0.5f), desc.max_filter_radius);
+	desc.normal_bias_texels     = fminf(fmaxf(desc.normal_bias_texels, 0.0f), 4.0f);
+	desc.depth_bias_texels      = fminf(fmaxf(desc.depth_bias_texels, 0.0f), 4.0f);
 	for (int axis = 0; axis < 3; axis++) {
 		if (!isfinite(desc.world_origin[axis])) {
 			desc.world_origin[axis] = 0.0;
@@ -1153,7 +1153,7 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 	desc.distance_fade_fraction = fminf(fmaxf(desc.distance_fade_fraction, 0.0f), 0.5f);
 	desc.receiver_local_near_distance =
 		isfinite(desc.receiver_local_near_distance) ? fmaxf(desc.receiver_local_near_distance, 0.0f) : 0.0f;
-	desc.debug_atlas            = desc.debug_atlas ? 1 : 0;
+	desc.debug_atlas = desc.debug_atlas ? 1 : 0;
 	desc.debug_atlas_cascade =
 		desc.debug_atlas_cascade < -1
 			? -1
@@ -1200,16 +1200,16 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 		scene->shadow_uniform.camera_pos[axis]     = scene->camera.pos[axis];
 		scene->shadow_uniform.camera_forward[axis] = camera_rotation[2 * 3 + axis];
 	}
-	scene->shadow_uniform.params[0]         = 1.0f;
-	scene->shadow_uniform.params[1]         = (float)desc.cascade_count;
-	scene->shadow_uniform.params[3]         = desc.debug_cascades ? 1.0f : 0.0f;
-	scene->shadow_uniform.bias[0]           = desc.normal_bias_texels;
-	scene->shadow_uniform.bias[1]           = desc.depth_bias_texels;
-	scene->shadow_uniform.bias[3]           = desc.max_distance;
-	scene->shadow_uniform.fade[0]           = desc.max_distance * (1.0f - desc.distance_fade_fraction);
-	scene->shadow_uniform.fade[1]           = desc.max_distance;
-	scene->shadow_uniform.fade[2]           = 1.0f / (float)desc.atlas_size;
-	scene->shadow_uniform.fade[3]           = 1.0f / (float)desc.atlas_size;
+	scene->shadow_uniform.params[0] = 1.0f;
+	scene->shadow_uniform.params[1] = (float)desc.cascade_count;
+	scene->shadow_uniform.params[3] = desc.debug_cascades ? 1.0f : 0.0f;
+	scene->shadow_uniform.bias[0]   = desc.normal_bias_texels;
+	scene->shadow_uniform.bias[1]   = desc.depth_bias_texels;
+	scene->shadow_uniform.bias[3]   = desc.max_distance;
+	scene->shadow_uniform.fade[0]   = desc.max_distance * (1.0f - desc.distance_fade_fraction);
+	scene->shadow_uniform.fade[1]   = desc.max_distance;
+	scene->shadow_uniform.fade[2]   = 1.0f / (float)desc.atlas_size;
+	scene->shadow_uniform.fade[3]   = 1.0f / (float)desc.atlas_size;
 	scene->shadow_uniform.pcss[1] =
 		tanf(desc.light_angular_radius_degrees * (3.14159265358979323846f / 180.0f));
 	scene->shadow_uniform.pcss[2] = desc.max_filter_radius;
@@ -1268,9 +1268,8 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 		cascade_casters += scene->shadow_caster_count[cascade];
 	}
 	/* The debug views read the atlas and the cascade metadata. */
-	scene->shadow_atlas_empty =
-		cascade_casters == 0 && !desc.debug_cascades && !desc.debug_atlas ? 1u : 0u;
-	scene->shadow_stats.active              = 1;
+	scene->shadow_atlas_empty  = cascade_casters == 0 && !desc.debug_cascades && !desc.debug_atlas ? 1u : 0u;
+	scene->shadow_stats.active = 1;
 	scene->shadow_stats.atlas_size          = desc.atlas_size;
 	scene->shadow_stats.cascade_count       = desc.cascade_count;
 	scene->shadow_stats.fit_mode            = desc.fit_mode;
@@ -1332,7 +1331,7 @@ static void shadow_draw_class(struct AeronScene3D* scene, AeronRenderPass* pass,
 		memcpy(block.model_to_world, instance->transform, sizeof block.model_to_world);
 		block.mesh_table_base =
 			AeronSceneStorage_ShadowTableBase(scene, casters[item], &block.table_component_count);
-		uint32_t variant       = instance->variant;
+		uint32_t variant = instance->variant;
 		if (variant >= mesh->variant_rows)
 			variant = mesh->variant_rows ? mesh->variant_rows - 1u : 0u;
 		block.variant_row_base    = variant * mesh->variant_groups_per_row;
@@ -1558,13 +1557,14 @@ void AeronSceneDirectionalShadow_BindScreen(struct AeronScene3D* scene, AeronRen
 	shadow_bind_map(scene, render_pass, &scene->shadow_uniform, scene->shadow_atlas, active, 2, 3, 1);
 }
 
-void AeronSceneDirectionalShadow_BindScreenReceiverLocal(struct AeronScene3D* scene, AeronRenderPass* render_pass) {
+void AeronSceneDirectionalShadow_BindScreenReceiverLocal(struct AeronScene3D* scene,
+														 AeronRenderPass*     render_pass) {
 	if (!scene || !render_pass || !shadow_ensure_common(scene)) {
 		return;
 	}
-	shadow_bind_map(scene, render_pass, &scene->receiver_local_shadow_uniform, scene->receiver_local_shadow_atlas,
-					AeronSceneDirectionalShadow_ReceiverLocalMode(scene) == AERON_SHADOW_RECEIVER_LOCAL_MAP, 2, 3,
-					1);
+	shadow_bind_map(
+		scene, render_pass, &scene->receiver_local_shadow_uniform, scene->receiver_local_shadow_atlas,
+		AeronSceneDirectionalShadow_ReceiverLocalMode(scene) == AERON_SHADOW_RECEIVER_LOCAL_MAP, 2, 3, 1);
 }
 
 void AeronSceneDirectionalShadow_BindDisabled(struct AeronScene3D* scene, AeronRenderPass* render_pass) {

@@ -740,9 +740,9 @@ static void write_values(FILE* f, const XwauNames* names, const XwauGameTables* 
 	while (craft < values->craft_marking_count && values->craft_markings[craft].fg < 0)
 		++craft;
 	for (int i = 0; (size_t)i < tie->count; ++i) {
-		const XwauMissionTieFlightGroup* entry = XwauMissionTie_FlightGroup(values, i);
-		const bool                       set   = entry && has_values(entry);
-		const XwauWarheadPool*           pool  = XwauWarheadPools_Find(pools, i);
+		const XwauMissionTieFlightGroup* entry  = XwauMissionTie_FlightGroup(values, i);
+		const bool                       set    = entry && has_values(entry);
+		const XwauWarheadPool*           pool   = XwauWarheadPools_Find(pools, i);
 		const XwauWeaponProfileChoice*   choice = XwauWeaponStats_FindChoice(choices, i);
 		const bool by_craft = craft < values->craft_marking_count && values->craft_markings[craft].fg == i;
 		if (!set && !by_craft && !XwauWarheadPools_Any(pool) && !XwauWeaponStats_AnyChoice(choice))
@@ -940,8 +940,8 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	XwauLines_Free(&lines);
 	const XwauFlightGroupArticulation* fgs      = NULL;
 	const size_t                       fg_count = XwauMissions_FlightGroupArticulations(missions, base, &fgs);
-	XwauLines      resdata = { 0 };
-	XwauMissionTie values  = { 0 };
+	XwauLines                          resdata  = { 0 };
+	XwauMissionTie                     values   = { 0 };
 	ok = ok && resdata_names(game, stock_game, base, &resdata) && XwauMissionTie_Read(game, base, &values);
 	XwauMissionSettings settings = { 0 };
 	ok               = ok && XwauMissionSettings_Read(game, base, XwauMissionNumbers_Find(numbers, dir, name),
@@ -950,11 +950,11 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	size_t swap_count = 0;
 	ok                = ok && swaps(game, base, models, &swap_list, &swap_count);
 	XwauFrontPlanet planet;
-	ok                               = ok && XwauFrontPlanet_Read(game, base, design_scale, &planet);
-	bool lights = false;
-	ok                     = ok && headlights(game, base, &lights) && report_weapon_rates(game, base);
-	XwauMissionStats stats = { 0 };
-	ok                     = ok && XwauMissionStats_Read(game, base, &stats);
+	ok                       = ok && XwauFrontPlanet_Read(game, base, design_scale, &planet);
+	bool lights              = false;
+	ok                       = ok && headlights(game, base, &lights) && report_weapon_rates(game, base);
+	XwauMissionStats stats   = { 0 };
+	ok                       = ok && XwauMissionStats_Read(game, base, &stats);
 	XwauMissionSounds sounds = { 0 };
 	ok                       = ok && XwauMissionSounds_Read(game, stock_game, base, true, &sounds);
 	XwauWarheadPools pools   = { 0 };
@@ -965,7 +965,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 	ok                               = ok && XwauObjectLimits_ReadMission(game, base, &limits);
 	const bool any_limits            = XwauObjectLimits_Any(&limits);
 	const bool any_stats             = XwauMissionStats_Any(&stats);
-	bool any_values = values.craft_marking_count != 0;
+	bool       any_values            = values.craft_marking_count != 0;
 	for (size_t i = 0; i < values.fg_count; ++i)
 		any_values |= has_values(&values.fgs[i]);
 	for (size_t i = 0; i < pools.count; ++i)
@@ -1029,7 +1029,7 @@ static bool import_mission(const char* game, const XwauMissions* missions, const
 		profiles_kept += profile_targets[i] >= 0;
 	for (size_t i = 0; fg_targets && i < fg_count; ++i)
 		fgs_kept += fg_targets[i] >= 0;
-	ok                       = profile_targets && fg_targets;
+	ok                        = profile_targets && fg_targets;
 	const size_t values_kept  = check_values(&values, &tie, totals);
 	const size_t pools_kept   = check_pools(&pools, &tie, totals);
 	const size_t choices_kept = check_choices(game, &choices, &tie, tables, swap_list, swap_count, base);

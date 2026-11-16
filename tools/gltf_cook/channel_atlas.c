@@ -251,17 +251,17 @@ static int first_fit_pages(ChannelAtlas* ca, int* order, int count, AeronAtlasRe
 void channel_atlas_one_per_page_extent(const ChannelAtlas* ca, int* width, int* height) {
 	for (int i = 0; ca && i < ca->rect_count; i++) {
 		const int w = (ca->rects[i].src_w + 3) / 4 * 4, h = (ca->rects[i].src_h + 3) / 4 * 4;
-		*width      = w > *width ? w : *width;
-		*height     = h > *height ? h : *height;
+		*width  = w > *width ? w : *width;
+		*height = h > *height ? h : *height;
 	}
 }
 
 int64_t channel_atlas_texel_lower_bound(const ChannelAtlas* ca, int page_size, int gutter) {
 	int64_t texels = 0;
 	for (int i = 0; ca && i < ca->rect_count; i++) {
-		const ChannelRect* r         = &ca->rects[i];
-		const int64_t      footprint = (int64_t)footprint_cells(r->src_w, gutter) * gutter *
-								  footprint_cells(r->src_h, gutter) * gutter;
+		const ChannelRect* r = &ca->rects[i];
+		const int64_t      footprint =
+			(int64_t)footprint_cells(r->src_w, gutter) * gutter * footprint_cells(r->src_h, gutter) * gutter;
 		int64_t page = page_size;
 		while (page < r->src_w || page < r->src_h)
 			page *= 2;

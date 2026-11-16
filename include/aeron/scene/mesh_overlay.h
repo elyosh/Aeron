@@ -38,9 +38,9 @@ typedef struct AeronSceneMeshOverlayDesc {
 	uint32_t      texture_max_lod;
 	/* Array textures: outside uv_rect, sample its edge texels (D3D CLAMP
 	 * addressing) instead of discarding. */
-	uint8_t                            texture_clamp;
-	float                              transform[16];
-	const AeronSceneMeshTable*         mesh_table;
+	uint8_t                    texture_clamp;
+	float                      transform[16];
+	const AeronSceneMeshTable* mesh_table;
 	/* atlas_uv = uv * zw + xy. uv_rect is minU,minV,maxU,maxV. */
 	float   uv_xform[4];
 	float   uv_rect[4];

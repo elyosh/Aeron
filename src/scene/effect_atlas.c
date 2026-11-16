@@ -498,11 +498,11 @@ AeronEffectData* AeronEffectData_Load(AeronEffectAtlas* atlas, AeronCommandBuffe
 			Aeron_LogError("aeron.scene", "%s: %s", path, error.message);
 		return NULL;
 	}
-	const AeronConfigNode* images = AeronConfigFile_GetNode(yaml, "images");
+	const AeronConfigNode* images    = AeronConfigFile_GetNode(yaml, "images");
 	const AeronConfigNode* energy    = AeronConfigFile_GetNode(yaml, "energy");
-	const uint32_t         count  = (uint32_t)AeronConfigNode_MapCount(images);
+	const uint32_t         count     = (uint32_t)AeronConfigNode_MapCount(images);
 	const uint32_t         libraries = count + AERON_EFFECT_ENERGY_COUNT;
-	AeronEffectData*       data   = (AeronEffectData*)calloc(1, sizeof *data);
+	AeronEffectData*       data      = (AeronEffectData*)calloc(1, sizeof *data);
 	int                    ok        = data != NULL;
 	if (ok) {
 		data->atlas     = atlas;

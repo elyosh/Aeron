@@ -125,7 +125,7 @@ typedef struct AeronFlightLight {
 	float                 spot_outer_angle;
 	/* Baked into the model's probes: the game leaves the light out
 	 * while the model's probes light the scene. */
-	bool baked;
+	bool     baked;
 	bool     has_variants;
 	uint32_t variant_mask[AERON_FLIGHT_LIGHT_VARIANT_WORDS];
 	uint32_t tag_groups;
@@ -218,10 +218,10 @@ typedef struct AeronFlightComponent {
 	AeronFlightTag*       tags;
 	/* Cooked simulation data (`simulationData`): an owned copy of its buffer
 	 * view, verified against the topology by its consumer. */
-	bool                  has_simulation_data;
-	uint8_t*              simulation_data;
-	size_t                simulation_data_size;
-	uint64_t              simulation_topology_hash;
+	bool     has_simulation_data;
+	uint8_t* simulation_data;
+	size_t   simulation_data_size;
+	uint64_t simulation_topology_hash;
 } AeronFlightComponent;
 
 /* ---- probes -------------------------------------------------------------
@@ -233,9 +233,9 @@ typedef struct AeronFlightComponent {
  * as JSON with the fields of `probeData`. See
  * tools/extensions/AERON_flight_model_cooked. */
 
-#define AERON_FLIGHT_MAX_PROBES      42 /* 6 array layers per cube, 256 array layers at most */
-#define AERON_FLIGHT_PROBE_GRID_MIN  2  /* grid points per axis */
-#define AERON_FLIGHT_PROBE_GRID_MAX  64
+#define AERON_FLIGHT_MAX_PROBES 42    /* 6 array layers per cube, 256 array layers at most */
+#define AERON_FLIGHT_PROBE_GRID_MIN 2 /* grid points per axis */
+#define AERON_FLIGHT_PROBE_GRID_MAX 64
 #define AERON_FLIGHT_KEY_LIGHT_SHADOW 0.7f
 
 typedef enum AeronFlightProbeShape {
@@ -325,9 +325,9 @@ typedef struct AeronFlightModel {
 	/* At most AERON_MAX_MESH_COMPONENTS - component_count. */
 	uint32_t                        control_count;
 	AeronFlightControl*             controls;
-	AeronFlightBounds      bounds;
-	float                  max_extent;
-	int32_t                bridge_component;
+	AeronFlightBounds               bounds;
+	float                           max_extent;
+	int32_t                         bridge_component;
 	uint32_t                        articulation_count;
 	AeronFlightArticulation*        articulations;
 	uint32_t                        articulation_setting_count;
@@ -338,27 +338,27 @@ typedef struct AeronFlightModel {
 	AeronFlightReflectionPlane      reflection_plane;
 	/* Cooked render data (`renderData` on the model root): an owned copy of
 	 * its buffer view, verified against the merged render arrays. */
-	bool                   has_render_data;
-	uint8_t*               render_data;
-	size_t                 render_data_size;
-	uint64_t               render_mesh_hash;
+	bool     has_render_data;
+	uint8_t* render_data;
+	size_t   render_data_size;
+	uint64_t render_mesh_hash;
 	/* Cooked levels of detail (`lodData` on the model root): an owned copy
 	 * of its buffer view, which the builds that include render data turn
 	 * into render.lods. Its layout is in
 	 * tools/extensions/AERON_flight_model_cooked/README.md. Its meshHash is
 	 * the same as renderData's. */
-	bool                   has_lod_data;
-	uint8_t*               lod_data;
-	size_t                 lod_data_size;
-	uint64_t               lod_mesh_hash;
+	bool     has_lod_data;
+	uint8_t* lod_data;
+	size_t   lod_data_size;
+	uint64_t lod_mesh_hash;
 	/* Box-only BVH over the merged render triangles (renderer frame, metres),
 	 * filled by the render-including builds: cooked when renderData is
 	 * present, otherwise built at load. NULL for semantic-only builds. Freed
 	 * with the render data. */
-	AeronFaceBvh*          render_bvh;
+	AeronFaceBvh* render_bvh;
 	/* Cooked probes from `probeData` on the model root, or NULL. Set by the
 	 * builds that include render data and freed with the render data. */
-	AeronFlightProbes*     probes;
+	AeronFlightProbes* probes;
 } AeronFlightModel;
 
 bool Aeron_FlightModelBuildData(const struct cgltf_data* data, const char* source_label,

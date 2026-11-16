@@ -493,9 +493,9 @@ static bool texture_material(struct XwauGltfBakeState* s, const opt_file_t* opt,
 	m->specular_color = baked->specular_color;
 	if (anims && anims[i].lava)
 		m->base_color[0] = m->base_color[1] = m->base_color[2] = 0.0f;
-	m->json           = anims ? anims[i].json : NULL;
-	m->tangents       = anims && anims[i].normal_detail;
-	m->tags[0]        = materials[i].surface_tag;
+	m->json     = anims ? anims[i].json : NULL;
+	m->tangents = anims && anims[i].normal_detail;
+	m->tags[0]  = materials[i].surface_tag;
 	/* XWAU's hook_d3dinfos_textures drops the light maps of a disabled craft.
 	 * Without Ambient, the emission of a material that isn't unlit comes only
 	 * from its illumination, its illumination frames and its skins'
@@ -570,8 +570,8 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 	/* Untextured faces are grey, split by the unlit weight of the material. */
 	const float unlit = XwauGltf_Unlit(untextured);
 	for (int channel = 0; ok && channel < 3; ++channel) {
-		const float grey                         = 0.6f;
-		out->untextured.base_color[channel]      = grey * (1.0f - unlit);
+		const float grey                    = 0.6f;
+		out->untextured.base_color[channel] = grey * (1.0f - unlit);
 		out->untextured.emissive_factor[channel] =
 			grey * unlit /
 			(untextured->projectile ? xwau_projectile_range(untextured->projectile) : XWAU_GLTF_ILLUM_GAIN);
@@ -579,8 +579,8 @@ bool XwauGltf_Bake(const opt_file_t* opt, const char* basename, const XwauGltfMa
 	out->untextured.emissive_strength = unlit > 0.0f ? XwauGltf_EmissiveStrength(untextured) : 0.0f;
 	out->untextured.metallic          = untextured->projectile ? 0.0f : xwau_metallic(untextured->metallic);
 	out->untextured.roughness = untextured->projectile ? 1.0f : xwau_roughness(untextured->glossiness);
-	out->untextured.specular          = true;
-	out->untextured.tags[0]           = untextured->surface_tag;
+	out->untextured.specular  = true;
+	out->untextured.tags[0]   = untextured->surface_tag;
 	out->untextured.specular_color =
 		untextured->projectile ? 0.0f : xwau_specular_color(untextured->intensity);
 

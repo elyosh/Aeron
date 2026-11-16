@@ -79,7 +79,7 @@ typedef struct AeronDrawList2DSprite {
 	/* Added to the mip level that the GPU picks for the texture. A
 	   negative value reads a larger level, and a positive value a smaller
 	   one. 0 keeps the GPU's choice. */
-	float             mip_bias;
+	float mip_bias;
 } AeronDrawList2DSprite;
 
 /* Free-corner projective quad. corners[0..3] = TL, TR, BL, BR in

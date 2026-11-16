@@ -178,7 +178,7 @@ static cJSON* node_cooked_extension(cJSON* json, int node_index) {
 static bool flight_hierarchy(cJSON* json, int* root, int** components, int* component_count) {
 	const cJSON* scene_value = cJSON_GetObjectItemCaseSensitive(json, "scene");
 	const int    scene       = cJSON_IsNumber(scene_value) ? scene_value->valueint : 0;
-	cJSON* scene_nodes = cJSON_GetObjectItemCaseSensitive(
+	cJSON*       scene_nodes = cJSON_GetObjectItemCaseSensitive(
 		cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(json, "scenes"), scene), "nodes");
 	const cJSON* root_value = cJSON_GetArrayItem(scene_nodes, 0);
 	if (!cJSON_IsNumber(root_value))
@@ -215,8 +215,8 @@ static bool uses_flight_extension(const cJSON* json) {
 static void strip_probe_authoring(cJSON* json) {
 	cJSON* node = NULL;
 	cJSON_ArrayForEach(node, cJSON_GetObjectItemCaseSensitive(json, "nodes")) {
-		cJSON* extension = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(node, "extensions"),
-															 AERON_FLIGHT_MODEL_EXTENSION);
+		cJSON* extension = cJSON_GetObjectItemCaseSensitive(
+			cJSON_GetObjectItemCaseSensitive(node, "extensions"), AERON_FLIGHT_MODEL_EXTENSION);
 		cJSON_DeleteItemFromObjectCaseSensitive(extension, "reflectionProbes");
 		cJSON_DeleteItemFromObjectCaseSensitive(extension, "lightGrid");
 	}
@@ -262,7 +262,7 @@ static bool read_file(const char* dir, const char* name, uint8_t** bytes, size_t
 	if (fseek(file, 0, SEEK_END) == 0)
 		length = ftell(file);
 	rewind(file);
-	*bytes = length > 0 ? malloc((size_t)length) : NULL;
+	*bytes        = length > 0 ? malloc((size_t)length) : NULL;
 	const bool ok = *bytes && fread(*bytes, 1, (size_t)length, file) == (size_t)length;
 	fclose(file);
 	if (!ok) {
@@ -305,7 +305,7 @@ static bool add_probes(Glb* glb, cJSON* extension, const char* dir, char* error,
 	if (ok) {
 		probe_data = cJSON_ParseWithLength((const char*)bytes[0], sizes[0]);
 		ok         = probe_data && glb_append_view(glb, bytes[1], sizes[1], &views[0]) &&
-			 glb_append_view(glb, bytes[2], sizes[2], &views[1]);
+					 glb_append_view(glb, bytes[2], sizes[2], &views[1]);
 		if (ok) {
 			cJSON_DeleteItemFromObjectCaseSensitive(probe_data, "version");
 			cJSON_DeleteItemFromObjectCaseSensitive(probe_data, "cubes");
@@ -326,7 +326,8 @@ static bool add_probes(Glb* glb, cJSON* extension, const char* dir, char* error,
 	return ok;
 }
 
-static bool cook_component(const AeronFlightComponent* component, uint8_t** bytes, size_t* size, uint64_t* hash) {
+static bool cook_component(const AeronFlightComponent* component, uint8_t** bytes, size_t* size,
+						   uint64_t* hash) {
 	const AeronFlightTopology* topology = &component->topology;
 	uint32_t*                  remap    = malloc((size_t)topology->position_count * sizeof *remap);
 	uint32_t*                  unique   = malloc((size_t)topology->position_count * sizeof *unique);
@@ -336,9 +337,9 @@ static bool cook_component(const AeronFlightComponent* component, uint8_t** byte
 	if (!remap || !unique)
 		goto done;
 	const uint32_t unique_count = Aeron_FlightTopologyDeduplicate(topology, remap, unique);
-	const uint32_t sample_count =
-		unique_count ? Aeron_FlightTopologySample(topology, unique, unique_count, AERON_FACE_BVH_SAMPLE_MAX, sample)
-					 : UINT32_MAX;
+	const uint32_t sample_count = unique_count ? Aeron_FlightTopologySample(topology, unique, unique_count,
+																			AERON_FACE_BVH_SAMPLE_MAX, sample)
+											   : UINT32_MAX;
 	if (sample_count == UINT32_MAX)
 		goto done;
 	const AeronFaceBvhGeometry geometry = {
@@ -351,8 +352,8 @@ static bool cook_component(const AeronFlightComponent* component, uint8_t** byte
 		.normals         = &topology->faces[0].normal.x,
 		.normal_stride   = sizeof *topology->faces,
 	};
-	bvh = AeronFaceBvh_Build(&geometry);
-	ok  = bvh && AeronFaceBvh_WriteCooked(bvh, unique_count, sample, sample_count, bytes, size);
+	bvh   = AeronFaceBvh_Build(&geometry);
+	ok    = bvh && AeronFaceBvh_WriteCooked(bvh, unique_count, sample, sample_count, bytes, size);
 	*hash = AeronFaceBvh_TopologyHash(&geometry);
 done:
 	AeronFaceBvh_Free(bvh);
@@ -457,8 +458,8 @@ static bool load_uncooked(const uint8_t* bytes, size_t size, AeronFlightModel* m
 	cgltf_options options = { 0 };
 	cgltf_data*   data    = NULL;
 	bool          ok      = cgltf_parse(&options, bytes, size, &data) == cgltf_result_success &&
-				  cgltf_load_buffers(&options, data, NULL) == cgltf_result_success &&
-				  Aeron_GltfMeshBuildData(data, "cooked GLB", &model->render);
+							cgltf_load_buffers(&options, data, NULL) == cgltf_result_success &&
+							Aeron_GltfMeshBuildData(data, "cooked GLB", &model->render);
 	cgltf_free(data);
 	if (!ok)
 		Aeron_FlightModelFree(model);
@@ -495,9 +496,9 @@ static bool verify(const uint8_t* bytes, size_t size, bool expect_render_data, b
 
 bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, const char* probes_dir, uint8_t** out,
 								 size_t* out_size, bool* applied, char* error, size_t error_size) {
-	Glb              glb        = { 0 };
-	int*             components = NULL;
-	uint8_t*         stripped   = NULL;
+	Glb              glb           = { 0 };
+	int*             components    = NULL;
+	uint8_t*         stripped      = NULL;
 	size_t           stripped_size = 0;
 	AeronFlightModel model;
 	bool             have_model = false;
@@ -549,13 +550,13 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, const char* 
 	const bool has_render = model.render.vertex_count && model.render.index_count >= 3;
 	uint64_t   mesh_hash  = 0;
 	if (has_render) {
-		uint8_t* bytes = NULL;
-		size_t   size  = 0;
-		uint32_t view  = 0;
+		uint8_t*   bytes  = NULL;
+		size_t     size   = 0;
+		uint32_t   view   = 0;
 		cJSON*     cooked = node_cooked_extension(glb.json, root);
 		const bool added  = cook_render(&model.render, &bytes, &size, &mesh_hash) &&
-						   glb_append_view(&glb, bytes, size, &view) &&
-						   add_reference(cooked, "renderData", "meshHash", view, mesh_hash);
+							glb_append_view(&glb, bytes, size, &view) &&
+							add_reference(cooked, "renderData", "meshHash", view, mesh_hash);
 		free(bytes);
 		if (!added) {
 			cook_error(error, error_size, "cooking render data failed");
@@ -571,9 +572,9 @@ bool aeron_gltf_cook_flight_data(const uint8_t* in, size_t in_size, const char* 
 			cook_error(error, error_size, "out of memory generating levels of detail");
 			goto done;
 		}
-		uint8_t*   bytes = NULL;
-		size_t     size  = 0;
-		uint32_t   view  = 0;
+		uint8_t*   bytes  = NULL;
+		size_t     size   = 0;
+		uint32_t   view   = 0;
 		cJSON*     cooked = node_cooked_extension(glb.json, root);
 		const bool added  = lod_count == 0 || (cook_lods(&model.render, levels, lod_count, &bytes, &size) &&
 											   glb_append_view(&glb, bytes, size, &view) &&

@@ -10,8 +10,8 @@ extern "C" {
 #endif
 
 typedef enum EnvTextureKind {
-	ENV_TEXTURE_2D,   /* sun sprites */
-	ENV_TEXTURE_CUBE, /* sky and lighting cubes */
+	ENV_TEXTURE_2D,      /* sun sprites */
+	ENV_TEXTURE_CUBE,    /* sky and lighting cubes */
 	ENV_TEXTURE_OVERLAY, /* overlay cubes, with alpha */
 } EnvTextureKind;
 

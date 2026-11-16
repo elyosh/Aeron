@@ -483,10 +483,10 @@ static bool build_model_articulations(const cJSON* extension, AeronFlightModel* 
 	if (!model->articulations)
 		return false;
 	for (int index = 0; index < count; ++index) {
-		const cJSON*             item     = cJSON_GetArrayItem(articulations, index);
-		const cJSON*             group    = cJSON_GetObjectItemCaseSensitive(item, "group");
-		const cJSON*             behavior = cJSON_GetObjectItemCaseSensitive(item, "behavior");
-		AeronFlightArticulation* out      = &model->articulations[index];
+		const cJSON*             item      = cJSON_GetArrayItem(articulations, index);
+		const cJSON*             group     = cJSON_GetObjectItemCaseSensitive(item, "group");
+		const cJSON*             behavior  = cJSON_GetObjectItemCaseSensitive(item, "behavior");
+		AeronFlightArticulation* out       = &model->articulations[index];
 		int32_t                  component = 0, angle = 0, speed = 0, speed_back = 0;
 		if (!cJSON_IsObject(item) || !cJSON_IsString(group) || !group->valuestring ||
 			!Aeron_FlightTagValid(group->valuestring) ||
@@ -508,10 +508,10 @@ static bool build_model_articulations(const cJSON* extension, AeronFlightModel* 
 		strcpy(out->group, group->valuestring);
 		if (behavior)
 			strcpy(out->behavior, behavior->valuestring);
-		out->component  = (uint8_t)component;
-		out->angle      = (int16_t)angle;
-		out->speed      = (uint8_t)speed;
-		out->speed_back = (uint8_t)speed_back;
+		out->component            = (uint8_t)component;
+		out->angle                = (int16_t)angle;
+		out->speed                = (uint8_t)speed;
+		out->speed_back           = (uint8_t)speed_back;
 		model->articulation_count = (uint32_t)index + 1;
 	}
 	return true;
@@ -533,7 +533,8 @@ static bool build_model_articulation_settings(const cJSON* extension, AeronFligh
 		return false;
 	const cJSON* setting = NULL;
 	cJSON_ArrayForEach(setting, settings) {
-		AeronFlightArticulationSetting* out = &model->articulation_settings[model->articulation_setting_count];
+		AeronFlightArticulationSetting* out =
+			&model->articulation_settings[model->articulation_setting_count];
 		if (!setting->string || !Aeron_FlightTagValid(setting->string) || !json_int(setting, &out->value))
 			return false;
 		for (uint32_t existing = 0; existing < model->articulation_setting_count; ++existing)
@@ -612,8 +613,9 @@ static bool parse_cooked_reference(const cgltf_data* data, const cJSON* extensio
 		return true;
 	int32_t  version     = 0;
 	uint32_t buffer_view = 0;
-	if (!cJSON_IsObject(reference) || !json_int(cJSON_GetObjectItemCaseSensitive(reference, "version"), &version) ||
-		version != 1 || !json_uint(cJSON_GetObjectItemCaseSensitive(reference, "bufferView"), &buffer_view) ||
+	if (!cJSON_IsObject(reference) ||
+		!json_int(cJSON_GetObjectItemCaseSensitive(reference, "version"), &version) || version != 1 ||
+		!json_uint(cJSON_GetObjectItemCaseSensitive(reference, "bufferView"), &buffer_view) ||
 		buffer_view >= data->buffer_views_count ||
 		!parse_hash(cJSON_GetObjectItemCaseSensitive(reference, hash_field), hash))
 		return false;
@@ -633,10 +635,11 @@ static bool parse_cooked_reference(const cgltf_data* data, const cJSON* extensio
 static bool build_component_simulation_data(const cgltf_data* data, const cgltf_node* node,
 											AeronFlightComponent* component) {
 	cJSON*     cooked = NULL;
-	const bool ok     = parse_cooked_extension(node, &cooked) &&
-					parse_cooked_reference(data, cooked, "simulationData", "topologyHash",
-										   &component->has_simulation_data, &component->simulation_data,
-										   &component->simulation_data_size, &component->simulation_topology_hash);
+	const bool ok =
+		parse_cooked_extension(node, &cooked) &&
+		parse_cooked_reference(data, cooked, "simulationData", "topologyHash",
+							   &component->has_simulation_data, &component->simulation_data,
+							   &component->simulation_data_size, &component->simulation_topology_hash);
 	cJSON_Delete(cooked);
 	return ok;
 }
@@ -948,8 +951,8 @@ static bool json_positive(const cJSON* value, float* out) {
  * tube or panel, default point), a tube's `length` and optional
  * `oneSided`, a panel's `size`, and the optional `radius` of a point or a
  * tube. Fields that do not apply to the shape are rejected. */
-static bool parse_light_shape(const cJSON* extension, AeronFlightLightShape* shape, float* length, float size[2],
-							  bool* one_sided, float* radius) {
+static bool parse_light_shape(const cJSON* extension, AeronFlightLightShape* shape, float* length,
+							  float size[2], bool* one_sided, float* radius) {
 	const cJSON* shape_value     = cJSON_GetObjectItemCaseSensitive(extension, "shape");
 	const cJSON* length_value    = cJSON_GetObjectItemCaseSensitive(extension, "length");
 	const cJSON* size_value      = cJSON_GetObjectItemCaseSensitive(extension, "size");
@@ -971,21 +974,22 @@ static bool parse_light_shape(const cJSON* extension, AeronFlightLightShape* sha
 	if (radius_value && (*shape == AERON_FLIGHT_LIGHT_PANEL || !json_positive(radius_value, radius)))
 		return false;
 	switch (*shape) {
-	case AERON_FLIGHT_LIGHT_POINT:
-		return !length_value && !size_value && !one_sided_value;
-	case AERON_FLIGHT_LIGHT_TUBE:
-		if (size_value || !json_positive(length_value, length) || (one_sided_value && !cJSON_IsBool(one_sided_value)))
-			return false;
-		*one_sided = cJSON_IsTrue(one_sided_value);
-		return true;
-	case AERON_FLIGHT_LIGHT_PANEL:
-		if (length_value || (one_sided_value && !cJSON_IsTrue(one_sided_value)) ||
-			!cJSON_IsArray(size_value) || cJSON_GetArraySize(size_value) != 2 ||
-			!json_positive(cJSON_GetArrayItem(size_value, 0), &size[0]) ||
-			!json_positive(cJSON_GetArrayItem(size_value, 1), &size[1]))
-			return false;
-		*one_sided = true;
-		return true;
+		case AERON_FLIGHT_LIGHT_POINT:
+			return !length_value && !size_value && !one_sided_value;
+		case AERON_FLIGHT_LIGHT_TUBE:
+			if (size_value || !json_positive(length_value, length) ||
+				(one_sided_value && !cJSON_IsBool(one_sided_value)))
+				return false;
+			*one_sided = cJSON_IsTrue(one_sided_value);
+			return true;
+		case AERON_FLIGHT_LIGHT_PANEL:
+			if (length_value || (one_sided_value && !cJSON_IsTrue(one_sided_value)) ||
+				!cJSON_IsArray(size_value) || cJSON_GetArraySize(size_value) != 2 ||
+				!json_positive(cJSON_GetArrayItem(size_value, 0), &size[0]) ||
+				!json_positive(cJSON_GetArrayItem(size_value, 1), &size[1]))
+				return false;
+			*one_sided = true;
+			return true;
 	}
 	return false;
 }
@@ -1075,7 +1079,7 @@ static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32
 		const bool is_baked = cJSON_IsTrue(baked);
 		AeronFlightLight light_variants;
 		memset(&light_variants, 0, sizeof light_variants);
-		const bool variants_valid = valid && parse_light_variants(extension, data, &light_variants);
+		const bool     variants_valid = valid && parse_light_variants(extension, data, &light_variants);
 		const uint32_t tag_groups =
 			variants_valid
 				? Aeron_FlightTagGroupsMask(groups, cJSON_GetObjectItemCaseSensitive(extension, "tags"))
@@ -1083,10 +1087,11 @@ static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32
 		cJSON_Delete(extension);
 		if (!variants_valid)
 			return false;
-		AeronFlightLight* grown = realloc(model->lights, (size_t)(model->light_count + 1) * sizeof *model->lights);
+		AeronFlightLight* grown =
+			realloc(model->lights, (size_t)(model->light_count + 1) * sizeof *model->lights);
 		if (!grown)
 			return false;
-		model->lights        = grown;
+		model->lights         = grown;
 		AeronFlightLight* out = &grown[model->light_count++];
 		memset(out, 0, sizeof *out);
 		out->has_variants = light_variants.has_variants;
@@ -1122,13 +1127,13 @@ static bool append_lights(const cgltf_data* data, const cgltf_node* node, uint32
 			gltf_to_aeron(transformed, &out->half_y);
 		} else {
 			transform_vector(matrix, local_r, transformed);
-			out->source_radius =
-				sqrtf(transformed[0] * transformed[0] + transformed[1] * transformed[1] + transformed[2] * transformed[2]);
+			out->source_radius = sqrtf(transformed[0] * transformed[0] + transformed[1] * transformed[1] +
+									   transformed[2] * transformed[2]);
 		}
 		if (one_sided || spot) {
 			transform_vector(matrix, back, transformed);
-			const float length_sq =
-				transformed[0] * transformed[0] + transformed[1] * transformed[1] + transformed[2] * transformed[2];
+			const float length_sq = transformed[0] * transformed[0] + transformed[1] * transformed[1] +
+									transformed[2] * transformed[2];
 			if (!(length_sq > 0.0f) || !isfinite(length_sq))
 				return false;
 			const float inverse = 1.0f / sqrtf(length_sq);
@@ -1261,8 +1266,8 @@ static bool build_semantics(const cgltf_data* data, const char* source_label, Ae
 	if (!Aeron_FlightTagGroupsBuild(data, source_label, &groups))
 		return false;
 	const cgltf_node* root = data->scene->nodes[0];
-	if (node_role(root) != FLIGHT_ROLE_MODEL || root->mesh || root->skin || !uniform_positive_transform(root) ||
-		!build_model_render_data(data, root, model))
+	if (node_role(root) != FLIGHT_ROLE_MODEL || root->mesh || root->skin ||
+		!uniform_positive_transform(root) || !build_model_render_data(data, root, model))
 		return false;
 	/* The renderer's per-component tables hold AERON_MAX_MESH_COMPONENTS entries. */
 	if (!root->children_count || root->children_count > AERON_MAX_MESH_COMPONENTS)
@@ -1331,9 +1336,9 @@ static bool build_semantics(const cgltf_data* data, const char* source_label, Ae
 static bool build_model_probes(const cgltf_data* data, AeronFlightModel* model, const char* source_label) {
 	cJSON*     extension  = NULL;
 	char       error[256] = "malformed " AERON_FLIGHT_MODEL_COOKED_EXTENSION;
-	const bool ok         = parse_cooked_extension(data->scene->nodes[0], &extension) &&
-					(!extension ||
-					 Aeron_FlightProbesFromExtension(data, extension, &model->probes, error, sizeof error));
+	const bool ok =
+		parse_cooked_extension(data->scene->nodes[0], &extension) &&
+		(!extension || Aeron_FlightProbesFromExtension(data, extension, &model->probes, error, sizeof error));
 	if (!ok)
 		SDL_Log("[flight_model] '%s' has invalid probeData: %s", source_label, error);
 	cJSON_Delete(extension);
@@ -1422,10 +1427,10 @@ static bool load_lod_data(AeronFlightModel* model, char* detail, size_t detail_s
 	/* The level headers, and the size they add up to. */
 	AeronGltfLod lods[AERON_GLTF_MAX_LODS];
 	uint32_t     added[AERON_GLTF_MAX_LODS];
-	size_t       needed = 16 + (size_t)levels * 36;
+	size_t       needed        = 16 + (size_t)levels * 36;
 	uint64_t     total_indices = 0, total_added = 0;
 	for (uint32_t l = 0; l < levels; l++) {
-		const uint8_t* h = p + 16 + (size_t)l * 36;
+		const uint8_t* h     = p + 16 + (size_t)l * 36;
 		lods[l].error        = lod_read_float(h);
 		lods[l].index_count  = lod_read_u32(h + 4);
 		lods[l].index_offset = (uint32_t)total_indices;
@@ -1450,7 +1455,7 @@ static bool load_lod_data(AeronFlightModel* model, char* detail, size_t detail_s
 		snprintf(detail, detail_size, "size %zu, expected %zu", size, needed);
 		return false;
 	}
-	uint32_t*        indices  = malloc(sizeof *indices * (size_t)(total_indices ? total_indices : 1));
+	uint32_t*        indices = malloc(sizeof *indices * (size_t)(total_indices ? total_indices : 1));
 	AeronGltfVertex* vertices =
 		realloc(render->vertices, sizeof *vertices * (size_t)(render->vertex_count + total_added));
 	if (!indices || !vertices) {
@@ -1495,7 +1500,7 @@ static bool load_lod_data(AeronFlightModel* model, char* detail, size_t detail_s
 				v->tangent[k] = lod_read_float(q + 28 + 4 * (size_t)k);
 		}
 	}
-	render->lod_count        = levels;
+	render->lod_count = levels;
 	memcpy(render->lods, lods, sizeof lods[0] * levels);
 	render->lod_indices      = indices;
 	render->lod_index_count  = (uint32_t)total_indices;

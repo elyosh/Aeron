@@ -575,9 +575,9 @@ static int build_anim_records(AeronSceneMesh* s, AeronCommandBuffer* cmd, const 
 			anim[m][1] = first | material->flipbook_count << 16;
 		if (material->damage_count) {
 			s->anim_damage = true;
-			anim[m][2] = damage_first | material->damage_count << 16;
-			anim[m][3] = (material->damage_choice & 0xFFFu) << 8 | (material->damage_placement & 0xFFFu)
-																	   << 20;
+			anim[m][2]     = damage_first | material->damage_count << 16;
+			anim[m][3]     = (material->damage_choice & 0xFFFu) << 8 | (material->damage_placement & 0xFFFu)
+																		   << 20;
 		}
 		anim[m][3] |= energy;
 		s->anim_energy |= energy;
@@ -823,19 +823,20 @@ static AeronBuffer* shadow_indices(AeronCommandBuffer* cmd, const uint32_t* map,
 static void build_lods(AeronCommandBuffer* cmd, AeronSceneMesh* s, const AeronGltfModel* model,
 					   const char* name, const uint32_t* shadow_map) {
 	for (uint32_t level = 0; level < model->lod_count && level < AERON_GLTF_MAX_LODS; level++) {
-		const AeronGltfLod*   lod   = &model->lods[level];
-		const uint32_t        bytes = lod->index_count * (uint32_t)sizeof(uint32_t);
-		const AeronBufferDesc desc  = { .usage = AERON_BUFFER_USAGE_INDEX, .size = bytes };
-		AeronBuffer*          ibo   = lod->index_count ? Aeron_CreateBuffer(&desc) : NULL;
-		AeronSceneMesh*       copy  = ibo ? malloc(sizeof *copy) : NULL;
+		const AeronGltfLod*   lod    = &model->lods[level];
+		const uint32_t        bytes  = lod->index_count * (uint32_t)sizeof(uint32_t);
+		const AeronBufferDesc desc   = { .usage = AERON_BUFFER_USAGE_INDEX, .size = bytes };
+		AeronBuffer*          ibo    = lod->index_count ? Aeron_CreateBuffer(&desc) : NULL;
+		AeronSceneMesh*       copy   = ibo ? malloc(sizeof *copy) : NULL;
 		AeronBufferUploadDesc upload = {
 			.buffer = ibo,
 			.data   = model->lod_indices + lod->index_offset,
 			.size   = bytes,
 		};
 		if (!copy || !Aeron_UploadBufferBatchCmd(cmd, &upload, 1)) {
-			Aeron_LogWarn("aeron.scene", "%s: level of detail %u failed to load; the model stays more detailed",
-						  name, level + 1);
+			Aeron_LogWarn("aeron.scene",
+						  "%s: level of detail %u failed to load; the model stays more detailed", name,
+						  level + 1);
 			Aeron_DestroyBuffer(ibo);
 			free(copy);
 			return;
@@ -843,8 +844,8 @@ static void build_lods(AeronCommandBuffer* cmd, AeronSceneMesh* s, const AeronGl
 		char buffer_name[512];
 		snprintf(buffer_name, sizeof buffer_name, "%s.lod%u.indices", name, level + 1);
 		Aeron_GpuDebugNameBuffer(ibo, buffer_name);
-		*copy                           = *s;
-		copy->ibo                       = ibo;
+		*copy     = *s;
+		copy->ibo = ibo;
 		snprintf(buffer_name, sizeof buffer_name, "%s.lod%u.shadow_indices", name, level + 1);
 		copy->shadow_ibo =
 			shadow_indices(cmd, shadow_map, (size_t)model->vertex_count + model->lod_vertex_count,
@@ -860,11 +861,11 @@ static void build_lods(AeronCommandBuffer* cmd, AeronSceneMesh* s, const AeronGl
 		copy->blend_screen_index_count  = lod->ranges[5];
 		copy->lod_count                 = 0;
 		memset(copy->lods, 0, sizeof copy->lods);
-		copy->lod_base                  = s;
-		copy->lod_level                 = level + 1;
-		s->lods[level]                  = copy;
-		s->lod_error[level]             = lod->error;
-		s->lod_count                    = level + 1;
+		copy->lod_base      = s;
+		copy->lod_level     = level + 1;
+		s->lods[level]      = copy;
+		s->lod_error[level] = lod->error;
+		s->lod_count        = level + 1;
 	}
 }
 

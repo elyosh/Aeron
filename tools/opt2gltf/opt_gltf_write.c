@@ -54,7 +54,8 @@ bool OptGltf_WriteFiles(const OptGltfDocument* document, const char* out_dir, co
 			if (!ok)
 				return false;
 		}
-		if (!stbi_write_png(png_path, (int)pixels.width, (int)pixels.height, 4, pixels.rgba, (int)pixels.width * 4))
+		if (!stbi_write_png(png_path, (int)pixels.width, (int)pixels.height, 4, pixels.rgba,
+							(int)pixels.width * 4))
 			return false;
 	}
 

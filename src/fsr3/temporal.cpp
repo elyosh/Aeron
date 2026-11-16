@@ -14,13 +14,13 @@
 #include <new>
 
 struct AeronTemporalUpscaler {
-	AeronFsr3Backend*         backend;
-	FfxFsr3UpscalerContext    context;
-	AeronTexture*             dilatedDepth;
-	AeronTexture*             scratchDilatedMotionVectors;
-	AeronTexture*             retainedDilatedMotionVectors;
-	AeronTexture*             currentDilatedMotionVectors;
-	AeronBuffer*              reconstructedDepth;
+	AeronFsr3Backend*      backend;
+	FfxFsr3UpscalerContext context;
+	AeronTexture*          dilatedDepth;
+	AeronTexture*          scratchDilatedMotionVectors;
+	AeronTexture*          retainedDilatedMotionVectors;
+	AeronTexture*          currentDilatedMotionVectors;
+	AeronBuffer*           reconstructedDepth;
 	/* A 1x1 zero mask, used when the caller gives no transparency and
 	 * composition mask. Without it FSR uses its default reactive mask for
 	 * both mask inputs, and one pass then binds that texture both with a
@@ -112,12 +112,12 @@ static bool CreateSharedResources(AeronTemporalUpscaler* upscaler) {
 	upscaler->reconstructedDepth = Aeron_CreateBuffer(&buffer);
 
 	AeronTextureDesc mask {};
-	mask.width                    = 1;
-	mask.height                   = 1;
-	mask.mip_count                = 1;
-	mask.format                   = AERON_TEXTURE_FORMAT_R8_UNORM;
-	mask.usage                    = AERON_TEXTURE_USAGE_TRANSFER_DST | AERON_TEXTURE_USAGE_COMPUTE_STORAGE_READ;
-	mask.debug_name               = "FSR3 default transparency mask";
+	mask.width      = 1;
+	mask.height     = 1;
+	mask.mip_count  = 1;
+	mask.format     = AERON_TEXTURE_FORMAT_R8_UNORM;
+	mask.usage      = AERON_TEXTURE_USAGE_TRANSFER_DST | AERON_TEXTURE_USAGE_COMPUTE_STORAGE_READ;
+	mask.debug_name = "FSR3 default transparency mask";
 	upscaler->defaultTransparency = Aeron_CreateTexture(&mask);
 	if (upscaler->defaultTransparency) {
 		static const uint8_t   zero = 0;
@@ -348,8 +348,8 @@ extern "C" int AeronTemporalUpscaler_Dispatch(AeronTemporalUpscaler*           u
 															  FFX_RESOURCE_STATE_COMPUTE_READ);
 	dispatch.motionVectors = AeronFsr3Backend_TextureResource(
 		desc->motion_vectors, L"Aeron FSR motion vectors", FFX_RESOURCE_STATE_COMPUTE_READ);
-	dispatch.exposure = OptionalTexture(desc->exposure, L"Aeron FSR exposure");
-	dispatch.reactive = OptionalTexture(desc->reactive, L"Aeron FSR reactive mask");
+	dispatch.exposure                   = OptionalTexture(desc->exposure, L"Aeron FSR exposure");
+	dispatch.reactive                   = OptionalTexture(desc->reactive, L"Aeron FSR reactive mask");
 	dispatch.transparencyAndComposition = AeronFsr3Backend_TextureResource(
 		desc->transparency_and_composition ? desc->transparency_and_composition
 										   : upscaler->defaultTransparency,
