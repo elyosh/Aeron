@@ -50,7 +50,7 @@ extern "C" void Aeron_DebugSetApplication(AeronDebugApplicationFn draw, void* us
 }
 
 extern "C" void Aeron_DebugImage(AeronTexture* texture, float width, float height) {
-	if (!texture || !texture->texture || width <= 0.0f || height <= 0.0f) {
+	if (!texture || !texture->texture || texture->external || width <= 0.0f || height <= 0.0f) {
 		return;
 	}
 	ImGui::Image((ImTextureID)(uintptr_t)texture->texture, ImVec2(width, height));

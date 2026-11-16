@@ -1,0 +1,13 @@
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+index 2c9e669..3f32e0d 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -13165,6 +13165,8 @@ static XrResult VULKAN_CreateXRSwapchain(
+ 
+         texture->swizzle = SwizzleForSDLFormat(format);
+         texture->depth = 1;
++        texture->layerCount = createInfo.arraySize;
++        texture->levelCount = createInfo.mipCount;
+         texture->usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+         SDL_SetAtomicInt(&texture->referenceCount, 0);
+         texture->image = vkImage;

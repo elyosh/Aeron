@@ -264,6 +264,11 @@ void Aeron_OnXrSessionRunningChanged(int running) {
 			mode = SDL_GPU_PRESENTMODE_MAILBOX;
 		}
 	}
+	/* The keyboard and the mouse still go to the window, which the user
+	 * can't see with the headset on. */
+	if (running) {
+		Aeron_RaiseWindow();
+	}
 	g_aeron.window_draw_disabled = running && mode == SDL_GPU_PRESENTMODE_VSYNC;
 	if (g_aeron.window_draw_disabled) {
 		Aeron_LogWarn("aeron.xr", "the window can only present with vsync, so it is not drawn in VR");
@@ -332,7 +337,8 @@ static void Aeron_RefreshOutputHdrProperties(void) {
  * a backend that refuses the composition is visible in the log. */
 static int Aeron_ApplyOutputHdr(void) {
 	const int previous = g_aeron.hdr_output_enabled;
-	const int wanted   = g_aeron.hdr_output_desired && Aeron_OutputSupportsHdr();
+	/* With VR, the layers go to the headset's virtual screen, which is SDR. */
+	const int wanted = g_aeron.hdr_output_desired && !Aeron_XrEnabled() && Aeron_OutputSupportsHdr();
 
 	if (wanted != previous) {
 		/* Layer-composition pipelines are keyed on target format; the new
@@ -1565,7 +1571,7 @@ static SDL_GPUDevice* Aeron_CreateXrGPUDevice(SDL_GPUShaderFormat shader_formats
 		return NULL;
 	}
 	if (!AeronXr_DeviceCreated(device, reason, reason_size)) {
-		AeronXr_DestroySession();
+		AeronXr_DestroySession(device);
 		SDL_DestroyGPUDevice(device);
 		AeronXr_DestroyInstance();
 		return NULL;
@@ -1578,7 +1584,7 @@ static SDL_GPUDevice* Aeron_CreateXrGPUDevice(SDL_GPUShaderFormat shader_formats
  * leaves the instance to its owner. */
 static void Aeron_DestroyGPUDevice(void) {
 	SDL_WaitForGPUIdle(g_aeron.gpu_device);
-	AeronXr_DestroySession();
+	AeronXr_DestroySession(g_aeron.gpu_device);
 	SDL_DestroyGPUDevice(g_aeron.gpu_device);
 	g_aeron.gpu_device = NULL;
 	AeronXr_DestroyInstance();
@@ -1607,6 +1613,111 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceForXrMode(SDL_GPUShaderFormat shader_
 		Aeron_LogError("aeron", "SDL_CreateGPUDevice failed: %s", SDL_GetError());
 	}
 	return device;
+}
+
+/* The pointer that the headset shows on the virtual screen: an arrow with
+ * its tip at the top left. 'X' is black, '.' is white. */
+#define AERON_XR_POINTER_WIDTH 12
+#define AERON_XR_POINTER_HEIGHT 18
+static const char* const g_xr_pointer_rows[AERON_XR_POINTER_HEIGHT] = {
+	"X           ", "XX          ", "X.X         ", "X..X        ", "X...X       ", "X....X      ",
+	"X.....X     ", "X......X    ", "X.......X   ", "X........X  ", "X.........X ", "X......XXXXX",
+	"X...X..X    ", "X..X X..X   ", "X.X  X..X   ", "XX    X..X  ", "X     X..X  ", "       XX   ",
+};
+
+static int Aeron_CreateXrPointerTexture(void) {
+	const uint32_t                  size = AERON_XR_POINTER_WIDTH * AERON_XR_POINTER_HEIGHT * 4;
+	SDL_GPUTextureCreateInfo        info;
+	SDL_GPUTransferBufferCreateInfo transfer_info;
+	SDL_GPUTransferBuffer*          transfer;
+	SDL_GPUCommandBuffer*           command_buffer;
+	SDL_GPUCopyPass*                copy_pass;
+	SDL_GPUTextureTransferInfo      source;
+	SDL_GPUTextureRegion            destination;
+	uint8_t*                        pixels;
+
+	SDL_zero(info);
+	info.type                  = SDL_GPU_TEXTURETYPE_2D;
+	info.format                = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+	info.usage                 = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+	info.width                 = AERON_XR_POINTER_WIDTH;
+	info.height                = AERON_XR_POINTER_HEIGHT;
+	info.layer_count_or_depth  = 1;
+	info.num_levels            = 1;
+	g_aeron.xr_pointer_texture = SDL_CreateGPUTexture(g_aeron.gpu_device, &info);
+	SDL_zero(transfer_info);
+	transfer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+	transfer_info.size  = size;
+	transfer            = SDL_CreateGPUTransferBuffer(g_aeron.gpu_device, &transfer_info);
+	pixels   = transfer ? (uint8_t*)SDL_MapGPUTransferBuffer(g_aeron.gpu_device, transfer, false) : NULL;
+	command_buffer = pixels ? SDL_AcquireGPUCommandBuffer(g_aeron.gpu_device) : NULL;
+	if (!g_aeron.xr_pointer_texture || !command_buffer) {
+		Aeron_SetRenderError("could not create the pointer of the virtual screen: %s", SDL_GetError());
+		if (pixels) {
+			SDL_UnmapGPUTransferBuffer(g_aeron.gpu_device, transfer);
+		}
+		if (transfer) {
+			SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, transfer);
+		}
+		return 0;
+	}
+	for (int y = 0; y < AERON_XR_POINTER_HEIGHT; y++) {
+		for (int x = 0; x < AERON_XR_POINTER_WIDTH; x++) {
+			const char    c     = g_xr_pointer_rows[y][x];
+			const uint8_t value = c == '.' ? 255 : 0;
+			Aeron_WriteRgba8(pixels + 4 * (y * AERON_XR_POINTER_WIDTH + x), value, value, value,
+							 c == ' ' ? 0 : 255);
+		}
+	}
+	SDL_UnmapGPUTransferBuffer(g_aeron.gpu_device, transfer);
+
+	SDL_zero(source);
+	source.transfer_buffer = transfer;
+	source.pixels_per_row  = AERON_XR_POINTER_WIDTH;
+	source.rows_per_layer  = AERON_XR_POINTER_HEIGHT;
+	SDL_zero(destination);
+	destination.texture = g_aeron.xr_pointer_texture;
+	destination.w       = AERON_XR_POINTER_WIDTH;
+	destination.h       = AERON_XR_POINTER_HEIGHT;
+	destination.d       = 1;
+	copy_pass           = SDL_BeginGPUCopyPass(command_buffer);
+	SDL_UploadToGPUTexture(copy_pass, &source, &destination, false);
+	SDL_EndGPUCopyPass(copy_pass);
+	SDL_ReleaseGPUTransferBuffer(g_aeron.gpu_device, transfer);
+	if (!SDL_SubmitGPUCommandBuffer(command_buffer)) {
+		Aeron_SetRenderError("could not upload the pointer of the virtual screen: %s", SDL_GetError());
+		return 0;
+	}
+	return 1;
+}
+
+/* Creates the virtual screen: the texture that the layers are composed
+ * into when the device has a VR session. It has the window's format, so
+ * everything that draws into the window can draw into it. */
+static int Aeron_CreateXrScreen(void) {
+	const AeronStartupOptions* options = &g_aeron.xr_options;
+	SDL_GPUTextureCreateInfo   info;
+
+	SDL_zero(info);
+	info.type   = SDL_GPU_TEXTURETYPE_2D;
+	info.format = g_aeron.swapchain_format;
+	info.usage  = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+	info.width  = (Uint32)(options->xr_screen_width > 0 ? options->xr_screen_width : AERON_XR_SCREEN_DEFAULT_WIDTH);
+	info.height =
+		(Uint32)(options->xr_screen_height > 0 ? options->xr_screen_height : AERON_XR_SCREEN_DEFAULT_HEIGHT);
+	info.layer_count_or_depth = 1;
+	info.num_levels           = 1;
+	g_aeron.xr_screen_texture = SDL_CreateGPUTexture(g_aeron.gpu_device, &info);
+	if (!g_aeron.xr_screen_texture) {
+		Aeron_SetRenderError("could not create the virtual screen: %s", SDL_GetError());
+		return 0;
+	}
+	SDL_SetGPUTextureName(g_aeron.gpu_device, g_aeron.xr_screen_texture, "xr virtual screen");
+	g_aeron.xr_screen_format = info.format;
+	g_aeron.xr_screen_width  = (int)info.width;
+	g_aeron.xr_screen_height = (int)info.height;
+	Aeron_UpdatePresentationPixelSize();
+	return Aeron_CreateXrPointerTexture();
 }
 
 int Aeron_ShaderFp16Supported(void) {
@@ -1724,6 +1835,11 @@ int Aeron_RenderBackendInit(void) {
 		Aeron_RenderBackendShutdown();
 		return 0;
 	}
+	if (Aeron_XrEnabled() && !Aeron_CreateXrScreen()) {
+		Aeron_LogError("aeron.xr", "%s", Aeron_RenderLastError());
+		Aeron_RenderBackendShutdown();
+		return 0;
+	}
 
 	return 1;
 }
@@ -1811,6 +1927,14 @@ void Aeron_RenderBackendShutdown(void) {
 		SDL_zeroa(g_aeron.fullscreen_pipelines);
 		g_aeron.fullscreen_pipeline_count = 0;
 
+		if (g_aeron.xr_screen_texture) {
+			SDL_ReleaseGPUTexture(g_aeron.gpu_device, g_aeron.xr_screen_texture);
+			g_aeron.xr_screen_texture = NULL;
+		}
+		if (g_aeron.xr_pointer_texture) {
+			SDL_ReleaseGPUTexture(g_aeron.gpu_device, g_aeron.xr_pointer_texture);
+			g_aeron.xr_pointer_texture = NULL;
+		}
 		if (g_aeron.pixel_frame_sampler) {
 			SDL_ReleaseGPUSampler(g_aeron.gpu_device, g_aeron.pixel_frame_sampler);
 			g_aeron.pixel_frame_sampler = NULL;
@@ -1838,12 +1962,12 @@ void Aeron_RenderBackendShutdown(void) {
 	}
 }
 
-static int Aeron_PresentWindow(void);
+static int Aeron_PresentFrame(void);
 
 int Aeron_Present(void) {
 	const uint64_t presented_before = g_aeron.presented_frames;
 	const int      xr_frame         = Aeron_XrSessionRunning();
-	int            ok               = Aeron_PresentWindow();
+	int            ok               = Aeron_PresentFrame();
 
 	/* The headset's frame ends whatever happened to the window's frame. */
 	if (xr_frame) {
@@ -1858,23 +1982,285 @@ int Aeron_Present(void) {
 	return ok;
 }
 
-/* Composes the submitted layers into the window. */
-static int Aeron_PresentWindow(void) {
-	const int              xr_running = Aeron_XrSessionRunning();
-	SDL_GPUCommandBuffer*  command_buffer;
-	SDL_GPUTexture*        swapchain_texture;
-	SDL_GPURenderPass*     render_pass;
+/* Where a pass of Aeron_Present draws: the window, the virtual screen or
+ * the headset's image of the virtual screen. */
+typedef struct AeronComposeTarget {
+	SDL_GPUTexture*      texture;
+	SDL_GPUTextureFormat format;
+	int                  width;
+	int                  height;
+	/* The part of the target that shows the logical frame. */
+	SDL_Rect   content_rect;
+	float      output_rgb_scale;
+	float      sdr_decode_gamma;
+	SDL_FColor clear_color;
+	/* Let SDL give the texture new memory when it is still in use. */
+	int cycle;
+} AeronComposeTarget;
+
+/* An open render pass on a compose target, with the Aeron objects that a
+ * layer callback draws through. */
+typedef struct AeronComposePass {
+	AeronComposeTarget    target;
+	SDL_GPUCommandBuffer* command_buffer;
+	SDL_GPURenderPass*    render_pass;
+	AeronCommandBuffer    borrowed_command_buffer;
+	AeronRenderPass       borrowed_render_pass;
+	AeronRenderTarget     borrowed_render_target;
+} AeronComposePass;
+
+/* Begins a pass that clears the target. */
+static int Aeron_BeginComposePass(AeronComposePass* pass, SDL_GPUCommandBuffer* command_buffer,
+								  const AeronComposeTarget* target, const char* label) {
 	SDL_GPUColorTargetInfo color_target;
-	SDL_Rect               content_rect;
-	Uint32                 swapchain_width;
-	Uint32                 swapchain_height;
-	int                    i;
-	int                    present_ok;
+
+	SDL_zerop(pass);
+	pass->target         = *target;
+	pass->command_buffer = command_buffer;
+
+	SDL_zero(color_target);
+	color_target.texture     = target->texture;
+	color_target.clear_color = target->clear_color;
+	color_target.load_op     = SDL_GPU_LOADOP_CLEAR;
+	color_target.store_op    = SDL_GPU_STOREOP_STORE;
+	color_target.cycle       = target->cycle != 0;
+
+	AeronGpuDebug_Push(command_buffer, label);
+	SDL_ClearError();
+	pass->render_pass = SDL_BeginGPURenderPass(command_buffer, &color_target, 1, NULL);
+	if (!pass->render_pass) {
+		const char* error = SDL_GetError();
+		Aeron_SetRenderError("SDL_BeginGPURenderPass failed for presentation: %s",
+							 error && error[0] ? error : "<no SDL error provided>");
+		AeronGpuDebug_Pop(command_buffer);
+		return 0;
+	}
+
+	pass->borrowed_command_buffer.command_buffer     = command_buffer;
+	pass->borrowed_command_buffer.render_pass_active = 1;
+	pass->borrowed_render_pass.command_buffer        = command_buffer;
+	pass->borrowed_render_pass.render_pass           = pass->render_pass;
+	pass->borrowed_render_pass.owner                 = &pass->borrowed_command_buffer;
+	pass->borrowed_render_pass.output_rgb_scale      = target->output_rgb_scale;
+	pass->borrowed_render_pass.width                 = target->width;
+	pass->borrowed_render_pass.height                = target->height;
+	pass->borrowed_render_target.color.texture       = target->texture;
+	pass->borrowed_render_target.color.width         = target->width;
+	pass->borrowed_render_target.color.height        = target->height;
+	pass->borrowed_render_target.color.mip_count     = 1;
+	pass->borrowed_render_target.color.format        = Aeron_FromSdlTextureFormat(target->format);
+	pass->borrowed_render_target.color.usage         = AERON_TEXTURE_USAGE_COLOR_TARGET;
+	return 1;
+}
+
+static void Aeron_EndComposePass(AeronComposePass* pass) {
+	SDL_EndGPURenderPass(pass->render_pass);
+	AeronGpuDebug_Pop(pass->command_buffer);
+	pass->render_pass = NULL;
+}
+
+/* Runs an application callback that draws into the whole target. Returns 0
+ * when the callback failed. */
+static int Aeron_RunComposeCallback(AeronComposePass* pass, const AeronSwapchainRenderLayerDesc* direct) {
+	const AeronComposeTarget* target = &pass->target;
+	/* Earlier texture layers leave their projected rect as the pass viewport
+	 * and scissor (a pillarboxed or cursor-sized rect). The callback gets a
+	 * clean pass on the full target. */
+	const SDL_GPUViewport full_viewport = {
+		0.0f, 0.0f, (float)target->width, (float)target->height, 0.0f, 1.0f
+	};
+	const SDL_Rect full_scissor = { 0, 0, target->width, target->height };
+
+	SDL_SetGPUViewport(pass->render_pass, &full_viewport);
+	SDL_SetGPUScissor(pass->render_pass, &full_scissor);
+	if (direct->debug_label) {
+		AeronGpuDebug_Push(pass->command_buffer, direct->debug_label);
+	}
+	direct->callback(&pass->borrowed_command_buffer, &pass->borrowed_render_pass,
+					 &pass->borrowed_render_target, target->width, target->height, direct->userdata);
+	if (direct->debug_label) {
+		AeronGpuDebug_Pop(pass->command_buffer);
+	}
+	if (pass->borrowed_command_buffer.failed) {
+		if (pass->borrowed_command_buffer.failure_message[0]) {
+			Aeron_SetRenderError("%s", pass->borrowed_command_buffer.failure_message);
+		}
+		return 0;
+	}
+	return 1;
+}
+
+/* Draws the submitted layers, in order, into the target of an open pass:
+ * the window, or with VR the virtual screen. */
+static int Aeron_ComposeLayers(AeronComposePass* pass) {
+	const AeronComposeTarget* target         = &pass->target;
+	SDL_GPUCommandBuffer*     command_buffer = pass->command_buffer;
+	SDL_GPURenderPass*        render_pass    = pass->render_pass;
+	const SDL_Rect*           content_rect   = &target->content_rect;
+	int                       i;
+
+	for (i = 0; i < g_aeron.render_layer_count; ++i) {
+		AeronRenderLayer* layer = &g_aeron.render_layers[i];
+		SDL_Rect          dst_rect;
+		SDL_Rect          scissor_rect;
+		const SDL_Rect*   scissor;
+
+		if (layer->kind == AERON_RENDER_LAYER_PIXEL) {
+			AeronPixelLayerUpload* upload = &g_aeron.pixel_layer_uploads[layer->pixel_upload_index];
+			AeronGpuDebug_Marker(command_buffer, "Pixel layer");
+
+			Aeron_ProjectLogicalRect(content_rect, &layer->u.pixel.logical_rect, &dst_rect);
+			scissor = NULL;
+			if (layer->u.pixel.scissor.width > 0 && layer->u.pixel.scissor.height > 0) {
+				Aeron_ProjectLogicalRect(content_rect, &layer->u.pixel.scissor, &scissor_rect);
+				scissor = &scissor_rect;
+			}
+			if (!Aeron_DrawTexture(
+					command_buffer, render_pass, upload->texture, Aeron_PixelSampler(layer->u.pixel.sampling),
+					target->format, target->width, target->height,
+					Aeron_IsSrgbSdlTextureFormat(upload->texture_format),
+					layer->u.pixel.preserve_encoded_values ? AERON_COLOR_SPACE_LINEAR_SRGB
+														   : layer->u.pixel.frame.color_space,
+					layer->u.pixel.sampling == AERON_PIXEL_SAMPLING_SHARP_BILINEAR, target->output_rgb_scale,
+					target->sdr_decode_gamma, &dst_rect, layer->u.pixel.blend_mode,
+					layer->u.pixel.tint_enabled ? layer->u.pixel.tint_rgba : NULL, NULL, scissor)) {
+				Aeron_SetRenderError("Failed to record pixel layer %d for presentation", i);
+				return 0;
+			}
+		} else if (layer->kind == AERON_RENDER_LAYER_TEXTURE) {
+			AeronGpuDebug_Marker(command_buffer, "Texture layer");
+			Aeron_ProjectLogicalRect(content_rect, &layer->u.texture.logical_rect, &dst_rect);
+			scissor = NULL;
+			if (layer->u.texture.scissor.width > 0 && layer->u.texture.scissor.height > 0) {
+				Aeron_ProjectLogicalRect(content_rect, &layer->u.texture.scissor, &scissor_rect);
+				scissor = &scissor_rect;
+			}
+			if (!Aeron_DrawTexture(command_buffer, render_pass, layer->u.texture.texture->texture,
+								   g_aeron.pixel_frame_sampler, target->format, target->width, target->height,
+								   Aeron_TextureFormatIsSrgb(layer->u.texture.texture->format),
+								   layer->u.texture.color_space, 1, target->output_rgb_scale,
+								   target->sdr_decode_gamma, &dst_rect, layer->u.texture.blend_mode,
+								   layer->u.texture.tint_enabled ? layer->u.texture.tint_rgba : NULL,
+								   layer->u.texture.tint_enabled ? layer->u.texture.bias_rgba : NULL,
+								   scissor)) {
+				Aeron_SetRenderError("Failed to record texture layer %d for presentation", i);
+				return 0;
+			}
+		} else if (layer->kind == AERON_RENDER_LAYER_SWAPCHAIN_RENDER) {
+			const AeronSwapchainRenderLayerDesc* direct = &layer->u.swapchain_render;
+			const int full_target = content_rect->x == 0 && content_rect->y == 0 &&
+									content_rect->w == target->width && content_rect->h == target->height;
+			if (!direct->callback) {
+				continue;
+			}
+			if (!full_target || direct->required_width != target->width ||
+				direct->required_height != target->height) {
+				Aeron_LogWarn("aeron", "skipping direct swapchain layer: required %dx%d, acquired %dx%d",
+							  direct->required_width, direct->required_height, target->width,
+							  target->height);
+				continue;
+			}
+			if (!Aeron_RunComposeCallback(pass, direct)) {
+				return 0;
+			}
+		}
+	}
+	return 1;
+}
+
+/* Draws the virtual screen into `rect` of an open pass. The screen's
+ * colours are premultiplied by alpha, and its empty parts are transparent
+ * when the eye images show behind it. */
+static int Aeron_DrawXrScreen(AeronComposePass* pass, const SDL_Rect* rect) {
+	const AeronComposeTarget* target = &pass->target;
+	/* Both textures normally have an sRGB format, and the values pass
+	 * through. A screen that holds sRGB values in a plain format is decoded
+	 * for an sRGB target. */
+	const int screen_srgb = Aeron_IsSrgbSdlTextureFormat(g_aeron.xr_screen_format);
+	const int target_srgb = Aeron_IsSrgbSdlTextureFormat(target->format);
+	const AeronColorSpace color_space =
+		!screen_srgb && target_srgb ? AERON_COLOR_SPACE_SRGB : AERON_COLOR_SPACE_LINEAR_SRGB;
+
+	AeronGpuDebug_Marker(pass->command_buffer, "Virtual screen");
+	return Aeron_DrawTexture(pass->command_buffer, pass->render_pass, g_aeron.xr_screen_texture,
+							 g_aeron.pixel_frame_sampler, target->format, target->width, target->height,
+							 screen_srgb, color_space, 0, 1.0f, 0.0f, rect, AERON_LAYER_BLEND_PREMULTIPLIED,
+							 NULL, NULL, NULL);
+}
+
+/* Draws the pointer on the headset's image of the virtual screen. The
+ * window shows the system's pointer, which the headset doesn't show. */
+static void Aeron_DrawXrPointer(AeronComposePass* pass) {
+	const AeronComposeTarget* target = &pass->target;
+	const AeronInputSnapshot* input  = &g_aeron.input;
+	SDL_Rect                  rect;
+	int                       scale;
+
+	if (!g_aeron.xr_pointer_texture || g_aeron.relative_mouse_enabled || !SDL_CursorVisible() ||
+		!input->has_focus || !input->mouse.inside_content || g_aeron.logical_width <= 0 ||
+		g_aeron.logical_height <= 0) {
+		return;
+	}
+	scale  = SDL_max(1, (target->height + 270) / 540);
+	rect.x = (int)(((int64_t)input->mouse.x * target->width) / g_aeron.logical_width);
+	rect.y = (int)(((int64_t)input->mouse.y * target->height) / g_aeron.logical_height);
+	rect.w = AERON_XR_POINTER_WIDTH * scale;
+	rect.h = AERON_XR_POINTER_HEIGHT * scale;
+	AeronGpuDebug_Marker(pass->command_buffer, "Pointer");
+	Aeron_DrawTexture(pass->command_buffer, pass->render_pass, g_aeron.xr_pointer_texture,
+					  g_aeron.pixel_frame_sampler, target->format, target->width, target->height, 0,
+					  Aeron_IsSrgbSdlTextureFormat(target->format) ? AERON_COLOR_SPACE_SRGB
+																   : AERON_COLOR_SPACE_LINEAR_SRGB,
+					  0, 1.0f, 0.0f, &rect, AERON_LAYER_BLEND_ALPHA, NULL, NULL, NULL);
+}
+
+/* Composes the frame's layers and presents them.
+ *
+ * Without VR, the layers go into the window.
+ *
+ * With VR, the layers go into the virtual screen. The headset shows the
+ * screen as a flat surface, over the eye images when the application
+ * submitted them. The window shows the eye mirror, when the application
+ * submitted one, and a copy of the virtual screen. The debug overlay is
+ * drawn in the window only. */
+static int Aeron_PresentFrame(void) {
+	const int             xr_running = Aeron_XrSessionRunning();
+	const int             xr_screen  = g_aeron.xr_screen_texture != NULL;
+	const int             has_layers = g_aeron.render_layer_count > 0;
+	const int             xr_views   = xr_running && AeronXr_ViewsSubmitted();
+	const int             xr_mirror  = xr_running && g_aeron.xr_mirror_submitted;
+	SDL_GPUCommandBuffer* command_buffer;
+	SDL_GPUTexture*       swapchain_texture = NULL;
+	Uint32                swapchain_width   = 0;
+	Uint32                swapchain_height  = 0;
+	AeronComposeTarget    target;
+	AeronComposePass      pass;
+	uint64_t              acquire_wait_us = 0;
+	int                   gpu_done        = 1;
+	int                   draw_window;
+	int                   draw_headset_screen;
+	int                   image_acquired = 0;
+	int                   present_ok     = 1;
+	int                   i;
 
 	if (!g_aeron.initialized || !g_aeron.gpu_device) {
 		Aeron_SetRenderError("Aeron_Present called without an initialized GPU device");
 		return 0;
 	}
+
+	/* The virtual screen keeps its picture on a frame without layers, such
+	 * as a paused frame. It becomes empty when the frame has eye images and
+	 * no layer: the application then only shows the 3D views. */
+	if (xr_screen) {
+		if (has_layers) {
+			g_aeron.xr_screen_has_content = 1;
+			g_aeron.xr_screen_transparent = xr_views;
+		} else if (xr_views) {
+			g_aeron.xr_screen_has_content = 0;
+		}
+	}
+	draw_headset_screen = xr_running && xr_screen && g_aeron.xr_screen_has_content;
+	AeronXr_SetScreenLayer(draw_headset_screen, g_aeron.xr_screen_transparent);
 
 	/* Nothing was submitted this host frame: keep the previously presented
 	 * swapchain image on screen instead of acquiring and clearing a fresh one.
@@ -1882,17 +2268,18 @@ static int Aeron_PresentWindow(void) {
 	 * (app paused / unfocused, quit tick), which the shim present model relies on
 	 * in place of a port-side per-tick re-submit. A visible debug overlay still
 	 * forces a present so its windows keep rendering over an idle frame. */
-	if (g_aeron.render_layer_count == 0 && !Aeron_DebugUiVisible()) {
-		return 1;
-	}
-	if (g_aeron.window_draw_disabled) {
+	draw_window =
+		!g_aeron.window_draw_disabled && (has_layers || Aeron_DebugUiVisible() || xr_views || xr_mirror);
+	if (!has_layers && !draw_window && !draw_headset_screen) {
 		return 1;
 	}
 
 	/* Build the debug overlay's ImGui frame (menu bar + registered tool
 	 * windows). Must precede the command-buffer work below: the draw-data
 	 * upload runs a copy pass before the swapchain render pass opens. */
-	Aeron_DebugUiBuildFrame();
+	if (draw_window) {
+		Aeron_DebugUiBuildFrame();
+	}
 
 	SDL_ClearError();
 	command_buffer = SDL_AcquireGPUCommandBuffer(g_aeron.gpu_device);
@@ -1903,7 +2290,6 @@ static int Aeron_PresentWindow(void) {
 		return 0;
 	}
 	AeronGpuDebug_Push(command_buffer, "Aeron frame");
-	present_ok = 1;
 
 	for (i = 0; i < g_aeron.render_layer_count; ++i) {
 		AeronRenderLayer* layer = &g_aeron.render_layers[i];
@@ -1916,201 +2302,131 @@ static int Aeron_PresentWindow(void) {
 			!Aeron_UploadPixelLayer(command_buffer, &g_aeron.pixel_layer_uploads[layer->pixel_upload_index],
 									&layer->u.pixel)) {
 			Aeron_SetRenderError("Failed to upload pixel layer %d for presentation", i);
-			present_ok = 0;
-			break;
-		}
-	}
-	if (!present_ok) {
-		AeronGpuDebug_Pop(command_buffer);
-		SDL_CancelGPUCommandBuffer(command_buffer);
-		return 0;
-	}
-
-	Aeron_DebugUiPrepareRender(command_buffer);
-
-	swapchain_texture = NULL;
-	swapchain_width   = 0;
-	swapchain_height  = 0;
-	SDL_ClearError();
-	const uint64_t acquire_start_us = Aeron_NowUs();
-	/* In VR the window must not hold the headset's frame back: it takes an
-	 * image when one is free and skips this frame otherwise. */
-	const int acquired =
-		xr_running ? SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &swapchain_texture,
-													&swapchain_width, &swapchain_height)
-				   : SDL_WaitAndAcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &swapchain_texture,
-														   &swapchain_width, &swapchain_height);
-	const uint64_t acquire_wait_us = Aeron_NowUs() - acquire_start_us;
-	/* Whether the work submitted since the last present was done when the
-	 * image arrived, which is close to the vsync. */
-	const int gpu_done =
-		!g_aeron.pacing_fence || SDL_QueryGPUFence(g_aeron.gpu_device, g_aeron.pacing_fence->fence);
-	Aeron_ReleaseSharedFence(g_aeron.pacing_fence);
-	g_aeron.pacing_fence = NULL;
-	if (!acquired) {
-		const char* error = SDL_GetError();
-		Aeron_SetRenderError("acquiring the window's swapchain image failed: %s",
-							 error && error[0] ? error : "<no SDL error provided>");
-		AeronGpuDebug_Pop(command_buffer);
-		SDL_CancelGPUCommandBuffer(command_buffer);
-		return 0;
-	}
-
-	if (swapchain_texture) {
-		AeronCommandBuffer borrowed_command_buffer;
-		AeronRenderPass    borrowed_render_pass;
-		AeronRenderTarget  borrowed_render_target;
-		const float        output_rgb_scale = Aeron_OutputSdrWhiteLevel();
-		const float        sdr_decode_gamma = Aeron_OutputSdrDecodeGamma();
-
-		Aeron_ComputePresentationRect((int)swapchain_width, (int)swapchain_height, &content_rect);
-
-		SDL_zero(color_target);
-		color_target.texture = swapchain_texture;
-		color_target.clear_color =
-			(SDL_FColor) { g_aeron.clear_color_rgba[0] * output_rgb_scale,
-						   g_aeron.clear_color_rgba[1] * output_rgb_scale,
-						   g_aeron.clear_color_rgba[2] * output_rgb_scale, g_aeron.clear_color_rgba[3] };
-		color_target.load_op  = SDL_GPU_LOADOP_CLEAR;
-		color_target.store_op = SDL_GPU_STOREOP_STORE;
-		color_target.cycle    = false;
-
-		AeronGpuDebug_Push(command_buffer, "Swapchain composition");
-		SDL_ClearError();
-		render_pass = SDL_BeginGPURenderPass(command_buffer, &color_target, 1, NULL);
-		if (!render_pass) {
-			const char* error = SDL_GetError();
-			Aeron_SetRenderError("SDL_BeginGPURenderPass failed for presentation: %s",
-								 error && error[0] ? error : "<no SDL error provided>");
-			AeronGpuDebug_Pop(command_buffer);
 			AeronGpuDebug_Pop(command_buffer);
 			SDL_CancelGPUCommandBuffer(command_buffer);
 			return 0;
 		}
+	}
 
-		SDL_zero(borrowed_command_buffer);
-		borrowed_command_buffer.command_buffer     = command_buffer;
-		borrowed_command_buffer.render_pass_active = 1;
-		SDL_zero(borrowed_render_pass);
-		borrowed_render_pass.command_buffer   = command_buffer;
-		borrowed_render_pass.render_pass      = render_pass;
-		borrowed_render_pass.owner            = &borrowed_command_buffer;
-		borrowed_render_pass.output_rgb_scale = output_rgb_scale;
-		borrowed_render_pass.width            = (int)swapchain_width;
-		borrowed_render_pass.height           = (int)swapchain_height;
-		SDL_zero(borrowed_render_target);
-		borrowed_render_target.color.texture   = swapchain_texture;
-		borrowed_render_target.color.width     = (int)swapchain_width;
-		borrowed_render_target.color.height    = (int)swapchain_height;
-		borrowed_render_target.color.mip_count = 1;
-		borrowed_render_target.color.format    = Aeron_FromSdlTextureFormat(g_aeron.swapchain_format);
-		borrowed_render_target.color.usage     = AERON_TEXTURE_USAGE_COLOR_TARGET;
+	if (draw_window) {
+		Aeron_DebugUiPrepareRender(command_buffer);
+	}
 
-		for (i = 0; i < g_aeron.render_layer_count; ++i) {
-			AeronRenderLayer* layer = &g_aeron.render_layers[i];
-			SDL_Rect          dst_rect;
-			SDL_Rect          scissor_rect;
-			const SDL_Rect*   scissor;
+	/* With VR, the layers go into the virtual screen. */
+	if (xr_screen && has_layers) {
+		SDL_zero(target);
+		target.texture          = g_aeron.xr_screen_texture;
+		target.format           = g_aeron.xr_screen_format;
+		target.width            = g_aeron.xr_screen_width;
+		target.height           = g_aeron.xr_screen_height;
+		target.content_rect     = (SDL_Rect) { 0, 0, target.width, target.height };
+		target.output_rgb_scale = 1.0f;
+		target.cycle            = 1;
+		if (!g_aeron.xr_screen_transparent) {
+			target.clear_color = (SDL_FColor) { g_aeron.clear_color_rgba[0], g_aeron.clear_color_rgba[1],
+												g_aeron.clear_color_rgba[2], 1.0f };
+		}
+		if (!Aeron_BeginComposePass(&pass, command_buffer, &target, "Virtual screen composition")) {
+			present_ok = 0;
+		} else {
+			present_ok = Aeron_ComposeLayers(&pass);
+			Aeron_EndComposePass(&pass);
+		}
+	}
 
-			if (layer->kind == AERON_RENDER_LAYER_PIXEL) {
-				AeronPixelLayerUpload* upload = &g_aeron.pixel_layer_uploads[layer->pixel_upload_index];
-				AeronGpuDebug_Marker(command_buffer, "Pixel layer");
-
-				Aeron_ProjectLogicalRect(&content_rect, &layer->u.pixel.logical_rect, &dst_rect);
-				scissor = NULL;
-				if (layer->u.pixel.scissor.width > 0 && layer->u.pixel.scissor.height > 0) {
-					Aeron_ProjectLogicalRect(&content_rect, &layer->u.pixel.scissor, &scissor_rect);
-					scissor = &scissor_rect;
-				}
-				if (!Aeron_DrawTexture(
-						command_buffer, render_pass, upload->texture,
-						Aeron_PixelSampler(layer->u.pixel.sampling), g_aeron.swapchain_format,
-						(int)swapchain_width, (int)swapchain_height,
-						Aeron_IsSrgbSdlTextureFormat(upload->texture_format),
-						layer->u.pixel.preserve_encoded_values ? AERON_COLOR_SPACE_LINEAR_SRGB
-															   : layer->u.pixel.frame.color_space,
-						layer->u.pixel.sampling == AERON_PIXEL_SAMPLING_SHARP_BILINEAR, output_rgb_scale,
-						sdr_decode_gamma, &dst_rect, layer->u.pixel.blend_mode,
-						layer->u.pixel.tint_enabled ? layer->u.pixel.tint_rgba : NULL, NULL, scissor)) {
-					Aeron_SetRenderError("Failed to record pixel layer %d for presentation", i);
+	/* The headset's copy of the virtual screen, with the pointer. */
+	if (present_ok && draw_headset_screen) {
+		SDL_zero(target);
+		target.texture = AeronXr_AcquireScreenImage(&target.format, &target.width, &target.height);
+		if (target.texture) {
+			image_acquired          = 1;
+			target.content_rect     = (SDL_Rect) { 0, 0, target.width, target.height };
+			target.output_rgb_scale = 1.0f;
+			if (!Aeron_BeginComposePass(&pass, command_buffer, &target, "Headset screen")) {
+				present_ok = 0;
+			} else {
+				if (!Aeron_DrawXrScreen(&pass, &target.content_rect)) {
+					Aeron_SetRenderError("Failed to draw the virtual screen for the headset");
 					present_ok = 0;
-					break;
 				}
-			} else if (layer->kind == AERON_RENDER_LAYER_TEXTURE) {
-				AeronGpuDebug_Marker(command_buffer, "Texture layer");
-				Aeron_ProjectLogicalRect(&content_rect, &layer->u.texture.logical_rect, &dst_rect);
-				scissor = NULL;
-				if (layer->u.texture.scissor.width > 0 && layer->u.texture.scissor.height > 0) {
-					Aeron_ProjectLogicalRect(&content_rect, &layer->u.texture.scissor, &scissor_rect);
-					scissor = &scissor_rect;
-				}
-				if (!Aeron_DrawTexture(
-						command_buffer, render_pass, layer->u.texture.texture->texture,
-						g_aeron.pixel_frame_sampler, g_aeron.swapchain_format, (int)swapchain_width,
-						(int)swapchain_height, Aeron_TextureFormatIsSrgb(layer->u.texture.texture->format),
-						layer->u.texture.color_space, 1, output_rgb_scale, sdr_decode_gamma, &dst_rect,
-						layer->u.texture.blend_mode,
-						layer->u.texture.tint_enabled ? layer->u.texture.tint_rgba : NULL,
-						layer->u.texture.tint_enabled ? layer->u.texture.bias_rgba : NULL, scissor)) {
-					Aeron_SetRenderError("Failed to record texture layer %d for presentation", i);
-					present_ok = 0;
-					break;
-				}
-			} else if (layer->kind == AERON_RENDER_LAYER_SWAPCHAIN_RENDER) {
-				const AeronSwapchainRenderLayerDesc* direct = &layer->u.swapchain_render;
-				const int full_target                       = content_rect.x == 0 && content_rect.y == 0 &&
-															  content_rect.w == (int)swapchain_width &&
-															  content_rect.h == (int)swapchain_height;
-				if (!direct->callback) {
-					continue;
-				}
-				if (!full_target || direct->required_width != (int)swapchain_width ||
-					direct->required_height != (int)swapchain_height) {
-					Aeron_LogWarn("aeron", "skipping direct swapchain layer: required %dx%d, acquired %ux%u",
-								  direct->required_width, direct->required_height, swapchain_width,
-								  swapchain_height);
-					continue;
-				}
-				/* The layer contract promises native-pixel recording, but
-				 * earlier texture layers leave their projected dst rect as
-				 * the pass viewport/scissor (a pillarboxed or cursor-sized
-				 * sub-rect). Hand the callback a clean full-drawable pass. */
-				{
-					const SDL_GPUViewport full_viewport = {
-						0.0f, 0.0f, (float)swapchain_width, (float)swapchain_height, 0.0f, 1.0f
-					};
-					const SDL_Rect full_scissor = { 0, 0, (int)swapchain_width, (int)swapchain_height };
-					SDL_SetGPUViewport(render_pass, &full_viewport);
-					SDL_SetGPUScissor(render_pass, &full_scissor);
-				}
-				if (direct->debug_label) {
-					AeronGpuDebug_Push(command_buffer, direct->debug_label);
-				}
-				direct->callback(&borrowed_command_buffer, &borrowed_render_pass, &borrowed_render_target,
-								 (int)swapchain_width, (int)swapchain_height, direct->userdata);
-				if (direct->debug_label) {
-					AeronGpuDebug_Pop(command_buffer);
-				}
-				if (borrowed_command_buffer.failed) {
-					if (borrowed_command_buffer.failure_message[0]) {
-						Aeron_SetRenderError("%s", borrowed_command_buffer.failure_message);
-					}
-					present_ok = 0;
-					break;
-				}
+				Aeron_DrawXrPointer(&pass);
+				Aeron_EndComposePass(&pass);
 			}
 		}
-		/* Debug overlay draws last — over every composed layer. */
-		if (Aeron_DebugUiVisible()) {
-			AeronGpuDebug_Marker(command_buffer, "Debug UI");
+	}
+
+	if (present_ok && draw_window) {
+		SDL_ClearError();
+		const uint64_t acquire_start_us = Aeron_NowUs();
+		/* In VR the window must not hold the headset's frame back: it takes an
+		 * image when one is free and skips this frame otherwise. */
+		const int acquired =
+			xr_running ? SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &swapchain_texture,
+														&swapchain_width, &swapchain_height)
+					   : SDL_WaitAndAcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &swapchain_texture,
+															   &swapchain_width, &swapchain_height);
+		acquire_wait_us = Aeron_NowUs() - acquire_start_us;
+		/* Whether the work submitted since the last present was done when the
+		 * image arrived, which is close to the vsync. */
+		gpu_done = !g_aeron.pacing_fence || SDL_QueryGPUFence(g_aeron.gpu_device, g_aeron.pacing_fence->fence);
+		Aeron_ReleaseSharedFence(g_aeron.pacing_fence);
+		g_aeron.pacing_fence = NULL;
+		if (!acquired) {
+			const char* error = SDL_GetError();
+			Aeron_SetRenderError("acquiring the window's swapchain image failed: %s",
+								 error && error[0] ? error : "<no SDL error provided>");
+			swapchain_texture = NULL;
+			present_ok        = 0;
 		}
-		Aeron_DebugUiRecordDraws(command_buffer, render_pass);
-		SDL_EndGPURenderPass(render_pass);
-		AeronGpuDebug_Pop(command_buffer);
+	}
+
+	if (present_ok && swapchain_texture) {
+		const float output_rgb_scale = Aeron_OutputSdrWhiteLevel();
+
+		image_acquired = 1;
+		SDL_zero(target);
+		target.texture = swapchain_texture;
+		target.format  = g_aeron.swapchain_format;
+		target.width   = (int)swapchain_width;
+		target.height  = (int)swapchain_height;
+		Aeron_ComputePresentationRect(target.width, target.height, &target.content_rect);
+		target.output_rgb_scale = output_rgb_scale;
+		target.sdr_decode_gamma = Aeron_OutputSdrDecodeGamma();
+		target.clear_color =
+			(SDL_FColor) { g_aeron.clear_color_rgba[0] * output_rgb_scale,
+						   g_aeron.clear_color_rgba[1] * output_rgb_scale,
+						   g_aeron.clear_color_rgba[2] * output_rgb_scale, g_aeron.clear_color_rgba[3] };
+		if (!Aeron_BeginComposePass(&pass, command_buffer, &target, "Swapchain composition")) {
+			present_ok = 0;
+		} else {
+			if (!xr_screen) {
+				present_ok = Aeron_ComposeLayers(&pass);
+			} else {
+				const AeronSwapchainRenderLayerDesc* mirror = &g_aeron.xr_mirror;
+				if (xr_mirror && ((mirror->required_width <= 0 && mirror->required_height <= 0) ||
+								  (mirror->required_width == target.width &&
+								   mirror->required_height == target.height))) {
+					present_ok = Aeron_RunComposeCallback(&pass, mirror);
+				}
+				if (present_ok && g_aeron.xr_screen_has_content &&
+					!Aeron_DrawXrScreen(&pass, &target.content_rect)) {
+					Aeron_SetRenderError("Failed to draw the virtual screen in the window");
+					present_ok = 0;
+				}
+			}
+			/* Debug overlay draws last — over every composed layer. */
+			if (Aeron_DebugUiVisible()) {
+				AeronGpuDebug_Marker(command_buffer, "Debug UI");
+			}
+			Aeron_DebugUiRecordDraws(command_buffer, pass.render_pass);
+			Aeron_EndComposePass(&pass);
+		}
 	}
 	AeronGpuDebug_Pop(command_buffer);
 
-	if (!present_ok) {
+	/* A command buffer that acquired an image must be submitted: SDL can't
+	 * cancel it, and the headset's image is released after the submit. */
+	if (!present_ok && !image_acquired) {
 		SDL_CancelGPUCommandBuffer(command_buffer);
 		return 0;
 	}
@@ -2122,10 +2438,22 @@ static int Aeron_PresentWindow(void) {
 		return 0;
 	}
 	g_aeron.render_data_stats.command_buffer_submission_count++;
+	if (!present_ok) {
+		return 0;
+	}
 	g_aeron.presented_frames++;
 	if (swapchain_texture && !xr_running) {
 		Aeron_NotePacingPresent(acquire_wait_us, gpu_done, Aeron_NowUs());
 	}
+	return 1;
+}
+
+int Aeron_XrSubmitMirror(const AeronSwapchainRenderLayerDesc* desc) {
+	if (!desc || !desc->callback || !Aeron_XrSessionRunning()) {
+		return 0;
+	}
+	g_aeron.xr_mirror           = *desc;
+	g_aeron.xr_mirror_submitted = 1;
 	return 1;
 }
 
@@ -2200,8 +2528,8 @@ AeronRenderSubmission Aeron_SubmitTextureLayer(const AeronTextureLayerDesc* desc
 	AeronRenderLayer* layer;
 	int               layer_index;
 
-	if (!desc || !desc->texture || !desc->texture->texture || desc->logical_rect.width <= 0 ||
-		desc->logical_rect.height <= 0) {
+	if (!desc || !desc->texture || !desc->texture->texture || desc->texture->external ||
+		desc->logical_rect.width <= 0 || desc->logical_rect.height <= 0) {
 		Aeron_SetRenderError("Invalid texture-layer submission");
 		return 0;
 	}
@@ -2257,6 +2585,10 @@ int Aeron_CanRenderDirectToSwapchain(int target_width, int target_height) {
 	int      drawable_width;
 	int      drawable_height;
 
+	/* With VR, the layers are drawn into the virtual screen. */
+	if (g_aeron.xr_screen_texture) {
+		return target_width == g_aeron.xr_screen_width && target_height == g_aeron.xr_screen_height;
+	}
 	if (!g_aeron.gpu_device || !g_aeron.window || target_width <= 0 || target_height <= 0 ||
 		g_aeron.swapchain_format == SDL_GPU_TEXTUREFORMAT_INVALID ||
 		Aeron_FromSdlTextureFormat(g_aeron.swapchain_format) == AERON_TEXTURE_FORMAT_UNKNOWN ||
@@ -2278,6 +2610,11 @@ int Aeron_GetContentPixelRect(AeronRectI* out) {
 		return 0;
 	}
 	memset(out, 0, sizeof *out);
+	if (g_aeron.xr_screen_texture) {
+		out->width  = g_aeron.xr_screen_width;
+		out->height = g_aeron.xr_screen_height;
+		return 1;
+	}
 	if (!g_aeron.window || !SDL_GetWindowSizeInPixels(g_aeron.window, &drawable_width, &drawable_height)) {
 		return 0;
 	}
@@ -2335,7 +2672,7 @@ int Aeron_ComposePixelLayerToRenderTarget(AeronRenderTarget* target, const Aeron
 	}
 	color_target.load_op  = clear_color ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
 	color_target.store_op = SDL_GPU_STOREOP_STORE;
-	color_target.cycle    = clear_color ? true : false;
+	color_target.cycle    = clear_color && !target->color.external;
 
 	SDL_ClearError();
 	render_pass = SDL_BeginGPURenderPass(command_buffer, &color_target, 1, NULL);
@@ -4303,6 +4640,10 @@ void Aeron_DestroyRenderTarget(AeronRenderTarget* target) {
 	 * memory. This happens on the frontend->flight handoff: the frontend submits its
 	 * render-surface texture layer during the tick, then releases the surface (freeing
 	 * this target) before the shell's Aeron_Present runs. */
+	/* An external target and its texture belong to their creator. */
+	if (target->color.external) {
+		return;
+	}
 	for (i = 0; i < g_aeron.render_layer_count; ++i) {
 		AeronRenderLayer* layer = &g_aeron.render_layers[i];
 		if (layer->kind == AERON_RENDER_LAYER_TEXTURE && layer->u.texture.texture == &target->color) {
@@ -4395,7 +4736,7 @@ static int Aeron_DownloadTextureSlice(const SDL_GPUTextureRegion* source, uint32
 
 int Aeron_ReadRenderTargetRawPixels(AeronRenderTarget* target, void* dst, size_t capacity, size_t pitch) {
 	if (!g_aeron.gpu_device || !target || !target->color.texture || !dst ||
-		target->color.sample_count != AERON_SAMPLE_COUNT_1) {
+		target->color.sample_count != AERON_SAMPLE_COUNT_1 || target->color.external) {
 		Aeron_SetRenderError("Invalid raw render-target readback");
 		return 0;
 	}
@@ -4422,7 +4763,7 @@ int Aeron_ReadTextureRawPixels(AeronTexture* texture, int mip_level, int layer, 
 							   size_t capacity) {
 	if (!g_aeron.gpu_device || !texture || !texture->texture || !dst || mip_level < 0 ||
 		mip_level >= texture->mip_count || layer < 0 || layer >= texture->layer_count || z < 0 ||
-		texture->sample_count != AERON_SAMPLE_COUNT_1) {
+		texture->sample_count != AERON_SAMPLE_COUNT_1 || texture->external) {
 		Aeron_SetRenderError("Invalid raw texture readback");
 		return 0;
 	}
@@ -4464,7 +4805,7 @@ int Aeron_ReadRenderTargetPixels(AeronRenderTarget* target, void* dst, int pitch
 	int                             y;
 
 	if (!g_aeron.gpu_device || !target || !target->color.texture ||
-		target->color.sample_count != AERON_SAMPLE_COUNT_1 || !dst || pitch <= 0) {
+		target->color.sample_count != AERON_SAMPLE_COUNT_1 || target->color.external || !dst || pitch <= 0) {
 		Aeron_SetRenderError("Invalid render-target readback description");
 		return 0;
 	}
@@ -4810,9 +5151,9 @@ AeronRenderPass* Aeron_BeginRenderPass(const AeronRenderPassDesc* desc) {
 									   : desc->discard_color ? SDL_GPU_LOADOP_DONT_CARE
 															 : SDL_GPU_LOADOP_LOAD;
 		color_targets[t].store_op    = resolve_rt ? SDL_GPU_STOREOP_RESOLVE : SDL_GPU_STOREOP_STORE;
-		color_targets[t].cycle       = desc->clear_color || desc->discard_color;
+		color_targets[t].cycle       = (desc->clear_color || desc->discard_color) && !rt->color.external;
 		color_targets[t].resolve_texture       = resolve_rt ? resolve_rt->color.texture : NULL;
-		color_targets[t].cycle_resolve_texture = resolve_rt != NULL;
+		color_targets[t].cycle_resolve_texture = resolve_rt != NULL && !resolve_rt->color.external;
 	}
 
 	depth_target_ptr = NULL;
@@ -5050,6 +5391,12 @@ int Aeron_CopyTextureCmd(AeronCommandBuffer* command_buffer, const AeronTextureC
 		desc->height == 0) {
 		return 0;
 	}
+	/* An external texture, such as a headset image, can't be read. */
+	if (desc->source->external) {
+		Aeron_LogError("aeron", "A texture copy can't read an external texture");
+		Aeron_CommandBufferMarkFailed(command_buffer);
+		return 0;
+	}
 
 	SDL_zero(source);
 	source.texture   = desc->source->texture;
@@ -5073,7 +5420,7 @@ int Aeron_CopyTextureCmd(AeronCommandBuffer* command_buffer, const AeronTextureC
 		return 0;
 	}
 	SDL_CopyGPUTextureToTexture(copy_pass, &source, &destination, desc->width, desc->height,
-								desc->depth ? desc->depth : 1u, desc->cycle != 0);
+								desc->depth ? desc->depth : 1u, desc->cycle != 0 && !desc->destination->external);
 	SDL_EndGPUCopyPass(copy_pass);
 	return 1;
 }
@@ -5358,4 +5705,5 @@ void Aeron_ClearRenderSubmissions(void) {
 											   : (uint16_t)(g_aeron.render_submission_generation + 1u);
 	g_aeron.render_layer_count           = 0;
 	g_aeron.pixel_layer_upload_count     = 0;
+	g_aeron.xr_mirror_submitted          = 0;
 }

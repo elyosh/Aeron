@@ -711,14 +711,17 @@ int Aeron_SubmitSwapchainRenderLayer(const AeronSwapchainRenderLayerDesc* desc);
 
 /* Returns nonzero when a target of this exact size currently covers the full
  * drawable and can therefore use a direct swapchain render layer without
- * coordinate projection. Aeron revalidates this when acquiring the drawable. */
+ * coordinate projection. Aeron revalidates this when acquiring the drawable.
+ * With VR, the size to give is the virtual screen's, and the layer is drawn
+ * into the virtual screen. */
 int Aeron_CanRenderDirectToSwapchain(int target_width, int target_height);
 
 /* Returns the presentation content rect in DRAWABLE PIXELS — the region of
  * the swapchain the logical space maps onto (equal to the full drawable
  * unless aspect-fit letterboxing is active). Native-resolution overlays
  * size render targets and map logical mouse coordinates through this rect.
- * Returns nonzero on success; zeroes `out` when no drawable exists. */
+ * Returns nonzero on success; zeroes `out` when no drawable exists. With
+ * VR, the rect is the whole virtual screen. */
 int Aeron_GetContentPixelRect(AeronRectI* out);
 
 /* Clears all queued render submissions for the current host frame. */

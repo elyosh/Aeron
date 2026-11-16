@@ -70,6 +70,42 @@ int AeronXrSession_HandleEvent(AeronXrSessionMachine* machine, const AeronXrFunc
 	}
 }
 
+int AeronXrImage_Acquire(AeronXrImageTracker* tracker, const AeronXrFunctions* fn, char* error,
+						 size_t error_size) {
+	if (tracker->held) {
+		snprintf(error, error_size, "a swapchain image was acquired twice in one frame");
+		return 0;
+	}
+	const XrSwapchainImageAcquireInfo acquire_info = { .type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+	uint32_t                          index        = 0;
+	XrResult result = fn->xrAcquireSwapchainImage(tracker->swapchain, &acquire_info, &index);
+	if (XR_FAILED(result))
+		return state_fail(error, error_size, "could not acquire a swapchain image", result);
+	const XrSwapchainImageWaitInfo wait_info = {
+		.type    = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
+		.timeout = XR_INFINITE_DURATION,
+	};
+	result = fn->xrWaitSwapchainImage(tracker->swapchain, &wait_info);
+	if (result != XR_SUCCESS)
+		return state_fail(error, error_size, "could not wait for a swapchain image", result);
+	tracker->held  = 1;
+	tracker->index = index;
+	return 1;
+}
+
+int AeronXrImage_Release(AeronXrImageTracker* tracker, const AeronXrFunctions* fn, char* error,
+						 size_t error_size) {
+	if (!tracker->held)
+		return 1;
+	tracker->held = 0;
+	const XrSwapchainImageReleaseInfo info   = { .type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+	const XrResult                    result = fn->xrReleaseSwapchainImage(tracker->swapchain, &info);
+	if (XR_FAILED(result))
+		return state_fail(error, error_size, "could not release a swapchain image", result);
+	tracker->released_once = 1;
+	return 1;
+}
+
 /* Rotates `v` by the unit quaternion `q`. */
 static XrVector3f rotate(XrQuaternionf q, XrVector3f v) {
 	/* v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v) */

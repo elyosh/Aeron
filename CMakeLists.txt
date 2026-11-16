@@ -545,7 +545,8 @@ if(AERON_XR)
     target_sources(aeron PRIVATE
         src/xr/xr_frame.c
         src/xr/xr_loader.c
-        src/xr/xr_state.c)
+        src/xr/xr_state.c
+        src/xr/xr_swapchain.c)
     target_compile_definitions(aeron PRIVATE AERON_XR=1)
     target_include_directories(aeron PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include)

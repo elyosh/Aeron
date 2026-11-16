@@ -6,15 +6,26 @@
  * and the cubes are drawn into the eye images. Otherwise the views come
  * from a fixed stereo rig and are drawn side by side in the window.
  *
- * Aeron runs the OpenXR session, so the headset paces the frames, but it has
- * no eye images yet: the cubes are always drawn in the window for now. The
- * program logs its frame rate every five seconds, and the session's state
- * when it changes.
+ * With a headset, the program also tests the virtual screen and the mirror:
+ *   - It submits a small panel with one cube as a layer. Aeron shows the
+ *     layers on the virtual screen, a flat screen in front of the user.
+ *   - It draws the left eye's view in the window, as the eye mirror. Aeron
+ *     draws its copy of the virtual screen over it.
  *
- * Usage: xr_demo [--vr | --no-vr] [--frames <count>] [--capture <file.ppm>]
+ * The program logs its frame rate every five seconds, and the session's
+ * state when it changes. The R key recentres the view.
+ *
+ * Usage: xr_demo [--vr | --no-vr] [--screen <panel|full|off>] [--frames <count>]
+ *                [--capture <file.ppm>]
  *   --vr                  Fail when VR can't start. Without it, VR is used
  *                         when a headset is found.
  *   --no-vr               Don't use VR.
+ *   --screen <mode>       What the virtual screen shows in the headset:
+ *                           panel  the eye images, and the panel (default);
+ *                           full   no eye images: the picture that the
+ *                                  window shows without a headset fills the
+ *                                  virtual screen, as a 2D game screen does;
+ *                           off    the eye images only.
  *   --frames <count>      Quit after this many frames. For automated runs.
  *   --capture <file.ppm>  Before quitting, save the window image of the last
  *                         frame. It only works without a headset.
@@ -33,6 +44,8 @@
 
 #define DEMO_LOGICAL_W 1920
 #define DEMO_LOGICAL_H 1080
+#define DEMO_PANEL_W 480
+#define DEMO_PANEL_H 270
 #define DEMO_CUBE_COUNT 8
 #define DEMO_NEAR_M 0.05f
 #define DEMO_FAR_M 100.0f
@@ -49,11 +62,22 @@ typedef struct DemoCubeUniforms {
 	float color[4];
 } DemoCubeUniforms;
 
+typedef enum DemoScreen { DEMO_SCREEN_PANEL, DEMO_SCREEN_FULL, DEMO_SCREEN_OFF } DemoScreen;
+
 typedef struct Demo {
 	AeronShader*           vertex_shader;
 	AeronShader*           fragment_shader;
 	AeronGraphicsPipeline* pipeline;
+	/* For the eye mirror, which is drawn in the window's own pass. That
+	 * pass has no depth buffer, so the pipeline culls back faces instead. */
+	AeronGraphicsPipeline* mirror_pipeline;
 	AeronBuffer*           cube_vertices;
+	DemoScreen             screen;
+	/* The panel shown on the virtual screen. */
+	AeronRenderTarget* panel_rt;
+	AeronDepthTarget*  panel_depth;
+	/* The left eye of this frame, which the mirror draws again. */
+	AeronRigView mirror_view;
 	/* The window image when there is no headset: both views side by side. */
 	AeronRenderTarget* window_rt;
 	AeronDepthTarget*  depth;
@@ -114,7 +138,31 @@ static int demo_create(Demo* demo, AeronTextureFormat color_format) {
 		.depth               = { .depth_test = 1, .depth_write = 1, .compare = AERON_COMPARE_LESS },
 		.sample_count        = AERON_SAMPLE_COUNT_1,
 	});
-	if (!demo->pipeline)
+	demo->mirror_pipeline = Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+		.vertex_shader       = demo->vertex_shader,
+		.fragment_shader     = demo->fragment_shader,
+		.primitive_type      = AERON_PRIMITIVE_TRIANGLES,
+		.cull_mode           = AERON_CULL_BACK,
+		.vertex_buffers      = &layout,
+		.vertex_buffer_count = 1,
+		.attributes          = attributes,
+		.attribute_count     = 2,
+		.color_format        = Aeron_SwapchainFormat(),
+		.sample_count        = AERON_SAMPLE_COUNT_1,
+	});
+	demo->panel_rt        = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
+		.width      = DEMO_PANEL_W,
+		.height     = DEMO_PANEL_H,
+		.format     = color_format,
+		.debug_name = "xr_demo panel",
+	});
+	demo->panel_depth     = Aeron_CreateDepthTarget(&(AeronDepthTargetDesc) {
+		.width      = DEMO_PANEL_W,
+		.height     = DEMO_PANEL_H,
+		.format     = AERON_TEXTURE_FORMAT_D32_FLOAT,
+		.debug_name = "xr_demo panel depth",
+	});
+	if (!demo->pipeline || !demo->mirror_pipeline || !demo->panel_rt || !demo->panel_depth)
 		return 0;
 
 	DemoVertex cube[36];
@@ -130,6 +178,12 @@ static int demo_create(Demo* demo, AeronTextureFormat color_format) {
 static void demo_destroy(Demo* demo) {
 	if (demo->depth)
 		Aeron_DestroyDepthTarget(demo->depth);
+	if (demo->panel_depth)
+		Aeron_DestroyDepthTarget(demo->panel_depth);
+	if (demo->panel_rt)
+		Aeron_DestroyRenderTarget(demo->panel_rt);
+	if (demo->mirror_pipeline)
+		Aeron_DestroyGraphicsPipeline(demo->mirror_pipeline);
 	if (demo->window_rt)
 		Aeron_DestroyRenderTarget(demo->window_rt);
 	if (demo->cube_vertices)
@@ -200,10 +254,11 @@ static void demo_view_clip(const AeronRigView* view, float out[4][4]) {
 	demo_mul4(to_clip, to_view, out);
 }
 
-static void demo_draw_cubes(const Demo* demo, AeronRenderPass* pass, float view_clip[4][4]) {
-	Aeron_BindGraphicsPipeline(pass, demo->pipeline);
+static void demo_draw_cubes(const Demo* demo, AeronRenderPass* pass, AeronGraphicsPipeline* pipeline,
+							float view_clip[4][4], int cube_count) {
+	Aeron_BindGraphicsPipeline(pass, pipeline);
 	Aeron_BindVertexBuffer(pass, 0, demo->cube_vertices, 0);
-	for (int i = 0; i < DEMO_CUBE_COUNT; i++) {
+	for (int i = 0; i < cube_count; i++) {
 		/* A ring around the viewer, 2 m away, at eye height. */
 		const float around = 2.0f * DEMO_PI * (float)i / DEMO_CUBE_COUNT;
 		const float spin   = (float)demo->seconds * (0.4f + 0.1f * (float)i);
@@ -256,22 +311,97 @@ static int demo_render_views(Demo* demo, const AeronViewRig* rig, AeronRenderTar
 		}
 		float view_clip[4][4];
 		demo_view_clip(view, view_clip);
-		demo_draw_cubes(demo, pass, view_clip);
+		demo_draw_cubes(demo, pass, demo->pipeline, view_clip, DEMO_CUBE_COUNT);
 		Aeron_EndRenderPass(pass);
 	}
 	return Aeron_SubmitCommandBuffer(cmd);
+}
+
+/* Draws the panel, with the first cube seen from the front, and submits it
+ * as a layer in the lower part of the logical frame. The panel's background
+ * is half transparent, so the eye images show through it in the headset. */
+static int demo_submit_panel(Demo* demo) {
+	AeronCommandBuffer* cmd = Aeron_AcquireCommandBuffer();
+	if (!cmd)
+		return 0;
+	AeronRenderPass* pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
+		.color_target      = demo->panel_rt,
+		.depth_target      = demo->panel_depth,
+		.clear_color       = 1,
+		.clear_color_rgba  = { 0.02f, 0.05f, 0.12f, 0.6f },
+		.clear_depth       = 1,
+		.clear_depth_value = 1.0f,
+		.command_buffer    = cmd,
+		.debug_label       = "xr_demo panel",
+	});
+	if (!pass) {
+		Aeron_CancelCommandBuffer(cmd);
+		return 0;
+	}
+	const float        half_v = 0.2f;
+	const float        half_h = atanf(tanf(half_v) * (float)DEMO_PANEL_W / (float)DEMO_PANEL_H);
+	const AeronRigView view   = {
+		.pose = { .orientation = { 0.0f, 0.0f, 0.0f, 1.0f } },
+		.fov  = { -half_h, half_h, half_v, -half_v },
+	};
+	float view_clip[4][4];
+	demo_view_clip(&view, view_clip);
+	demo_draw_cubes(demo, pass, demo->pipeline, view_clip, 1);
+	Aeron_EndRenderPass(pass);
+	if (!Aeron_SubmitCommandBuffer(cmd))
+		return 0;
+	return Aeron_SubmitTextureLayer(&(AeronTextureLayerDesc) {
+			   .texture      = Aeron_RenderTargetGetTexture(demo->panel_rt),
+			   .logical_rect = { (DEMO_LOGICAL_W - 2 * DEMO_PANEL_W) / 2, DEMO_LOGICAL_H - 2 * DEMO_PANEL_H - 60,
+								 2 * DEMO_PANEL_W, 2 * DEMO_PANEL_H },
+			   .blend_mode   = AERON_LAYER_BLEND_ALPHA,
+			   .color_space  = AERON_COLOR_SPACE_SRGB,
+		   }) != 0;
+}
+
+/* The eye mirror: draws the left eye's view in the window. Aeron calls it
+ * while it draws the window, inside the window's render pass. The view keeps
+ * its shape: it is fitted into the middle of the window. */
+static void demo_draw_mirror(AeronCommandBuffer* command_buffer, AeronRenderPass* pass, AeronRenderTarget* target,
+							 int target_width, int target_height, void* userdata) {
+	const Demo*         demo = userdata;
+	const AeronRigView* view = &demo->mirror_view;
+	(void)command_buffer;
+	(void)target;
+	if (view->rect.width <= 0 || view->rect.height <= 0)
+		return;
+	AeronRectI rect = { 0, 0, target_width, target_height };
+	if ((int64_t)target_width * view->rect.height > (int64_t)target_height * view->rect.width)
+		rect.width = (int)((int64_t)target_height * view->rect.width / view->rect.height);
+	else
+		rect.height = (int)((int64_t)target_width * view->rect.height / view->rect.width);
+	rect.x = (target_width - rect.width) / 2;
+	rect.y = (target_height - rect.height) / 2;
+	Aeron_SetViewport(pass, &rect);
+	Aeron_SetScissor(pass, &rect);
+	float view_clip[4][4];
+	demo_view_clip(view, view_clip);
+	demo_draw_cubes(demo, pass, demo->mirror_pipeline, view_clip, DEMO_CUBE_COUNT);
 }
 
 /* The headset path: the rig and the eye images come from Aeron. Returns 0
  * when this frame has no eye images. */
 static int demo_frame_headset(Demo* demo) {
 	AeronXrFrame frame;
-	if (!Aeron_XrBeginViews(&frame))
+	if (demo->screen == DEMO_SCREEN_FULL || !Aeron_XrBeginViews(&frame))
 		return 0;
 	if (!demo_ensure_depth(demo, frame.rig.width, frame.rig.height) ||
 		!demo_render_views(demo, &frame.rig, frame.color))
 		return 0;
 	Aeron_XrSubmitViews();
+	demo->mirror_view = frame.rig.views[0];
+	Aeron_XrSubmitMirror(&(AeronSwapchainRenderLayerDesc) {
+		.callback    = demo_draw_mirror,
+		.userdata    = demo,
+		.debug_label = "xr_demo mirror",
+	});
+	if (demo->screen == DEMO_SCREEN_PANEL && !demo_submit_panel(demo))
+		return 0;
 	return 1;
 }
 
@@ -329,17 +459,28 @@ int main(int argc, char* argv[]) {
 	long        frame_limit  = 0;
 	const char* capture_path = NULL;
 	AeronXrMode xr_mode      = AERON_XR_AUTO;
+	DemoScreen  screen       = DEMO_SCREEN_PANEL;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--vr") == 0) {
 			xr_mode = AERON_XR_REQUIRED;
 		} else if (strcmp(argv[i], "--no-vr") == 0) {
 			xr_mode = AERON_XR_OFF;
+		} else if (strcmp(argv[i], "--screen") == 0 && i + 1 < argc && strcmp(argv[i + 1], "panel") == 0) {
+			screen = DEMO_SCREEN_PANEL;
+			i++;
+		} else if (strcmp(argv[i], "--screen") == 0 && i + 1 < argc && strcmp(argv[i + 1], "full") == 0) {
+			screen = DEMO_SCREEN_FULL;
+			i++;
+		} else if (strcmp(argv[i], "--screen") == 0 && i + 1 < argc && strcmp(argv[i + 1], "off") == 0) {
+			screen = DEMO_SCREEN_OFF;
+			i++;
 		} else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
 			frame_limit = strtol(argv[++i], NULL, 10);
 		} else if (strcmp(argv[i], "--capture") == 0 && i + 1 < argc) {
 			capture_path = argv[++i];
 		} else {
-			fprintf(stderr, "Usage: xr_demo [--vr | --no-vr] [--frames <count>] [--capture <file.ppm>]\n");
+			fprintf(stderr, "Usage: xr_demo [--vr | --no-vr] [--screen <panel|full|off>] [--frames <count>] "
+							"[--capture <file.ppm>]\n");
 			return 2;
 		}
 	}
@@ -370,6 +511,7 @@ int main(int argc, char* argv[]) {
 
 	Demo demo;
 	memset(&demo, 0, sizeof demo);
+	demo.screen = screen;
 	/* An sRGB format, as the eye images have. The shader writes linear values. */
 	const AeronTextureFormat color_format = AERON_TEXTURE_FORMAT_RGBA8_SRGB;
 	demo.window_rt                        = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
@@ -395,6 +537,10 @@ int main(int argc, char* argv[]) {
 		if (Aeron_FatalErrorRequested())
 			break;
 		demo.seconds += (double)delta_us * 1e-6;
+		const AeronInputSnapshot* input = Aeron_InputSnapshot();
+		/* The key codes are USB usage codes: 4 is A, so R is 4 + 17. */
+		if (input && input->key_pressed[AERON_KEY_A + ('R' - 'A')])
+			Aeron_XrRecenter();
 
 		if (!demo_frame_headset(&demo)) {
 			if (demo_frame_window(&demo))

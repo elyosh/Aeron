@@ -35,6 +35,17 @@ typedef enum AeronPresentationMode {
 typedef struct AeronStartupOptions {
 	/* Whether to start with VR. The default is AERON_XR_OFF. */
 	AeronXrMode xr_mode;
+	/* The eye images have the size the runtime recommends, times this
+	 * scale. Zero or less means 1. */
+	float xr_render_scale;
+	/* The virtual screen: the surface that shows the layers in the headset,
+	 * in place of the window. Its size in pixels, its distance from the
+	 * head and its width, in metres. Zero means Aeron's default: 1920x1080,
+	 * 2 m away and 2.4 m wide. */
+	int   xr_screen_width;
+	int   xr_screen_height;
+	float xr_screen_distance_m;
+	float xr_screen_width_m;
 } AeronStartupOptions;
 
 /* Fills the startup options, for example from the user's configuration file.
@@ -167,7 +178,8 @@ void Aeron_RaiseWindow(void);
 
 /* Physical pixel dimensions of the aspect-fitted presentation area for the
  * current host frame. This is distinct from logical coordinates and window
- * points, particularly on high-density displays. */
+ * points, particularly on high-density displays. With VR, it is the size of
+ * the virtual screen: the layers are drawn into it, not into the window. */
 int Aeron_GetPresentationPixelSize(int* width, int* height);
 
 /* Returns the current immutable input snapshot for this frame. */

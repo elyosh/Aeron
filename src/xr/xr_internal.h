@@ -48,7 +48,12 @@ void AeronXr_UnloadRuntime(void);
 	X(xrWaitFrame)                                                                                           \
 	X(xrBeginFrame)                                                                                          \
 	X(xrEndFrame)                                                                                            \
-	X(xrLocateSpace)
+	X(xrLocateSpace)                                                                                         \
+	X(xrLocateViews)                                                                                         \
+	X(xrEnumerateSwapchainImages)                                                                            \
+	X(xrAcquireSwapchainImage)                                                                               \
+	X(xrWaitSwapchainImage)                                                                                  \
+	X(xrReleaseSwapchainImage)
 
 typedef struct AeronXrFunctions {
 #define AERON_XR_FUNCTION_FIELD(name) PFN_##name name;
@@ -89,7 +94,44 @@ int AeronXrSession_HandleEvent(AeronXrSessionMachine* machine, const AeronXrFunc
  * the head keeps its pitch and roll relative to it. */
 void AeronXr_LevelOrigin(const XrPosef* head, XrPosef* origin);
 
-/* The OpenXR state of the GPU device, shared by xr_session.c and xr_frame.c. */
+/* Which image of a swapchain the application holds (xr_state.c). OpenXR
+ * wants every acquired image waited for and then released, in that order,
+ * and at most one image held at a time. */
+typedef struct AeronXrImageTracker {
+	XrSwapchain swapchain;
+	/* An image is acquired and waited for; `index` is its place in the
+	 * swapchain's image array. */
+	int      held;
+	uint32_t index;
+	/* An image was released at least once, so a layer can show the
+	 * swapchain. */
+	int released_once;
+} AeronXrImageTracker;
+
+/* Acquires the next image and waits until it can be drawn into. Returns 0,
+ * with the reason in `error`, when a call fails or when an image is already
+ * held. After a failed wait the image stays with the runtime: OpenXR has no
+ * way to give it back, and the session is no longer usable. */
+int AeronXrImage_Acquire(AeronXrImageTracker* tracker, const AeronXrFunctions* fn, char* error,
+						 size_t error_size);
+/* Releases the held image. It does nothing and returns 1 when none is
+ * held. Returns 0, with the reason in `error`, when the call fails; the
+ * image is no longer counted as held either way. */
+int AeronXrImage_Release(AeronXrImageTracker* tracker, const AeronXrFunctions* fn, char* error,
+						 size_t error_size);
+
+/* A colour swapchain: the images that the runtime shows for one eye or for
+ * the virtual screen. SDL creates the images as textures, and each one is
+ * wrapped as an external render target (xr_swapchain.c). */
+typedef struct AeronXrSwapchain {
+	AeronXrImageTracker       tracker;
+	SDL_GPUTexture**          textures;
+	struct AeronRenderTarget* targets;
+	uint32_t                  image_count;
+	int                       width, height;
+} AeronXrSwapchain;
+
+/* The OpenXR state of the GPU device, shared by the files in src/xr. */
 typedef struct AeronXrState {
 	/* The loader is loaded and `runtime` is valid. */
 	int                runtime_loaded;
@@ -123,13 +165,27 @@ typedef struct AeronXrState {
 	XrTime frame_display_time;
 	int    frame_should_render;
 
-	/* The size the runtime recommends for one eye image, and the largest
-	 * size it accepts. Both eyes use the same size. */
+	/* The size of one eye image, and the largest size the runtime accepts.
+	 * Both eyes use the same size: the size the runtime recommends, times
+	 * the application's render scale. */
 	int view_width, view_height;
 	int view_max_width, view_max_height;
 	/* The format of the eye images. It is an sRGB format: the tone map writes
 	 * linear values and the format encodes them. */
 	SDL_GPUTextureFormat color_format;
+
+	/* One swapchain for each eye, and one for the virtual screen. */
+	AeronXrSwapchain eyes[2];
+	AeronXrSwapchain screen;
+	/* This frame: Aeron_XrBeginViews located the views and acquired the
+	 * eye images, and Aeron_XrSubmitViews said that they are complete. */
+	int    views_begun;
+	int    views_submitted;
+	XrView located_views[2];
+	/* This frame's virtual screen layer: whether the headset shows it, and
+	 * whether the eye images show through where the screen is empty. */
+	int screen_visible;
+	int screen_transparent;
 } AeronXrState;
 
 extern AeronXrState g_xr;
@@ -138,6 +194,14 @@ extern AeronXrState g_xr;
 void AeronXr_ResultError(char* error, size_t error_size, const char* what, XrResult result);
 /* Stops using the session and asks the application to stop with this error. */
 void AeronXr_Fail(const char* message);
+
+/* Creates the eye swapchains and the virtual screen's swapchain, and
+ * destroys them (xr_swapchain.c). */
+int  AeronXr_CreateSwapchains(SDL_GPUDevice* device, char* error, size_t error_size);
+void AeronXr_DestroySwapchains(SDL_GPUDevice* device);
+/* Releases every image that is still held. xrEndFrame calls it: by then
+ * every command buffer that draws into the images was submitted. */
+void AeronXr_ReleaseImages(void);
 
 #endif /* AERON_XR */
 

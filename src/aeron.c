@@ -96,7 +96,8 @@ int Aeron_Init(const AeronConfig* config) {
 	if (config && config->startup_options) {
 		AeronStartupOptions startup = { .xr_mode = AERON_XR_OFF };
 		config->startup_options(&g_aeron.vfs, config->startup_userdata, &startup);
-		g_aeron.xr_mode = startup.xr_mode;
+		g_aeron.xr_mode    = startup.xr_mode;
+		g_aeron.xr_options = startup;
 	}
 
 	if (!Aeron_WindowInit(config)) {

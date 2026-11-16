@@ -15,6 +15,11 @@
 #define AERON_PATH_SEPARATOR "/"
 #endif
 #define AERON_MAX_DELTA_US 250000
+/* The virtual screen of a VR session when the application sets nothing. */
+#define AERON_XR_SCREEN_DEFAULT_WIDTH 1920
+#define AERON_XR_SCREEN_DEFAULT_HEIGHT 1080
+#define AERON_XR_SCREEN_DEFAULT_DISTANCE_M 2.0f
+#define AERON_XR_SCREEN_DEFAULT_WIDTH_M 2.4f
 #define AERON_MAX_RENDER_LAYERS 64
 #define AERON_MAX_PIXEL_LAYER_UPLOADS 8
 #define AERON_MAX_COMPUTE_WRITE_TEXTURES 64
@@ -60,6 +65,10 @@ struct AeronTexture {
 	uint32_t           usage;
 	AeronSampleCount   sample_count;
 	int                owned;
+	/* The SDL texture belongs to someone else, such as an OpenXR swapchain.
+	 * Aeron draws into it, and never cycles, samples, reads back or releases
+	 * it. */
+	int external;
 	/* The list of textures that are not destroyed yet, which the shutdown
 	 * logs, and the name the texture was created with. */
 	AeronTexture* live_prev;
@@ -282,11 +291,12 @@ typedef struct AeronRuntime {
 	int fatal_error_requested;
 	/* From the application's startup options. */
 	AeronXrMode                 xr_mode;
+	AeronStartupOptions         xr_options;
 	SDL_Window*                 window;
 	SDL_GPUDevice*              gpu_device;
 	SDL_GPUShader*              fullscreen_vertex_shader;
 	SDL_GPUShader*              fullscreen_fragment_shader;
-	AeronFullscreenPipeline     fullscreen_pipelines[8];
+	AeronFullscreenPipeline     fullscreen_pipelines[16];
 	int                         fullscreen_pipeline_count;
 	SDL_GPUSampler*             pixel_frame_sampler;
 	SDL_GPUSampler*             pixel_frame_nearest_sampler;
@@ -303,6 +313,24 @@ typedef struct AeronRuntime {
 	/* A VR session runs and the window can't present without waiting for
 	 * its display, so the window isn't drawn. */
 	int   window_draw_disabled;
+	/* The virtual screen: with VR, the layers are composed into this
+	 * texture instead of the window. The headset shows it as a flat screen
+	 * and the window shows a copy. NULL without VR. */
+	SDL_GPUTexture*      xr_screen_texture;
+	SDL_GPUTextureFormat xr_screen_format;
+	int                  xr_screen_width;
+	int                  xr_screen_height;
+	/* The screen holds a picture, and its empty parts are transparent. */
+	int xr_screen_has_content;
+	int xr_screen_transparent;
+	/* The pointer drawn on the virtual screen in the headset. */
+	SDL_GPUTexture* xr_pointer_texture;
+	/* The eye mirror of this frame (Aeron_XrSubmitMirror). */
+	int                           xr_mirror_submitted;
+	AeronSwapchainRenderLayerDesc xr_mirror;
+	/* The pointer is confined to this rectangle of the window. */
+	int      mouse_confined;
+	SDL_Rect mouse_confine_rect;
 	int   hdr_reapply_pending;
 	float hdr_headroom;
 	float hdr_sdr_white_level;
@@ -429,8 +457,18 @@ int AeronXr_EndFrame(void);
 /* The render backend's part of a session start or stop: the window stops
  * waiting for its display's vsync while OpenXR paces the application. */
 void Aeron_OnXrSessionRunningChanged(int running);
-/* Before SDL_DestroyGPUDevice, with the GPU idle. */
-void AeronXr_DestroySession(void);
+/* Before SDL_DestroyGPUDevice, with the GPU idle. Also destroys the
+ * swapchains. */
+void AeronXr_DestroySession(SDL_GPUDevice* device);
+/* Whether this frame's eye images are complete (Aeron_XrSubmitViews). */
+int AeronXr_ViewsSubmitted(void);
+/* Acquires this frame's image of the virtual screen, which the headset
+ * shows as a flat screen. Returns NULL when the headset shows nothing this
+ * frame. The image is released when the frame ends. */
+SDL_GPUTexture* AeronXr_AcquireScreenImage(SDL_GPUTextureFormat* format, int* width, int* height);
+/* Says whether the headset shows the virtual screen this frame, and
+ * whether the eye images show through its empty parts. */
+void AeronXr_SetScreenLayer(int visible, int transparent);
 /* After SDL_DestroyGPUDevice. Also unloads the OpenXR loader. */
 void AeronXr_DestroyInstance(void);
 int  Aeron_WaitForPresentationSlot(void);

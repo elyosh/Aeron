@@ -30,8 +30,8 @@ int Aeron_XrSessionRunning(void);
 int Aeron_XrFocused(void);
 /* Makes the current head position and yaw the origin of the rig. */
 void Aeron_XrRecenter(void);
-/* The size the runtime recommends for one eye image, in pixels. Returns 0
- * when VR is off. */
+/* The size of one eye image, in pixels: the size the runtime recommends,
+ * times the render scale of the startup options. Returns 0 when VR is off. */
 int Aeron_XrViewSize(int* width, int* height);
 
 typedef struct AeronXrFrame {
@@ -45,7 +45,11 @@ int Aeron_XrBeginViews(AeronXrFrame* out);
 /* The eye images are complete. Without this call Aeron_Present releases
  * them and leaves the projection layer out. */
 void Aeron_XrSubmitViews(void);
-/* Draws into the window after the frame's XR work, for the eye mirror. */
+/* Asks Aeron_Present to call `desc->callback` while it draws the window, so
+ * the application can show there what the headset shows. The callback draws
+ * into the whole window, behind the copy of the virtual screen. A required
+ * size of zero accepts any window size; otherwise the callback is skipped
+ * when the window has another size. Returns 0 when no VR session runs. */
 int Aeron_XrSubmitMirror(const AeronSwapchainRenderLayerDesc* desc);
 
 #ifdef __cplusplus

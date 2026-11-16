@@ -454,7 +454,11 @@ void Aeron_UpdatePresentationPixelSize(void) {
 	int      pixel_width  = 0;
 	int      pixel_height = 0;
 
-	if (g_aeron.window && SDL_GetWindowSizeInPixels(g_aeron.window, &pixel_width, &pixel_height)) {
+	if (g_aeron.xr_screen_texture) {
+		/* With VR, the layers are drawn into the virtual screen. */
+		content_rect.w = g_aeron.xr_screen_width;
+		content_rect.h = g_aeron.xr_screen_height;
+	} else if (g_aeron.window && SDL_GetWindowSizeInPixels(g_aeron.window, &pixel_width, &pixel_height)) {
 		Aeron_ComputePresentationRect(pixel_width, pixel_height, &content_rect);
 	}
 	if (content_rect.w != g_aeron.presentation_pixel_width ||

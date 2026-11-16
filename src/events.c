@@ -87,6 +87,29 @@ static void Aeron_UpdateLogicalMouse(AeronInputSnapshot* input, const SDL_Rect* 
 	 * modes; consumers wanting logical-space deltas diff x/y instead. */
 }
 
+/* While a VR session runs, the user can't see the desktop, and a click
+ * outside the picture would give the keyboard to another window. So the
+ * pointer is kept inside the picture while the window has the focus. */
+static void Aeron_UpdateMouseConfinement(const SDL_Rect* content_rect) {
+	const int confine = Aeron_XrSessionRunning() && g_aeron.input.has_focus &&
+						!g_aeron.relative_mouse_enabled && content_rect->w > 0 && content_rect->h > 0;
+
+	if (!confine) {
+		if (g_aeron.mouse_confined) {
+			SDL_SetWindowMouseRect(g_aeron.window, NULL);
+			g_aeron.mouse_confined = 0;
+		}
+		return;
+	}
+	if (g_aeron.mouse_confined && SDL_RectsEqual(&g_aeron.mouse_confine_rect, content_rect)) {
+		return;
+	}
+	if (SDL_SetWindowMouseRect(g_aeron.window, content_rect)) {
+		g_aeron.mouse_confined     = 1;
+		g_aeron.mouse_confine_rect = *content_rect;
+	}
+}
+
 void Aeron_PumpEvents(void) {
 	SDL_Event event;
 
@@ -144,6 +167,7 @@ int32_t Aeron_BeginFrame(void) {
 	has_platform_position   = Aeron_UpdateRawMouseFromPlatform(&g_aeron.input);
 	has_mouse_position      = has_platform_position && Aeron_RawMouseInsideWindow(&g_aeron.input);
 	Aeron_UpdateLogicalMouse(&g_aeron.input, &content_rect, has_mouse_position);
+	Aeron_UpdateMouseConfinement(&content_rect);
 	Aeron_DebugUiFilterInput(&g_aeron.input);
 
 	now_us   = Aeron_NowUs();

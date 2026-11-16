@@ -2,9 +2,8 @@
  * the events that drive the session.
  *
  * SDL creates the instance together with the GPU device, because the runtime
- * takes part in creating the device. Aeron then creates the session on that
- * device. The eye images are not here yet, so the view functions report
- * that there is nothing to render. */
+ * takes part in creating the device. Aeron then creates the session and the
+ * swapchains (xr_swapchain.c) on that device. */
 
 #include "../internal.h"
 #include "xr_internal.h"
@@ -159,6 +158,8 @@ static void xr_log_runtime(void) {
 				  g_xr.color_format == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB ? "RGBA8 sRGB"
 																				 : "BGRA8 sRGB",
 				  g_xr.extension_count ? "yes" : "no");
+	Aeron_LogInfo("aeron.xr", "virtual screen %dx%d, %u images for each swapchain", g_xr.screen.width,
+				  g_xr.screen.height, (unsigned)g_xr.screen.image_count);
 }
 
 int AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size) {
@@ -186,7 +187,8 @@ int AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size)
 		return 0;
 	g_xr.recenter_pending = 1;
 
-	if (!xr_read_view_configuration(error, error_size) || !xr_pick_color_format(device, error, error_size))
+	if (!xr_read_view_configuration(error, error_size) || !xr_pick_color_format(device, error, error_size) ||
+		!AeronXr_CreateSwapchains(device, error, error_size))
 		return 0;
 	xr_log_runtime();
 	return 1;
@@ -198,9 +200,11 @@ void AeronXr_DeviceCreateFailed(void) {
 	g_xr.system_id = XR_NULL_SYSTEM_ID;
 }
 
-void AeronXr_DestroySession(void) {
-	if (g_xr.machine.session && !g_xr.failed) {
+void AeronXr_DestroySession(SDL_GPUDevice* device) {
+	if (g_xr.machine.session && !g_xr.failed)
 		AeronXr_EndFrame();
+	AeronXr_DestroySwapchains(device);
+	if (g_xr.machine.session && !g_xr.failed) {
 		const XrSpace spaces[] = { g_xr.rig_space, g_xr.view_space, g_xr.local_space };
 		for (size_t i = 0; i < SDL_arraysize(spaces); i++) {
 			if (spaces[i])
@@ -249,10 +253,15 @@ void AeronXr_PollEvents(void) {
 	if (g_xr.machine.running != was_running) {
 		Aeron_LogInfo("aeron.xr", "the VR session %s", g_xr.machine.running ? "started" : "stopped");
 		/* A frame that was open when the session stopped is gone with it. */
-		if (!g_xr.machine.running)
-			g_xr.frame_open = 0;
-		else
+		if (!g_xr.machine.running) {
+			g_xr.frame_open      = 0;
+			g_xr.views_begun     = 0;
+			g_xr.views_submitted = 0;
+			g_xr.screen_visible  = 0;
+			AeronXr_ReleaseImages();
+		} else {
 			g_xr.recenter_pending = 1;
+		}
 		Aeron_OnXrSessionRunningChanged(g_xr.machine.running);
 	}
 	if (g_xr.machine.focused != was_focused)
@@ -313,7 +322,29 @@ int AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size)
 
 void AeronXr_DeviceCreateFailed(void) {}
 
-void AeronXr_DestroySession(void) {}
+void AeronXr_DestroySession(SDL_GPUDevice* device) { (void)device; }
+
+int AeronXr_ViewsSubmitted(void) { return 0; }
+
+SDL_GPUTexture* AeronXr_AcquireScreenImage(SDL_GPUTextureFormat* format, int* width, int* height) {
+	(void)format;
+	(void)width;
+	(void)height;
+	return NULL;
+}
+
+void AeronXr_SetScreenLayer(int visible, int transparent) {
+	(void)visible;
+	(void)transparent;
+}
+
+int Aeron_XrBeginViews(AeronXrFrame* out) {
+	if (out)
+		memset(out, 0, sizeof *out);
+	return 0;
+}
+
+void Aeron_XrSubmitViews(void) {}
 
 void AeronXr_DestroyInstance(void) {}
 
@@ -342,16 +373,3 @@ int Aeron_XrViewSize(int* width, int* height) {
 #endif /* AERON_XR */
 
 int Aeron_XrSupported(void) { return AERON_XR != 0; }
-
-int Aeron_XrBeginViews(AeronXrFrame* out) {
-	if (out)
-		memset(out, 0, sizeof *out);
-	return 0;
-}
-
-void Aeron_XrSubmitViews(void) {}
-
-int Aeron_XrSubmitMirror(const AeronSwapchainRenderLayerDesc* desc) {
-	(void)desc;
-	return 0;
-}

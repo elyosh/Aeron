@@ -202,7 +202,96 @@ static void test_recenter(void) {
 		  "recentre: a head that looks straight down keeps its yaw");
 }
 
+/* The fake swapchain: it counts the calls, checks their order as a runtime
+ * does, and returns what the test asks. */
+static int      g_acquire_calls, g_wait_calls, g_release_calls, g_order_errors;
+static int      g_runtime_acquired, g_runtime_waited;
+static XrResult g_acquire_result, g_wait_result, g_release_result;
+
+static XrResult XRAPI_CALL fake_acquire_image(XrSwapchain swapchain, const XrSwapchainImageAcquireInfo* info,
+											  uint32_t* index) {
+	(void)swapchain;
+	(void)info;
+	g_acquire_calls++;
+	if (XR_FAILED(g_acquire_result))
+		return g_acquire_result;
+	g_order_errors += g_runtime_acquired;
+	g_runtime_acquired = 1;
+	*index             = (uint32_t)(g_acquire_calls % 3);
+	return XR_SUCCESS;
+}
+
+static XrResult XRAPI_CALL fake_wait_image(XrSwapchain swapchain, const XrSwapchainImageWaitInfo* info) {
+	(void)swapchain;
+	g_wait_calls++;
+	g_order_errors += !g_runtime_acquired || g_runtime_waited || info->timeout != XR_INFINITE_DURATION;
+	if (g_wait_result != XR_SUCCESS)
+		return g_wait_result;
+	g_runtime_waited = 1;
+	return XR_SUCCESS;
+}
+
+static XrResult XRAPI_CALL fake_release_image(XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* info) {
+	(void)swapchain;
+	(void)info;
+	g_release_calls++;
+	g_order_errors += !g_runtime_acquired || !g_runtime_waited;
+	g_runtime_acquired = g_runtime_waited = 0;
+	return g_release_result;
+}
+
+static void test_swapchain_images(void) {
+	AeronXrImageTracker tracker;
+	AeronXrFunctions    fn;
+	char                error[128];
+	memset(&tracker, 0, sizeof tracker);
+	memset(&fn, 0, sizeof fn);
+	tracker.swapchain          = (XrSwapchain)0x5678;
+	fn.xrAcquireSwapchainImage = fake_acquire_image;
+	fn.xrWaitSwapchainImage    = fake_wait_image;
+	fn.xrReleaseSwapchainImage = fake_release_image;
+	g_acquire_result = g_wait_result = g_release_result = XR_SUCCESS;
+
+	check(AeronXrImage_Release(&tracker, &fn, error, sizeof error) && g_release_calls == 0,
+		  "images: a release with no image held calls nothing");
+	check(AeronXrImage_Acquire(&tracker, &fn, error, sizeof error) && tracker.held && tracker.index == 1 &&
+			  g_acquire_calls == 1 && g_wait_calls == 1 && !tracker.released_once,
+		  "images: acquire also waits, and gives the runtime's index");
+	check(!AeronXrImage_Acquire(&tracker, &fn, error, sizeof error) && g_acquire_calls == 1 && tracker.held,
+		  "images: a second acquire fails and calls nothing");
+	check(AeronXrImage_Release(&tracker, &fn, error, sizeof error) && !tracker.held && g_release_calls == 1 &&
+			  tracker.released_once,
+		  "images: release gives the image back");
+	check(AeronXrImage_Release(&tracker, &fn, error, sizeof error) && g_release_calls == 1,
+		  "images: an image is released once");
+	check(AeronXrImage_Acquire(&tracker, &fn, error, sizeof error) && tracker.index == 2 &&
+			  AeronXrImage_Release(&tracker, &fn, error, sizeof error) && g_release_calls == 2,
+		  "images: the next frame gets the next image");
+
+	g_acquire_result = XR_ERROR_RUNTIME_FAILURE;
+	check(!AeronXrImage_Acquire(&tracker, &fn, error, sizeof error) && !tracker.held && g_wait_calls == 2,
+		  "images: a failed acquire holds nothing and doesn't wait");
+	check(AeronXrImage_Release(&tracker, &fn, error, sizeof error) && g_release_calls == 2,
+		  "images: nothing is released after a failed acquire");
+	g_acquire_result = XR_SUCCESS;
+
+	g_wait_result = XR_TIMEOUT_EXPIRED;
+	check(!AeronXrImage_Acquire(&tracker, &fn, error, sizeof error) && !tracker.held,
+		  "images: a wait that doesn't succeed fails the acquire");
+	check(AeronXrImage_Release(&tracker, &fn, error, sizeof error) && g_release_calls == 2,
+		  "images: an image that was not waited for is not released");
+	g_wait_result      = XR_SUCCESS;
+	g_runtime_acquired = 0;
+
+	g_release_result = XR_ERROR_RUNTIME_FAILURE;
+	check(AeronXrImage_Acquire(&tracker, &fn, error, sizeof error) &&
+			  !AeronXrImage_Release(&tracker, &fn, error, sizeof error) && !tracker.held,
+		  "images: a failed release is reported, and the image is not held any more");
+	check(g_order_errors == 0, "images: the runtime saw every call in a valid order");
+}
+
 int main(void) {
+	test_swapchain_images();
 	test_session_life();
 	test_session_failures();
 	test_recenter();
