@@ -1,6 +1,8 @@
+diff --git a/src/gpu/d3d12/SDL_gpu_d3d12.c b/src/gpu/d3d12/SDL_gpu_d3d12.c
+index 82a64ca..27bde0f 100644
 --- a/src/gpu/d3d12/SDL_gpu_d3d12.c
 +++ b/src/gpu/d3d12/SDL_gpu_d3d12.c
-@@ -1037,6 +1037,7 @@ struct D3D12CommandBuffer
+@@ -1063,6 +1063,7 @@ struct D3D12CommandBuffer
      bool needFragmentStorageBufferBind;
      bool needFragmentUniformBufferBind[MAX_UNIFORM_BUFFERS_PER_STAGE];
  
@@ -8,7 +10,7 @@
      bool needComputeSamplerBind;
      bool needComputeReadOnlyStorageTextureBind;
      bool needComputeReadOnlyStorageBufferBind;
-@@ -5052,14 +5053,14 @@ static void D3D12_INTERNAL_WriteGPUDescriptors(
+@@ -4999,14 +5000,14 @@ static void D3D12_INTERNAL_WriteGPUDescriptors(
      D3D12DescriptorHeap *heap;
      D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
  
@@ -29,7 +31,7 @@
      gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr + (heap->currentDescriptorIndex * heap->descriptorSize);
      gpuBaseDescriptor->ptr = heap->descriptorHeapGPUStart.ptr + (heap->currentDescriptorIndex * heap->descriptorSize);
  
-@@ -5080,16 +5081,72 @@ static void D3D12_INTERNAL_WriteGPUDescriptors(
+@@ -5027,16 +5028,72 @@ static void D3D12_INTERNAL_WriteGPUDescriptors(
      }
  }
  
@@ -102,7 +104,7 @@
      D3D12_CPU_DESCRIPTOR_HANDLE cpuHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
      D3D12_GPU_DESCRIPTOR_HANDLE gpuDescriptorHandle;
      D3D12_VERTEX_BUFFER_VIEW vertexBufferViews[MAX_VERTEX_BUFFERS];
-@@ -5522,15 +5579,7 @@ static void D3D12_BindComputePipeline(
+@@ -5469,15 +5526,7 @@ static void D3D12_BindComputePipeline(
      SDL_GPUComputePipeline *computePipeline)
  {
      D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
@@ -118,7 +120,7 @@
  
      ID3D12GraphicsCommandList_SetPipelineState(
          d3d12CommandBuffer->graphicsCommandList,
-@@ -5542,6 +5591,9 @@ static void D3D12_BindComputePipeline(
+@@ -5489,6 +5538,9 @@ static void D3D12_BindComputePipeline(
  
      d3d12CommandBuffer->currentComputePipeline = pipeline;
  
@@ -128,7 +130,7 @@
      d3d12CommandBuffer->needComputeSamplerBind = true;
      d3d12CommandBuffer->needComputeReadOnlyStorageTextureBind = true;
      d3d12CommandBuffer->needComputeReadOnlyStorageBufferBind = true;
-@@ -5558,43 +5610,6 @@ static void D3D12_BindComputePipeline(
+@@ -5505,43 +5557,6 @@ static void D3D12_BindComputePipeline(
      }
  
      D3D12_INTERNAL_TrackComputePipeline(d3d12CommandBuffer, pipeline);
@@ -172,7 +174,7 @@
  }
  
  static void D3D12_BindComputeSamplers(
-@@ -5724,15 +5739,84 @@ static void D3D12_INTERNAL_BindComputeResources(
+@@ -5671,15 +5686,84 @@ static void D3D12_INTERNAL_BindComputeResources(
      D3D12CommandBuffer *commandBuffer)
  {
      D3D12ComputePipeline *computePipeline = commandBuffer->currentComputePipeline;

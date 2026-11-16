@@ -1,15 +1,12 @@
+diff --git a/src/gpu/d3d12/SDL_gpu_d3d12.c b/src/gpu/d3d12/SDL_gpu_d3d12.c
+index 7c6f1cb..82a64ca 100644
 --- a/src/gpu/d3d12/SDL_gpu_d3d12.c
 +++ b/src/gpu/d3d12/SDL_gpu_d3d12.c
-@@ -6575,15 +6575,37 @@
+@@ -6610,15 +6610,37 @@ static bool D3D12_SupportsSwapchainComposition(
          SET_STRING_ERROR_AND_RETURN("Must claim window before querying swapchain composition support!", false);
      }
  
 -    // Check the color space support if necessary
--    if (swapchainComposition != SDL_GPU_SWAPCHAINCOMPOSITION_SDR) {
--        IDXGISwapChain3_CheckColorSpaceSupport(
--            windowData->swapchain,
--            SwapchainCompositionToColorSpace[swapchainComposition],
--            &colorSpaceSupport);
 +    /* Check the color space support if necessary.
 +     *
 +     * IDXGISwapChain3::CheckColorSpaceSupport only reports a color space as
@@ -22,7 +19,11 @@
 +     * display in that case; the color space is verified against the real
 +     * swapchain in D3D12_INTERNAL_CreateSwapchain.
 +     */
-+    if (swapchainComposition != SDL_GPU_SWAPCHAINCOMPOSITION_SDR) {
+     if (swapchainComposition != SDL_GPU_SWAPCHAINCOMPOSITION_SDR) {
+-        IDXGISwapChain3_CheckColorSpaceSupport(
+-            windowData->swapchain,
+-            SwapchainCompositionToColorSpace[swapchainComposition],
+-            &colorSpaceSupport);
 +        DXGI_COLOR_SPACE_TYPE colorSpace = SwapchainCompositionToColorSpace[swapchainComposition];
  
 -        if (!(colorSpaceSupport & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT)) {
@@ -46,7 +47,7 @@
          }
      }
  #endif
-@@ -6919,6 +6941,7 @@
+@@ -6956,6 +6978,7 @@ static bool D3D12_INTERNAL_CreateSwapchain(
      IDXGIFactory1 *pParent;
      IDXGISwapChain1 *swapchain;
      IDXGISwapChain3 *swapchain3;
@@ -54,7 +55,7 @@
      HRESULT res;
  
      // Get the DXGI handle
-@@ -6983,10 +7006,33 @@
+@@ -7024,10 +7047,33 @@ static bool D3D12_INTERNAL_CreateSwapchain(
      CHECK_D3D12_ERROR_AND_RETURN("Could not create IDXGISwapChain3", false);
  
      if (swapchainComposition != SDL_GPU_SWAPCHAINCOMPOSITION_SDR) {
@@ -67,8 +68,7 @@
 +         * space can be presented.
 +         */
 +        res = IDXGISwapChain3_CheckColorSpaceSupport(
-             swapchain3,
--            SwapchainCompositionToColorSpace[swapchainComposition]);
++            swapchain3,
 +            colorSpace,
 +            &colorSpaceSupport);
 +        if (FAILED(res)) {
@@ -82,7 +82,8 @@
 +        }
 +
 +        res = IDXGISwapChain3_SetColorSpace1(
-+            swapchain3,
+             swapchain3,
+-            SwapchainCompositionToColorSpace[swapchainComposition]);
 +            colorSpace);
 +        if (FAILED(res)) {
 +            IDXGISwapChain3_Release(swapchain3);
@@ -91,7 +92,7 @@
      }
  
      /*
-@@ -7173,6 +7219,10 @@
+@@ -7227,6 +7273,10 @@ static bool D3D12_SetSwapchainParameters(
      if (
          swapchainComposition != windowData->swapchainComposition ||
          presentMode != windowData->present_mode) {
@@ -102,7 +103,7 @@
          D3D12_Wait(driverData);
  
          // Recreate the swapchain
-@@ -7180,11 +7230,28 @@
+@@ -7234,11 +7284,28 @@ static bool D3D12_SetSwapchainParameters(
              renderer,
              windowData);
  

@@ -19,6 +19,78 @@ option(AERON_ENABLE_DPLAY "Build DirectPlay support in aeron_compat" OFF)
 
 find_package(SDL3 3.4.16 REQUIRED CONFIG COMPONENTS SDL3-shared)
 
+# Every build uses the SDL that packaging/dependencies/sdl/version pins: a
+# commit of SDL's main branch or a release. packaging/dependencies/build-sdl.sh
+# builds it. The script writes the full commit into SDL_revision.h, which is
+# what this check reads.
+option(AERON_ALLOW_OTHER_SDL "Only warn when SDL is not the version that aeron pins" OFF)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/dependencies/sdl/version"
+    AERON_SDL_PINNED_VERSION LIMIT_COUNT 1)
+string(STRIP "${AERON_SDL_PINNED_VERSION}" AERON_SDL_PINNED_VERSION)
+get_target_property(AERON_SDL_INCLUDE_DIRS SDL3::Headers INTERFACE_INCLUDE_DIRECTORIES)
+set(AERON_SDL_REVISION "")
+foreach(dir IN LISTS AERON_SDL_INCLUDE_DIRS)
+    if(EXISTS "${dir}/SDL3/SDL_revision.h")
+        file(STRINGS "${dir}/SDL3/SDL_revision.h" aeron_sdl_revision_lines
+            REGEX "^#define SDL_REVISION \"[^\"]*\"$")
+        if(aeron_sdl_revision_lines)
+            list(GET aeron_sdl_revision_lines 0 aeron_sdl_revision_line)
+            string(REGEX REPLACE "^#define SDL_REVISION \"([^\"]*)\"$" "\\1"
+                AERON_SDL_REVISION "${aeron_sdl_revision_line}")
+        endif()
+        break()
+    endif()
+endforeach()
+if(AERON_SDL_PINNED_VERSION MATCHES "^[0-9a-f]+$")
+    string(FIND "${AERON_SDL_REVISION}" "${AERON_SDL_PINNED_VERSION}" aeron_sdl_pin_position)
+    if(aeron_sdl_pin_position EQUAL -1)
+        set(AERON_SDL_IS_PINNED OFF)
+    else()
+        set(AERON_SDL_IS_PINNED ON)
+    endif()
+elseif(SDL3_VERSION VERSION_EQUAL AERON_SDL_PINNED_VERSION)
+    set(AERON_SDL_IS_PINNED ON)
+else()
+    set(AERON_SDL_IS_PINNED OFF)
+endif()
+if(NOT AERON_SDL_IS_PINNED)
+    set(aeron_sdl_message
+        "SDL in ${SDL3_DIR} is ${SDL3_VERSION} (${AERON_SDL_REVISION}), but aeron is pinned to "
+        "${AERON_SDL_PINNED_VERSION}.")
+    if(AERON_ALLOW_OTHER_SDL)
+        message(WARNING ${aeron_sdl_message})
+    else()
+        message(FATAL_ERROR ${aeron_sdl_message}
+            " Build the pinned SDL with "
+            "${CMAKE_CURRENT_SOURCE_DIR}/packaging/dependencies/build-sdl.sh <prefix> and add "
+            "the prefix to CMAKE_PREFIX_PATH, or set AERON_ALLOW_OTHER_SDL=ON to use this SDL "
+            "anyway.")
+    endif()
+endif()
+
+# VR through OpenXR. SDL has OpenXR support on Vulkan and D3D12 only, so
+# there is none on macOS.
+if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(aeron_xr_default ON)
+else()
+    set(aeron_xr_default OFF)
+endif()
+option(AERON_XR "Build VR support (OpenXR)" ${aeron_xr_default})
+if(AERON_XR)
+    set(aeron_sdl_has_openxr OFF)
+    foreach(dir IN LISTS AERON_SDL_INCLUDE_DIRS)
+        if(EXISTS "${dir}/SDL3/SDL_openxr.h")
+            set(aeron_sdl_has_openxr ON)
+        endif()
+    endforeach()
+    if(NOT aeron_sdl_has_openxr)
+        message(FATAL_ERROR
+            "AERON_XR needs an SDL with OpenXR support (SDL3/SDL_openxr.h), which ${SDL3_DIR} "
+            "does not have. Build the pinned SDL with packaging/dependencies/build-sdl.sh, or "
+            "set AERON_XR=OFF.")
+    endif()
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # glibc only declares POSIX functions such as strdup when asked to, and
     # the targets build without GNU extensions. C then takes them as functions
@@ -463,9 +535,20 @@ set(AERON_SOURCES
     src/vfs.c
     src/vfs_iso9660.c
     src/window.c
+    src/xr/xr_loader.c
+    src/xr/xr_session.c
 )
 
 add_library(aeron ${AERON_SOURCES})
+
+# Only the files in src/xr use the vendored OpenXR headers.
+if(AERON_XR)
+    target_compile_definitions(aeron PRIVATE AERON_XR=1)
+    target_include_directories(aeron PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include)
+else()
+    target_compile_definitions(aeron PRIVATE AERON_XR=0)
+endif()
 
 # The built-in HRTF data set for headphone output, OpenAL Soft's default
 # (third_party/openal-soft-hrtf), embedded as a C array.
@@ -1291,6 +1374,7 @@ endif()
 option(AERON_BUILD_EXAMPLES "Build Aeron example apps" OFF)
 if(AERON_BUILD_EXAMPLES)
     add_subdirectory(examples/ui_demo)
+    add_subdirectory(examples/xr_demo)
 endif()
 
 # Include optional modules, tools and examples even when they are not built.

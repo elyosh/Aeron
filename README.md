@@ -106,9 +106,15 @@ native format required by each backend.
 Aeron is normally included in a game repository as a Git submodule and added
 with CMake's `add_subdirectory()`.
 
-Building requires CMake 3.20 or later, a C99/C++17 toolchain, SDL3 3.4, zstd,
+Building requires CMake 3.20 or later, a C99/C++17 toolchain, SDL3, zstd,
 and SDL_shadercross. FFmpeg and pkg-config are also required when video support
 is enabled.
+
+Aeron needs one exact SDL: the commit pinned in
+`packaging/dependencies/sdl/version`, with Aeron's patches. Build it with
+`packaging/dependencies/build-sdl.sh <install prefix>` and add the prefix to
+`CMAKE_PREFIX_PATH`. CMake stops when it finds another SDL. See
+[packaging/dependencies/README.md](packaging/dependencies/README.md).
 
 `AERON_ENABLE_COMPAT=ON` builds the graphics, input, sound and WinMM shims.
 Games using DirectPlay also set `AERON_ENABLE_DPLAY=ON` before adding Aeron;
