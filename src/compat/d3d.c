@@ -93,6 +93,8 @@ struct D3DDeviceShim {
 	 * populates them; unresolved handles use the white fallback. */
 	AeronTexture** handles;
 	uint32_t       handle_count;
+	/* The textures that hold a handle of this device. */
+	struct D3DTextureShim* textures;
 
 	/* Render state + current texture persist across Execute calls, matching the
 	 * IDirect3DDevice: std3D_SetRenderState delta-encodes (emits only the tokens
@@ -247,6 +249,7 @@ typedef struct D3DTextureShim {
 	D3DDeviceShim*              device;  /* device that issued the handle */
 	uint32_t                    handle;  /* slot in device->handles */
 	AeronTexture*               texture; /* GPU texture (created by Load) */
+	struct D3DTextureShim*      next;    /* next texture in device->textures */
 } D3DTextureShim;
 
 static const IDirect3DTextureVtbl g_d3dTextureVtbl;
@@ -264,10 +267,40 @@ static uint32_t AERON_DXAPI D3DTexture_AddRef(IDirect3DTexture* self) {
 	return (uint32_t)++((D3DTextureShim*)self)->refcount;
 }
 
+/* Takes the texture's handle back from its device. The geometry that still
+ * uses the handle is drawn first, then the slot goes back to the white
+ * fallback. */
+static void D3DTexture_DetachDevice(D3DTextureShim* t) {
+	D3DTextureShim** link;
+
+	if (!t->device) {
+		return;
+	}
+	if (t->texture) {
+		(void)D3DCompat_FlushSceneSegment(t->device);
+	}
+	if (t->handle > 0 && t->handle < t->device->handle_count) {
+		t->device->handles[t->handle] = NULL;
+	}
+	for (link = &t->device->textures; *link; link = &(*link)->next) {
+		if (*link == t) {
+			*link = t->next;
+			break;
+		}
+	}
+	t->device = NULL;
+	t->handle = 0;
+	t->next   = NULL;
+}
+
 static uint32_t AERON_DXAPI D3DTexture_Release(IDirect3DTexture* self) {
 	D3DTextureShim* t = (D3DTextureShim*)self;
 	if (--t->refcount > 0) {
 		return (uint32_t)t->refcount;
+	}
+	D3DTexture_DetachDevice(t);
+	if (t->texture) {
+		Aeron_DestroyTexture(t->texture);
 	}
 	free(t);
 	return 0;
@@ -298,11 +331,18 @@ static HRESULT AERON_DXAPI D3DTexture_GetHandle(IDirect3DTexture* self, IDirect3
 	if (!handle || !device) {
 		return DX_E_INVALIDARG;
 	}
-	t->device = (D3DDeviceShim*)device;
-	h         = D3DCompat_AllocHandle(t->device);
+	if (t->device == (D3DDeviceShim*)device) {
+		*handle = t->handle;
+		return DX_DD_OK;
+	}
+	D3DTexture_DetachDevice(t);
+	h = D3DCompat_AllocHandle((D3DDeviceShim*)device);
 	if (h == 0) {
 		return DX_E_FAIL;
 	}
+	t->device             = (D3DDeviceShim*)device;
+	t->next               = t->device->textures;
+	t->device->textures   = t;
 	t->handle             = h;
 	t->device->handles[h] = t->texture;
 	*handle               = h;
@@ -1377,6 +1417,16 @@ static uint32_t AERON_DXAPI D3DDevice_Release(IDirect3DDevice* self) {
 		d->target->device = NULL;
 	}
 	D3DCompat_DestroySceneSegment(d->segment);
+	/* Textures that outlive the device keep their GPU texture until they
+	 * are released, but no longer point to the device. */
+	while (d->textures) {
+		D3DTextureShim* t = d->textures;
+
+		d->textures = t->next;
+		t->device   = NULL;
+		t->handle   = 0;
+		t->next     = NULL;
+	}
 	free(d->handles);
 	free(d);
 	return 0;

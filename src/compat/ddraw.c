@@ -716,6 +716,13 @@ static uint32_t AERON_DXAPI DDSurface_Release(IDirectDrawSurface* self) {
 		g_ddSuppressedPresentPending = 0;
 	}
 	if (s->attached) {
+		/* DirectDraw destroys the back buffer of a flip chain with its primary,
+		 * whatever references GetAttachedSurface gave out. XWA relies on it:
+		 * FrontendDisplay_ReleaseSurfaces doesn't release the back buffer in
+		 * fullscreen mode. */
+		if (s->kind == DDSHIM_PRIMARY) {
+			s->attached->refcount = 1;
+		}
 		(void)s->attached->lpVtbl->Release((IDirectDrawSurface*)s->attached);
 	}
 	if (s->zbuffer) {
