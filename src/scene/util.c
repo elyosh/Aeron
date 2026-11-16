@@ -53,42 +53,64 @@ void AeronSceneInternal_QuatToMat3(const float q[4], float m[9]) {
 	m[8] = 1.0f - 2.0f * (xx + yy);
 }
 
+/* The placeholder textures that every scene shares. They are created on
+ * first use and destroyed when the render backend shuts down. */
+static AeronTexture* s_whiteTexture;
+static AeronTexture* s_whiteArrayTexture;
+static AeronTexture* s_whiteCubeTexture;
+static AeronTexture* s_brdfLutTexture;
+
+static void AeronSceneInternal_ReleaseSharedTextures(void) {
+	Aeron_DestroyTexture(s_whiteTexture);
+	Aeron_DestroyTexture(s_whiteArrayTexture);
+	Aeron_DestroyTexture(s_whiteCubeTexture);
+	Aeron_DestroyTexture(s_brdfLutTexture);
+	s_whiteTexture      = NULL;
+	s_whiteArrayTexture = NULL;
+	s_whiteCubeTexture  = NULL;
+	s_brdfLutTexture    = NULL;
+}
+
 /* Process-shared 1x1 white texture (AO placeholder etc.). */
 AeronTexture* AeronSceneInternal_WhiteTexture(void) {
-	static AeronTexture* tex;
-	if (tex) {
-		return tex;
+	if (s_whiteTexture) {
+		return s_whiteTexture;
 	}
-	tex = Aeron_CreateTexture(&(AeronTextureDesc) {
+	Aeron_AddRenderShutdownHook(AeronSceneInternal_ReleaseSharedTextures);
+	s_whiteTexture = Aeron_CreateTexture(&(AeronTextureDesc) {
 		.width      = 1,
 		.height     = 1,
 		.format     = AERON_TEXTURE_FORMAT_RGBA8_UNORM,
 		.usage      = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
 		.debug_name = "scene.white_1x1",
 	});
-	if (!tex) {
+	if (!s_whiteTexture) {
 		Aeron_RequestFatalRendererError("shared scene texture creation");
 		return NULL;
 	}
 	static const uint8_t white[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
 	if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) {
-			.texture = tex, .width = 1, .height = 1, .raw_data = white, .raw_size = sizeof white })) {
-		Aeron_DestroyTexture(tex);
-		tex = NULL;
+			.texture  = s_whiteTexture,
+			.width    = 1,
+			.height   = 1,
+			.raw_data = white,
+			.raw_size = sizeof white })) {
+		Aeron_DestroyTexture(s_whiteTexture);
+		s_whiteTexture = NULL;
 		Aeron_RequestFatalRendererError("shared scene texture upload");
 	}
-	return tex;
+	return s_whiteTexture;
 }
 
 /* Process-shared 1-layer array placeholder for the model atlas slots, which
  * the shaders declare as Texture2DArray: binding a 2D texture there is
  * undefined on Vulkan and Metal. */
 AeronTexture* AeronSceneInternal_WhiteArrayTexture(void) {
-	static AeronTexture* tex;
-	if (tex) {
-		return tex;
+	if (s_whiteArrayTexture) {
+		return s_whiteArrayTexture;
 	}
-	tex = Aeron_CreateTexture(&(AeronTextureDesc) {
+	Aeron_AddRenderShutdownHook(AeronSceneInternal_ReleaseSharedTextures);
+	s_whiteArrayTexture = Aeron_CreateTexture(&(AeronTextureDesc) {
 		.width       = 1,
 		.height      = 1,
 		.format      = AERON_TEXTURE_FORMAT_RGBA8_UNORM,
@@ -96,27 +118,27 @@ AeronTexture* AeronSceneInternal_WhiteArrayTexture(void) {
 		.layer_count = 1,
 		.debug_name  = "scene.white_array_1x1",
 	});
-	if (!tex) {
+	if (!s_whiteArrayTexture) {
 		Aeron_RequestFatalRendererError("shared scene texture creation");
 		return NULL;
 	}
 	static const uint8_t white[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
 	if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) {
-			.texture = tex, .width = 1, .height = 1, .raw_data = white, .raw_size = sizeof white })) {
-		Aeron_DestroyTexture(tex);
-		tex = NULL;
+			.texture = s_whiteArrayTexture, .width = 1, .height = 1, .raw_data = white, .raw_size = sizeof white })) {
+		Aeron_DestroyTexture(s_whiteArrayTexture);
+		s_whiteArrayTexture = NULL;
 		Aeron_RequestFatalRendererError("shared scene texture upload");
 	}
-	return tex;
+	return s_whiteArrayTexture;
 }
 
 /* Process-shared cube placeholder for optional PBR environment bindings. */
 AeronTexture* AeronSceneInternal_WhiteCubeTexture(void) {
-	static AeronTexture* tex;
-	if (tex) {
-		return tex;
+	if (s_whiteCubeTexture) {
+		return s_whiteCubeTexture;
 	}
-	tex = Aeron_CreateTexture(&(AeronTextureDesc) {
+	Aeron_AddRenderShutdownHook(AeronSceneInternal_ReleaseSharedTextures);
+	s_whiteCubeTexture = Aeron_CreateTexture(&(AeronTextureDesc) {
 		.width      = 1,
 		.height     = 1,
 		.format     = AERON_TEXTURE_FORMAT_RGBA8_UNORM,
@@ -124,25 +146,25 @@ AeronTexture* AeronSceneInternal_WhiteCubeTexture(void) {
 		.cube       = 1,
 		.debug_name = "scene.white_cube_1x1",
 	});
-	if (!tex) {
+	if (!s_whiteCubeTexture) {
 		Aeron_RequestFatalRendererError("shared scene cube texture creation");
 		return NULL;
 	}
 	static const uint8_t white[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
 	for (int face = 0; face < 6; face++) {
-		if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) { .texture  = tex,
+		if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) { .texture  = s_whiteCubeTexture,
 																 .width    = 1,
 																 .height   = 1,
 																 .raw_data = white,
 																 .raw_size = sizeof white,
 																 .layer    = face })) {
-			Aeron_DestroyTexture(tex);
-			tex = NULL;
+			Aeron_DestroyTexture(s_whiteCubeTexture);
+			s_whiteCubeTexture = NULL;
 			Aeron_RequestFatalRendererError("shared scene cube texture upload");
 			break;
 		}
 	}
-	return tex;
+	return s_whiteCubeTexture;
 }
 
 /* ---- split-sum BRDF table ---------------------------------------------- */
@@ -151,31 +173,31 @@ AeronTexture* AeronSceneInternal_WhiteCubeTexture(void) {
 #include "brdf_lut.inc"
 
 AeronTexture* AeronSceneInternal_BrdfLutTexture(void) {
-	static AeronTexture* tex;
-	if (tex) {
-		return tex;
+	if (s_brdfLutTexture) {
+		return s_brdfLutTexture;
 	}
-	tex = Aeron_CreateTexture(&(AeronTextureDesc) {
+	Aeron_AddRenderShutdownHook(AeronSceneInternal_ReleaseSharedTextures);
+	s_brdfLutTexture = Aeron_CreateTexture(&(AeronTextureDesc) {
 		.width      = AERON_BRDF_LUT_SIZE,
 		.height     = AERON_BRDF_LUT_SIZE,
 		.format     = AERON_TEXTURE_FORMAT_R16G16_FLOAT,
 		.usage      = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
 		.debug_name = "scene.brdf_lut",
 	});
-	if (!tex) {
+	if (!s_brdfLutTexture) {
 		Aeron_RequestFatalRendererError("BRDF table creation");
 		return NULL;
 	}
-	if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) { .texture  = tex,
+	if (!Aeron_UploadTextureData(&(AeronTextureUploadDesc) { .texture  = s_brdfLutTexture,
 															 .width    = AERON_BRDF_LUT_SIZE,
 															 .height   = AERON_BRDF_LUT_SIZE,
 															 .raw_data = aeron_brdf_lut,
 															 .raw_size = sizeof aeron_brdf_lut })) {
-		Aeron_DestroyTexture(tex);
-		tex = NULL;
+		Aeron_DestroyTexture(s_brdfLutTexture);
+		s_brdfLutTexture = NULL;
 		Aeron_RequestFatalRendererError("BRDF table upload");
 	}
-	return tex;
+	return s_brdfLutTexture;
 }
 
 static const float instance_box_identity_row[3][4] = {

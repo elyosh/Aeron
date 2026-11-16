@@ -187,6 +187,8 @@ static AeronTextureFormat Aeron_FromSdlTextureFormat(SDL_GPUTextureFormat format
 static void               Aeron_ReleaseUploadChunkPool(void);
 static void               Aeron_ReleaseSharedFence(AeronSharedFence* fence);
 static void               Aeron_ReleaseRetiredFences(int wait);
+static void               Aeron_TrackLiveTexture(AeronTexture* texture, const char* debug_name);
+static void               Aeron_UntrackLiveTexture(AeronTexture* texture);
 static int Aeron_SubmitSdlCommandBuffer(AeronCommandBuffer* command_buffer, int ok, SDL_GPUFence** fence);
 
 /* Applies the best available swapchain composition for the requested output
@@ -1507,26 +1509,32 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptions(SDL_GPUShaderFormat   sha
 	return device;
 }
 
+/* Creates the device with 16-bit float and integer shader types on Vulkan,
+ * which the FP16 FSR shaders need, and without them when the driver has
+ * none. SDL only reads the Vulkan 1.0 feature struct and the
+ * VkPhysicalDeviceVulkan1xFeatures structs, and only from Vulkan 1.2: it
+ * skips the older per-extension feature structs without an error. */
 static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat shader_formats, int xr) {
+	g_aeron.vulkan_shader_fp16 = 0;
 #if defined(AERON_HAS_VULKAN_FP16_DEVICE_OPTIONS)
-	VkPhysicalDeviceShaderFloat16Int8Features float16_features;
-	SDL_GPUVulkanOptions                      vulkan_options;
-	const char*                               device_extensions[] = {
-		VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME,
-	};
-	SDL_GPUDevice* device;
+	VkPhysicalDeviceFeatures         features;
+	VkPhysicalDeviceVulkan12Features features12;
+	SDL_GPUVulkanOptions             vulkan_options;
+	SDL_GPUDevice*                   device;
 
-	memset(&float16_features, 0, sizeof(float16_features));
-	float16_features.sType         = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
-	float16_features.shaderFloat16 = VK_TRUE;
+	memset(&features, 0, sizeof(features));
+	features.shaderInt16 = VK_TRUE;
+	memset(&features12, 0, sizeof(features12));
+	features12.sType         = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+	features12.shaderFloat16 = VK_TRUE;
 	memset(&vulkan_options, 0, sizeof(vulkan_options));
-	vulkan_options.vulkan_api_version     = VK_API_VERSION_1_1;
-	vulkan_options.feature_list           = &float16_features;
-	vulkan_options.device_extension_count = SDL_arraysize(device_extensions);
-	vulkan_options.device_extension_names = device_extensions;
+	vulkan_options.vulkan_api_version                 = VK_API_VERSION_1_2;
+	vulkan_options.feature_list                       = &features12;
+	vulkan_options.vulkan_10_physical_device_features = &features;
 
 	device = Aeron_CreateGPUDeviceWithOptions(shader_formats, &vulkan_options, xr);
 	if (device) {
+		g_aeron.vulkan_shader_fp16 = 1;
 		return device;
 	}
 	/* With `xr`, the usual reason is that there is no headset, and the
@@ -1599,6 +1607,15 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceForXrMode(SDL_GPUShaderFormat shader_
 		Aeron_LogError("aeron", "SDL_CreateGPUDevice failed: %s", SDL_GetError());
 	}
 	return device;
+}
+
+int Aeron_ShaderFp16Supported(void) {
+	const char* driver = g_aeron.gpu_device ? SDL_GetGPUDeviceDriver(g_aeron.gpu_device) : NULL;
+
+	if (!driver) {
+		return 0;
+	}
+	return SDL_strcmp(driver, "vulkan") != 0 || g_aeron.vulkan_shader_fp16;
 }
 
 /* Logs the GPU and its driver. Vulkan also names the driver and gives
@@ -1711,8 +1728,74 @@ int Aeron_RenderBackendInit(void) {
 	return 1;
 }
 
+void Aeron_AddRenderShutdownHook(void (*hook)(void)) {
+	for (int i = 0; i < g_aeron.render_shutdown_hook_count; ++i) {
+		if (g_aeron.render_shutdown_hooks[i] == hook) {
+			return;
+		}
+	}
+	if (g_aeron.render_shutdown_hook_count == AERON_MAX_RENDER_SHUTDOWN_HOOKS) {
+		Aeron_LogError("aeron", "Too many render shutdown hooks");
+		return;
+	}
+	g_aeron.render_shutdown_hooks[g_aeron.render_shutdown_hook_count++] = hook;
+}
+
+/* Adds a new texture to the list of textures that are not destroyed yet. */
+static void Aeron_TrackLiveTexture(AeronTexture* texture, const char* debug_name) {
+	SDL_strlcpy(texture->debug_name, debug_name ? debug_name : "", sizeof texture->debug_name);
+	SDL_LockSpinlock(&g_aeron.live_textures_lock);
+	texture->live_prev = NULL;
+	texture->live_next = g_aeron.live_textures;
+	if (g_aeron.live_textures) {
+		g_aeron.live_textures->live_prev = texture;
+	}
+	g_aeron.live_textures = texture;
+	SDL_UnlockSpinlock(&g_aeron.live_textures_lock);
+}
+
+static void Aeron_UntrackLiveTexture(AeronTexture* texture) {
+	SDL_LockSpinlock(&g_aeron.live_textures_lock);
+	if (texture->live_prev) {
+		texture->live_prev->live_next = texture->live_next;
+	} else if (g_aeron.live_textures == texture) {
+		g_aeron.live_textures = texture->live_next;
+	}
+	if (texture->live_next) {
+		texture->live_next->live_prev = texture->live_prev;
+	}
+	texture->live_prev = NULL;
+	texture->live_next = NULL;
+	SDL_UnlockSpinlock(&g_aeron.live_textures_lock);
+}
+
+/* Logs the textures that the application did not destroy. The GPU device
+ * frees their memory, but Vulkan's validation reports each of them without
+ * a name once SDL has moved or cycled the texture. */
+static void Aeron_LogLiveTextures(void) {
+	int count = 0;
+
+	for (const AeronTexture* texture = g_aeron.live_textures; texture; texture = texture->live_next) {
+		++count;
+	}
+	if (!count) {
+		return;
+	}
+	Aeron_LogWarn("aeron", "%d texture(s) were not destroyed before shutdown:", count);
+	for (const AeronTexture* texture = g_aeron.live_textures; texture; texture = texture->live_next) {
+		Aeron_LogWarn("aeron", "  '%s' %dx%d, %d mip(s), format %d, usage 0x%x",
+					  texture->debug_name[0] ? texture->debug_name : "(no name)", texture->width,
+					  texture->height, texture->mip_count, (int)texture->format, texture->usage);
+	}
+}
+
 void Aeron_RenderBackendShutdown(void) {
 	if (g_aeron.gpu_device) {
+		for (int i = 0; i < g_aeron.render_shutdown_hook_count; ++i) {
+			g_aeron.render_shutdown_hooks[i]();
+		}
+		g_aeron.render_shutdown_hook_count = 0;
+		Aeron_LogLiveTextures();
 		Aeron_ReleaseSharedFence(g_aeron.pacing_fence);
 		g_aeron.pacing_fence = NULL;
 		Aeron_ReleaseRetiredFences(1);
@@ -3381,6 +3464,7 @@ AeronTexture* Aeron_CreateTexture(const AeronTextureDesc* desc) {
 		return NULL;
 	}
 	AeronGpuDebug_NameTexture(g_aeron.gpu_device, texture->texture, desc->debug_name);
+	Aeron_TrackLiveTexture(texture, desc->debug_name);
 
 	texture->width        = desc->width;
 	texture->height       = desc->height;
@@ -3408,6 +3492,7 @@ void Aeron_DestroyTexture(AeronTexture* texture) {
 		}
 	}
 
+	Aeron_UntrackLiveTexture(texture);
 	if (texture->texture) {
 		SDL_ReleaseGPUTexture(g_aeron.gpu_device, texture->texture);
 		texture->texture = NULL;
@@ -4194,6 +4279,7 @@ AeronRenderTarget* Aeron_CreateRenderTarget(const AeronRenderTargetDesc* desc) {
 		return NULL;
 	}
 	AeronGpuDebug_NameTexture(g_aeron.gpu_device, target->color.texture, desc->debug_name);
+	Aeron_TrackLiveTexture(&target->color, desc->debug_name);
 
 	target->color.width        = desc->width;
 	target->color.height       = desc->height;
@@ -4224,6 +4310,7 @@ void Aeron_DestroyRenderTarget(AeronRenderTarget* target) {
 		}
 	}
 
+	Aeron_UntrackLiveTexture(&target->color);
 	if (target->color.texture) {
 		SDL_ReleaseGPUTexture(g_aeron.gpu_device, target->color.texture);
 		target->color.texture = NULL;
@@ -4558,6 +4645,7 @@ AeronDepthTarget* Aeron_CreateDepthTarget(const AeronDepthTargetDesc* desc) {
 		return NULL;
 	}
 	AeronGpuDebug_NameTexture(g_aeron.gpu_device, target->depth.texture, desc->debug_name);
+	Aeron_TrackLiveTexture(&target->depth, desc->debug_name);
 
 	target->depth.width        = desc->width;
 	target->depth.height       = desc->height;
@@ -4598,6 +4686,7 @@ void Aeron_DestroyDepthTarget(AeronDepthTarget* target) {
 		return;
 	}
 
+	Aeron_UntrackLiveTexture(&target->depth);
 	if (target->depth.texture) {
 		SDL_ReleaseGPUTexture(g_aeron.gpu_device, target->depth.texture);
 		target->depth.texture = NULL;

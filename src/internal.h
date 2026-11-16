@@ -47,6 +47,8 @@ struct AeronFile {
 	int           error;
 };
 
+#define AERON_MAX_RENDER_SHUTDOWN_HOOKS 8
+
 struct AeronTexture {
 	SDL_GPUTexture*    texture;
 	int                width;
@@ -58,6 +60,11 @@ struct AeronTexture {
 	uint32_t           usage;
 	AeronSampleCount   sample_count;
 	int                owned;
+	/* The list of textures that are not destroyed yet, which the shutdown
+	 * logs, and the name the texture was created with. */
+	AeronTexture*      live_prev;
+	AeronTexture*      live_next;
+	char               debug_name[48];
 };
 
 struct AeronBuffer {
@@ -353,6 +360,13 @@ typedef struct AeronRuntime {
 	int fence_query_reliable;
 	/* Block-compressed uploads need regions in whole 4x4 blocks. */
 	int upload_whole_blocks;
+	/* The Vulkan device has the shaderFloat16 and shaderInt16 features. */
+	int vulkan_shader_fp16;
+	/* Textures, render targets and depth targets that are not destroyed yet. */
+	AeronTexture*     live_textures;
+	void (*render_shutdown_hooks[AERON_MAX_RENDER_SHUTDOWN_HOOKS])(void);
+	int               render_shutdown_hook_count;
+	SDL_SpinLock      live_textures_lock;
 	/* The fence of the newest command buffer submitted since the last
 	 * present, which the present queries when its swapchain image arrives. */
 	AeronSharedFence* pacing_fence;

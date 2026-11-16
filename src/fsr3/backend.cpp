@@ -1080,6 +1080,11 @@ AeronFsr3Backend* AeronFsr3Backend_Create(uint32_t profileIndex, bool directHist
 	if (profileIndex >= std::size(kFsr3AvailableProfiles)) {
 		return nullptr;
 	}
+	if (kFsr3AvailableProfiles[profileIndex].fp16 && !Aeron_ShaderFp16Supported()) {
+		Aeron_LogInfo("fsr3", "skipping shader profile %s: the GPU device has no 16-bit shader types",
+					  kFsr3AvailableProfiles[profileIndex].profile);
+		return nullptr;
+	}
 	AeronFsr3Backend* backend = new (std::nothrow) AeronFsr3Backend {};
 	if (!backend) {
 		return nullptr;

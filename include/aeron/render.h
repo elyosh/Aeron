@@ -282,6 +282,10 @@ const char* Aeron_RenderLastError(void);
 /* Builds a diagnostic from Aeron_RenderLastError, shows it once, and requests
  * orderly application shutdown with a nonzero result. */
 void Aeron_RequestFatalRendererError(const char* operation);
+/* Calls `hook` once when the render backend shuts down, before the GPU
+ * device is destroyed. A library built on Aeron uses it to destroy the GPU
+ * resources that its objects share. Adding the same hook again does nothing. */
+void Aeron_AddRenderShutdownHook(void (*hook)(void));
 
 /* Generation-tagged identifier for one deferred layer in the current host
  * frame. The value 0 is invalid. Tokens expire at the next Aeron_BeginFrame. */
@@ -862,6 +866,10 @@ int Aeron_TextureFormatSupported(AeronTextureFormat format, uint32_t usage);
 /* As Aeron_TextureFormatSupported, for the texture type `desc` creates
  * (2D, array, cube, cube array or 3D) with its format and usage. */
 int Aeron_TextureDescSupported(const AeronTextureDesc* desc);
+/* Returns nonzero when shaders can use 16-bit float and integer types. On
+ * Vulkan these are optional device features; the other backends always
+ * have them. */
+int Aeron_ShaderFp16Supported(void);
 /* Returns nonzero when an exact render-target sample count is supported for
  * the format. This does not silently downgrade the request. */
 int Aeron_TextureFormatSupportsSampleCount(AeronTextureFormat format, AeronSampleCount sample_count);
