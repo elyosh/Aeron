@@ -21,6 +21,11 @@ struct AeronTemporalUpscaler {
 	AeronTexture*             retainedDilatedMotionVectors;
 	AeronTexture*             currentDilatedMotionVectors;
 	AeronBuffer*              reconstructedDepth;
+	/* A 1x1 zero mask, used when the caller gives no transparency and
+	 * composition mask. Without it FSR uses its default reactive mask for
+	 * both mask inputs, and one pass then binds that texture both with a
+	 * sampler and as a storage texture, which SDL_GPU can't do on Vulkan. */
+	AeronTexture*             defaultTransparency;
 	AeronRenderTarget*        outputTarget;
 	AeronTemporalUpscalerDesc description;
 	char                      lastError[256];
@@ -105,7 +110,29 @@ static bool CreateSharedResources(AeronTemporalUpscaler* upscaler) {
 	buffer.memory_usage = AERON_MEMORY_USAGE_GPU_ONLY;
 	buffer.debug_name   = "FSR3 shared reconstructed depth";
 	upscaler->reconstructedDepth = Aeron_CreateBuffer(&buffer);
-	if (!upscaler->dilatedDepth || !upscaler->scratchDilatedMotionVectors ||
+
+	AeronTextureDesc mask {};
+	mask.width                    = 1;
+	mask.height                   = 1;
+	mask.mip_count                = 1;
+	mask.format                   = AERON_TEXTURE_FORMAT_R8_UNORM;
+	mask.usage                    = AERON_TEXTURE_USAGE_TRANSFER_DST | AERON_TEXTURE_USAGE_COMPUTE_STORAGE_READ;
+	mask.debug_name               = "FSR3 default transparency mask";
+	upscaler->defaultTransparency = Aeron_CreateTexture(&mask);
+	if (upscaler->defaultTransparency) {
+		static const uint8_t   zero = 0;
+		AeronTextureUploadDesc upload {};
+		upload.texture  = upscaler->defaultTransparency;
+		upload.width    = 1;
+		upload.height   = 1;
+		upload.raw_data = &zero;
+		upload.raw_size = sizeof(zero);
+		if (!Aeron_UploadTextureData(&upload)) {
+			Aeron_DestroyTexture(upscaler->defaultTransparency);
+			upscaler->defaultTransparency = nullptr;
+		}
+	}
+	if (!upscaler->dilatedDepth || !upscaler->defaultTransparency || !upscaler->scratchDilatedMotionVectors ||
 		(upscaler->description.retain_motion_vectors && !upscaler->retainedDilatedMotionVectors) ||
 		!upscaler->reconstructedDepth) {
 		return false;
@@ -288,6 +315,7 @@ extern "C" void AeronTemporalUpscaler_Destroy(AeronTemporalUpscaler* upscaler) {
 	Aeron_DestroyTexture(upscaler->scratchDilatedMotionVectors);
 	Aeron_DestroyTexture(upscaler->retainedDilatedMotionVectors);
 	Aeron_DestroyBuffer(upscaler->reconstructedDepth);
+	Aeron_DestroyTexture(upscaler->defaultTransparency);
 	AeronFsr3Backend_Destroy(upscaler->backend);
 	delete upscaler;
 }
@@ -322,8 +350,10 @@ extern "C" int AeronTemporalUpscaler_Dispatch(AeronTemporalUpscaler*           u
 		desc->motion_vectors, L"Aeron FSR motion vectors", FFX_RESOURCE_STATE_COMPUTE_READ);
 	dispatch.exposure = OptionalTexture(desc->exposure, L"Aeron FSR exposure");
 	dispatch.reactive = OptionalTexture(desc->reactive, L"Aeron FSR reactive mask");
-	dispatch.transparencyAndComposition =
-		OptionalTexture(desc->transparency_and_composition, L"Aeron FSR transparency mask");
+	dispatch.transparencyAndComposition = AeronFsr3Backend_TextureResource(
+		desc->transparency_and_composition ? desc->transparency_and_composition
+										   : upscaler->defaultTransparency,
+		L"Aeron FSR transparency mask", FFX_RESOURCE_STATE_COMPUTE_READ);
 	dispatch.dilatedDepth = AeronFsr3Backend_TextureResource(
 		upscaler->dilatedDepth, L"Aeron FSR dilated depth", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
 	dispatch.dilatedMotionVectors =
