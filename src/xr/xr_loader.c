@@ -3,10 +3,6 @@
 
 #include "xr_internal.h"
 
-#include "aeron/log.h"
-
-#if AERON_XR
-
 #include <stdio.h>
 #include <string.h>
 
@@ -32,6 +28,11 @@ int AeronXr_LoadRuntime(AeronXrRuntimeInfo* out, char* error, size_t error_size)
 
 	uint32_t count = 0;
 	result         = enumerate(NULL, 0, &count, NULL);
+	if (result == XR_ERROR_RUNTIME_UNAVAILABLE) {
+		snprintf(error, error_size, "no OpenXR runtime is installed or active");
+		SDL_OpenXR_UnloadLibrary();
+		return 0;
+	}
 	if (XR_FAILED(result)) {
 		snprintf(error, error_size, "no OpenXR runtime answered (XrResult %d)", (int)result);
 		SDL_OpenXR_UnloadLibrary();
@@ -67,24 +68,19 @@ void AeronXr_UnloadRuntime(void) {
 	SDL_OpenXR_UnloadLibrary();
 }
 
-int Aeron_XrProbeRuntime(void) {
-	AeronXrRuntimeInfo info;
-	char               error[256];
-	if (!AeronXr_LoadRuntime(&info, error, sizeof error)) {
-		Aeron_LogInfo("xr", "OpenXR is not available: %s", error);
+int AeronXr_LoadFunctions(XrInstance instance, AeronXrFunctions* out, char* error, size_t error_size) {
+	PFN_xrGetInstanceProcAddr get_proc = (PFN_xrGetInstanceProcAddr)SDL_OpenXR_GetXrGetInstanceProcAddr();
+	memset(out, 0, sizeof *out);
+	if (!get_proc) {
+		snprintf(error, error_size, "the OpenXR loader has no xrGetInstanceProcAddr");
 		return 0;
 	}
-	Aeron_LogInfo("xr", "OpenXR runtime found: %u extensions, visibility mask %s", info.extension_count,
-				  info.has_visibility_mask ? "yes" : "no");
-	AeronXr_UnloadRuntime();
+#define AERON_XR_LOAD_FUNCTION(name)                                                               \
+	if (XR_FAILED(get_proc(instance, #name, (PFN_xrVoidFunction*)&out->name)) || !out->name) { \
+		snprintf(error, error_size, "the OpenXR runtime has no %s", #name);                     \
+		return 0;                                                                               \
+	}
+	AERON_XR_FUNCTIONS(AERON_XR_LOAD_FUNCTION)
+#undef AERON_XR_LOAD_FUNCTION
 	return 1;
 }
-
-#else /* !AERON_XR */
-
-int Aeron_XrProbeRuntime(void) {
-	Aeron_LogInfo("xr", "OpenXR is not available: this build has no VR support");
-	return 0;
-}
-
-#endif

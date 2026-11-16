@@ -90,7 +90,17 @@ int Aeron_Init(const AeronConfig* config) {
 		config = &resolved_config;
 	}
 
+	/* The VFS comes before the window and the GPU device, so the
+	 * application can read its configuration for the startup options. */
+	Aeron_InitVfs(config);
+	if (config && config->startup_options) {
+		AeronStartupOptions startup = { .xr_mode = AERON_XR_OFF };
+		config->startup_options(&g_aeron.vfs, config->startup_userdata, &startup);
+		g_aeron.xr_mode = startup.xr_mode;
+	}
+
 	if (!Aeron_WindowInit(config)) {
+		AeronVfs_DeinitInternal(&g_aeron.vfs);
 		SDL_Quit();
 		return 0;
 	}
@@ -101,6 +111,7 @@ int Aeron_Init(const AeronConfig* config) {
 
 	if (!Aeron_RenderBackendInit()) {
 		Aeron_WindowShutdown();
+		AeronVfs_DeinitInternal(&g_aeron.vfs);
 		SDL_Quit();
 		return 0;
 	}
@@ -115,7 +126,6 @@ int Aeron_Init(const AeronConfig* config) {
 	Aeron_ControllersInit();
 	SDL_PumpEvents();
 	SDL_StartTextInput(g_aeron.window);
-	Aeron_InitVfs(config);
 	Aeron_DebugUiInitInternal();
 	g_aeron.input.has_focus = 1;
 	g_aeron.last_frame_us   = Aeron_NowUs();

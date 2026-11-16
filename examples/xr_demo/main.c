@@ -6,7 +6,13 @@
  * and the cubes are drawn into the eye images. Otherwise the views come
  * from a fixed stereo rig and are drawn side by side in the window.
  *
- * Usage: xr_demo [--frames <count>] [--capture <file.ppm>]
+ * Aeron creates the OpenXR session at startup but doesn't run it yet, so the
+ * cubes are always drawn in the window for now.
+ *
+ * Usage: xr_demo [--vr | --no-vr] [--frames <count>] [--capture <file.ppm>]
+ *   --vr                  Fail when VR can't start. Without it, VR is used
+ *                         when a headset is found.
+ *   --no-vr               Don't use VR.
  *   --frames <count>      Quit after this many frames. For automated runs.
  *   --capture <file.ppm>  Before quitting, save the window image of the last
  *                         frame. It only works without a headset.
@@ -312,16 +318,26 @@ static int demo_capture(Demo* demo, const char* path) {
 	return ok;
 }
 
+static void demo_startup_options(AeronVfs* vfs, void* userdata, AeronStartupOptions* options) {
+	(void)vfs;
+	options->xr_mode = *(const AeronXrMode*)userdata;
+}
+
 int main(int argc, char* argv[]) {
 	long        frame_limit  = 0;
 	const char* capture_path = NULL;
+	AeronXrMode xr_mode      = AERON_XR_AUTO;
 	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
+		if (strcmp(argv[i], "--vr") == 0) {
+			xr_mode = AERON_XR_REQUIRED;
+		} else if (strcmp(argv[i], "--no-vr") == 0) {
+			xr_mode = AERON_XR_OFF;
+		} else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
 			frame_limit = strtol(argv[++i], NULL, 10);
 		} else if (strcmp(argv[i], "--capture") == 0 && i + 1 < argc) {
 			capture_path = argv[++i];
 		} else {
-			fprintf(stderr, "Usage: xr_demo [--frames <count>] [--capture <file.ppm>]\n");
+			fprintf(stderr, "Usage: xr_demo [--vr | --no-vr] [--frames <count>] [--capture <file.ppm>]\n");
 			return 2;
 		}
 	}
@@ -337,14 +353,18 @@ int main(int argc, char* argv[]) {
 	config.logical_width     = DEMO_LOGICAL_W;
 	config.logical_height    = DEMO_LOGICAL_H;
 	config.presentation_mode = AERON_PRESENTATION_ASPECT_FIT;
+	config.startup_options   = demo_startup_options;
+	config.startup_userdata  = &xr_mode;
 	if (!Aeron_Init(&config)) {
 		fprintf(stderr, "xr_demo: Aeron_Init failed\n");
 		return 1;
 	}
 
-	const int runtime_found = Aeron_XrProbeRuntime();
-	Aeron_LogInfo("xr_demo", "OpenXR runtime: %s; session: %s", runtime_found ? "found" : "not found",
-				  Aeron_XrEnabled() ? "yes" : "no, drawing the views in the window");
+	int eye_w = 0, eye_h = 0;
+	if (Aeron_XrViewSize(&eye_w, &eye_h))
+		Aeron_LogInfo("xr_demo", "VR is on, with eye images of %dx%d", eye_w, eye_h);
+	else
+		Aeron_LogInfo("xr_demo", "VR is off, drawing the views in the window");
 
 	Demo demo;
 	memset(&demo, 0, sizeof demo);

@@ -18,6 +18,7 @@
 #include "aeron/temporal.h"
 #include "aeron/time.h"
 #include "aeron/vfs.h"
+#include "aeron/xr.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,6 +29,17 @@ typedef enum AeronPresentationMode {
 	AERON_PRESENTATION_STRETCH    = 0,
 	AERON_PRESENTATION_ASPECT_FIT = 1
 } AeronPresentationMode;
+
+/* Options that Aeron needs before it creates the window and the GPU device.
+ * They can't change while the program runs. */
+typedef struct AeronStartupOptions {
+	/* Whether to start with VR. The default is AERON_XR_OFF. */
+	AeronXrMode xr_mode;
+} AeronStartupOptions;
+
+/* Fills the startup options, for example from the user's configuration file.
+ * `vfs` is ready to use, and `options` holds the defaults. */
+typedef void (*AeronStartupOptionsFn)(AeronVfs* vfs, void* userdata, AeronStartupOptions* options);
 
 /* Startup configuration for the Aeron runtime. */
 typedef struct AeronConfig {
@@ -68,9 +80,13 @@ typedef struct AeronConfig {
 	 * disabled, Aeron's default background is retained. */
 	int   clear_color_enabled;
 	float clear_color_rgba[4];
+	/* Optional. Aeron_Init calls it once, after the VFS is ready and before
+	 * it creates the window and the GPU device. */
+	AeronStartupOptionsFn startup_options;
+	void*                 startup_userdata;
 } AeronConfig;
 
-/* Initializes SDL, the Aeron window, render backend, text input, and VFS.
+/* Initializes SDL, the VFS, the Aeron window, render backend and text input.
  * Also starts the per-session log file under the user root's diagnostics/
  * directory and, on Windows, a crash handler that writes minidumps there. */
 int Aeron_Init(const AeronConfig* config);

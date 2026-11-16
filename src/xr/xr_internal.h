@@ -2,7 +2,8 @@
 #define AERON_XR_INTERNAL_H
 
 /* Shared by the files in src/xr. Only these files include OpenXR headers
- * and call SDL's OpenXR functions. */
+ * and call SDL's OpenXR functions. The rest of aeron uses the AeronXr_*
+ * functions declared in src/internal.h. */
 
 #include "aeron/xr.h"
 
@@ -27,6 +28,29 @@ typedef struct AeronXrRuntimeInfo {
  * the loader or the runtime is missing. */
 int  AeronXr_LoadRuntime(AeronXrRuntimeInfo* out, char* error, size_t error_size);
 void AeronXr_UnloadRuntime(void);
+
+/* The OpenXR functions that aeron calls. SDL creates the instance, so aeron
+ * gets them from the loader with xrGetInstanceProcAddr. */
+#define AERON_XR_FUNCTIONS(X)            \
+	X(xrDestroyInstance)                 \
+	X(xrGetInstanceProperties)           \
+	X(xrGetSystemProperties)             \
+	X(xrResultToString)                  \
+	X(xrDestroySession)                  \
+	X(xrCreateReferenceSpace)            \
+	X(xrDestroySpace)                    \
+	X(xrEnumerateViewConfigurations)     \
+	X(xrEnumerateViewConfigurationViews)
+
+typedef struct AeronXrFunctions {
+#define AERON_XR_FUNCTION_FIELD(name) PFN_##name name;
+	AERON_XR_FUNCTIONS(AERON_XR_FUNCTION_FIELD)
+#undef AERON_XR_FUNCTION_FIELD
+} AeronXrFunctions;
+
+/* Fills `out` with the functions of `instance`. Returns 0, with the missing
+ * function named in `error`, when the loader doesn't have one of them. */
+int AeronXr_LoadFunctions(XrInstance instance, AeronXrFunctions* out, char* error, size_t error_size);
 
 #endif /* AERON_XR */
 

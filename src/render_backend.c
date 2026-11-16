@@ -1422,9 +1422,10 @@ static int Aeron_DrawTexture(SDL_GPUCommandBuffer* command_buffer, SDL_GPURender
 }
 
 /* Creates a device with the common feature contract used by both the optional
- * Vulkan FP16 attempt and the baseline retry. */
+ * Vulkan FP16 attempt and the baseline retry. With `xr`, SDL creates the
+ * device together with an OpenXR instance. */
 static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptions(SDL_GPUShaderFormat   shader_formats,
-													   SDL_GPUVulkanOptions* vulkan_options) {
+													   SDL_GPUVulkanOptions* vulkan_options, int xr) {
 	SDL_PropertiesID properties = SDL_CreateProperties();
 	SDL_GPUDevice*   device;
 	bool             properties_set;
@@ -1454,6 +1455,9 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptions(SDL_GPUShaderFormat   sha
 		properties_set = SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER,
 												vulkan_options);
 	}
+	if (properties_set && xr) {
+		properties_set = AeronXr_SetDeviceProperties(properties) != 0;
+	}
 	if (!properties_set) {
 		SDL_DestroyProperties(properties);
 		return NULL;
@@ -1464,7 +1468,7 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptions(SDL_GPUShaderFormat   sha
 	return device;
 }
 
-static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat shader_formats) {
+static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat shader_formats, int xr) {
 #if defined(AERON_HAS_VULKAN_FP16_DEVICE_OPTIONS)
 	VkPhysicalDeviceShaderFloat16Int8Features float16_features;
 	SDL_GPUVulkanOptions                      vulkan_options;
@@ -1482,14 +1486,80 @@ static SDL_GPUDevice* Aeron_CreateGPUDeviceWithOptionalFp16(SDL_GPUShaderFormat 
 	vulkan_options.device_extension_count = SDL_arraysize(device_extensions);
 	vulkan_options.device_extension_names = device_extensions;
 
-	device = Aeron_CreateGPUDeviceWithOptions(shader_formats, &vulkan_options);
+	device = Aeron_CreateGPUDeviceWithOptions(shader_formats, &vulkan_options, xr);
 	if (device) {
 		return device;
 	}
-	Aeron_LogWarn("aeron", "GPU creation with optional Vulkan FP16 failed: %s; retrying baseline device",
-				  SDL_GetError());
+	/* With `xr`, the usual reason is that there is no headset, and the
+	 * caller reports it. */
+	if (!xr) {
+		Aeron_LogWarn("aeron", "GPU creation with optional Vulkan FP16 failed: %s; retrying baseline device",
+					  SDL_GetError());
+	}
 #endif
-	return Aeron_CreateGPUDeviceWithOptions(shader_formats, NULL);
+	return Aeron_CreateGPUDeviceWithOptions(shader_formats, NULL, xr);
+}
+
+/* Creates the device with an OpenXR session, for VR. Returns NULL, with the
+ * reason in `reason`, when the OpenXR loader, the runtime or the headset is
+ * missing, or when the session can't be created. */
+static SDL_GPUDevice* Aeron_CreateXrGPUDevice(SDL_GPUShaderFormat shader_formats, char* reason,
+											  size_t reason_size) {
+	SDL_GPUDevice* device;
+
+	if (!AeronXr_PrepareDevice(reason, reason_size)) {
+		return NULL;
+	}
+	device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats, 1);
+	if (!device) {
+		SDL_snprintf(reason, reason_size, "no headset is ready (%s)", SDL_GetError());
+		AeronXr_DeviceCreateFailed();
+		AeronXr_DestroyInstance();
+		return NULL;
+	}
+	if (!AeronXr_DeviceCreated(device, reason, reason_size)) {
+		AeronXr_DestroySession();
+		SDL_DestroyGPUDevice(device);
+		AeronXr_DestroyInstance();
+		return NULL;
+	}
+	return device;
+}
+
+/* Destroys the device. With VR, the session goes first and the OpenXR
+ * instance last: the runtime took part in creating the device, and SDL
+ * leaves the instance to its owner. */
+static void Aeron_DestroyGPUDevice(void) {
+	SDL_WaitForGPUIdle(g_aeron.gpu_device);
+	AeronXr_DestroySession();
+	SDL_DestroyGPUDevice(g_aeron.gpu_device);
+	g_aeron.gpu_device = NULL;
+	AeronXr_DestroyInstance();
+}
+
+/* Creates the device for the startup VR mode. In the auto mode, a device
+ * without VR is created when VR can't start. */
+static SDL_GPUDevice* Aeron_CreateGPUDeviceForXrMode(SDL_GPUShaderFormat shader_formats) {
+	if (g_aeron.xr_mode != AERON_XR_OFF) {
+		char           reason[512];
+		SDL_GPUDevice* device = Aeron_CreateXrGPUDevice(shader_formats, reason, sizeof reason);
+		if (device) {
+			return device;
+		}
+		if (g_aeron.xr_mode == AERON_XR_REQUIRED) {
+			char message[640];
+			SDL_snprintf(message, sizeof message, "VR was requested, but it could not start: %s.", reason);
+			Aeron_LogError("aeron.xr", "%s", message);
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, g_aeron.app_name, message, g_aeron.window);
+			return NULL;
+		}
+		Aeron_LogInfo("aeron.xr", "VR is off: %s", reason);
+	}
+	SDL_GPUDevice* device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats, 0);
+	if (!device) {
+		Aeron_LogError("aeron", "SDL_CreateGPUDevice failed: %s", SDL_GetError());
+	}
+	return device;
 }
 
 /* Logs the GPU and its driver. Vulkan also names the driver and gives
@@ -1538,9 +1608,8 @@ int Aeron_RenderBackendInit(void) {
 	g_aeron.hdr_sdr_content_gamma = 2.2f;
 #endif
 
-	g_aeron.gpu_device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats);
+	g_aeron.gpu_device = Aeron_CreateGPUDeviceForXrMode(shader_formats);
 	if (!g_aeron.gpu_device) {
-		Aeron_LogError("aeron", "SDL_CreateGPUDevice failed: %s", SDL_GetError());
 		return 0;
 	}
 
@@ -1550,8 +1619,7 @@ int Aeron_RenderBackendInit(void) {
 	 * reading input earlier. */
 	if (!SDL_SetGPUAllowedFramesInFlight(g_aeron.gpu_device, 2)) {
 		Aeron_LogError("aeron", "SDL_SetGPUAllowedFramesInFlight failed: %s", SDL_GetError());
-		SDL_DestroyGPUDevice(g_aeron.gpu_device);
-		g_aeron.gpu_device = NULL;
+		Aeron_DestroyGPUDevice();
 		return 0;
 	}
 	g_aeron.frames_in_flight = 2;
@@ -1575,8 +1643,7 @@ int Aeron_RenderBackendInit(void) {
 
 	if (!SDL_ClaimWindowForGPUDevice(g_aeron.gpu_device, g_aeron.window)) {
 		Aeron_LogError("aeron", "SDL_ClaimWindowForGPUDevice failed: %s", SDL_GetError());
-		SDL_DestroyGPUDevice(g_aeron.gpu_device);
-		g_aeron.gpu_device = NULL;
+		Aeron_DestroyGPUDevice();
 		return 0;
 	}
 
@@ -1586,8 +1653,7 @@ int Aeron_RenderBackendInit(void) {
 
 	if (!Aeron_ConfigureSwapchain(0)) {
 		SDL_ReleaseWindowFromGPUDevice(g_aeron.gpu_device, g_aeron.window);
-		SDL_DestroyGPUDevice(g_aeron.gpu_device);
-		g_aeron.gpu_device = NULL;
+		Aeron_DestroyGPUDevice();
 		return 0;
 	}
 
@@ -1646,8 +1712,7 @@ void Aeron_RenderBackendShutdown(void) {
 			SDL_ReleaseWindowFromGPUDevice(g_aeron.gpu_device, g_aeron.window);
 		}
 
-		SDL_DestroyGPUDevice(g_aeron.gpu_device);
-		g_aeron.gpu_device = NULL;
+		Aeron_DestroyGPUDevice();
 	}
 }
 

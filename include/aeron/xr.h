@@ -20,11 +20,8 @@ typedef enum AeronXrMode {
 	AERON_XR_REQUIRED, /* fail at startup when there is no headset */
 } AeronXrMode;
 
-/* Loads the OpenXR loader, asks it for the runtime's extensions, and unloads
- * it. Returns nonzero when a runtime answered. This is for tools and
- * diagnostics. A game that runs with AERON_XR_OFF must not call it. */
-int Aeron_XrProbeRuntime(void);
-
+/* Nonzero when this build has VR support. It is zero on macOS. */
+int Aeron_XrSupported(void);
 /* Nonzero when the GPU device has an OpenXR session. */
 int Aeron_XrEnabled(void);
 /* Nonzero while the session runs. OpenXR then paces the frame. */
@@ -33,7 +30,8 @@ int Aeron_XrSessionRunning(void);
 int Aeron_XrFocused(void);
 /* Makes the current head position and yaw the origin of the rig. */
 void Aeron_XrRecenter(void);
-/* Size of one eye image in pixels. Returns 0 when VR is off. */
+/* The size the runtime recommends for one eye image, in pixels. Returns 0
+ * when VR is off. */
 int Aeron_XrViewSize(int* width, int* height);
 
 typedef struct AeronXrFrame {

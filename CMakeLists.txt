@@ -535,7 +535,6 @@ set(AERON_SOURCES
     src/vfs.c
     src/vfs_iso9660.c
     src/window.c
-    src/xr/xr_loader.c
     src/xr/xr_session.c
 )
 
@@ -543,6 +542,7 @@ add_library(aeron ${AERON_SOURCES})
 
 # Only the files in src/xr use the vendored OpenXR headers.
 if(AERON_XR)
+    target_sources(aeron PRIVATE src/xr/xr_loader.c)
     target_compile_definitions(aeron PRIVATE AERON_XR=1)
     target_include_directories(aeron PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include)

@@ -273,6 +273,8 @@ typedef struct AeronRuntime {
 	int                         initialized;
 	int                         quit_requested;
 	int                         fatal_error_requested;
+	/* From the application's startup options. */
+	AeronXrMode                 xr_mode;
 	SDL_Window*                 window;
 	SDL_GPUDevice*              gpu_device;
 	SDL_GPUShader*              fullscreen_vertex_shader;
@@ -380,6 +382,25 @@ void Aeron_ComputePresentationRect(int container_width, int container_height, SD
 
 int  Aeron_RenderBackendInit(void);
 void Aeron_RenderBackendShutdown(void);
+
+/* VR through OpenXR (src/xr). The render backend calls these around the GPU
+ * device, in this order. In a build without AERON_XR, AeronXr_PrepareDevice
+ * fails and the others do nothing.
+ *
+ * AeronXr_PrepareDevice finds the OpenXR runtime. It returns 0, with the
+ * reason in `error`, when there is none.
+ * AeronXr_SetDeviceProperties makes SDL create the device for OpenXR.
+ * AeronXr_DeviceCreated creates the session on the new device. It returns 0,
+ * with the reason in `error`, when the device can't be used for VR.
+ * AeronXr_DeviceCreateFailed is called instead when SDL created no device. */
+int  AeronXr_PrepareDevice(char* error, size_t error_size);
+int  AeronXr_SetDeviceProperties(SDL_PropertiesID properties);
+int  AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size);
+void AeronXr_DeviceCreateFailed(void);
+/* Before SDL_DestroyGPUDevice, with the GPU idle. */
+void AeronXr_DestroySession(void);
+/* After SDL_DestroyGPUDevice. Also unloads the OpenXR loader. */
+void AeronXr_DestroyInstance(void);
 int  Aeron_WaitForPresentationSlot(void);
 
 /* Re-reads the window's HDR headroom / SDR white level and queues a
