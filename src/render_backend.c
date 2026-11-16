@@ -204,7 +204,7 @@ static int Aeron_ConfigureSwapchain(int hdr) {
 		}
 		SDL_ClearError();
 		if (!SDL_SetGPUSwapchainParameters(g_aeron.gpu_device, g_aeron.window, composition,
-										   SDL_GPU_PRESENTMODE_VSYNC)) {
+										   g_aeron.present_mode)) {
 			const char* error = SDL_GetError();
 			Aeron_SetRenderError("SDL_SetGPUSwapchainParameters failed for HDR output: %s",
 								 error && error[0] ? error : "<no SDL error provided>");
@@ -218,10 +218,10 @@ static int Aeron_ConfigureSwapchain(int hdr) {
 		}
 
 		if (!SDL_SetGPUSwapchainParameters(g_aeron.gpu_device, g_aeron.window, composition,
-										   SDL_GPU_PRESENTMODE_VSYNC)) {
+										   g_aeron.present_mode)) {
 			if (composition == SDL_GPU_SWAPCHAINCOMPOSITION_SDR ||
 				!SDL_SetGPUSwapchainParameters(g_aeron.gpu_device, g_aeron.window,
-											   SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_VSYNC)) {
+											   SDL_GPU_SWAPCHAINCOMPOSITION_SDR, g_aeron.present_mode)) {
 				const char* error = SDL_GetError();
 				Aeron_SetRenderError("SDL_SetGPUSwapchainParameters failed for SDR output: %s",
 									 error && error[0] ? error : "<no SDL error provided>");
@@ -243,6 +243,45 @@ static int Aeron_ConfigureSwapchain(int hdr) {
 	Aeron_DebugUiOnSwapchainFormatChanged(g_aeron.swapchain_format);
 	Aeron_ResetPacing();
 	return 1;
+}
+
+void Aeron_OnXrSessionRunningChanged(int running) {
+	SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
+
+	if (!g_aeron.gpu_device || !g_aeron.window) {
+		return;
+	}
+	/* While the session runs, the headset paces the frames, and a present
+	 * that waits for the window's display would hold them back. */
+	if (running) {
+		if (SDL_WindowSupportsGPUPresentMode(g_aeron.gpu_device, g_aeron.window,
+											 SDL_GPU_PRESENTMODE_IMMEDIATE)) {
+			mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+		} else if (SDL_WindowSupportsGPUPresentMode(g_aeron.gpu_device, g_aeron.window,
+													SDL_GPU_PRESENTMODE_MAILBOX)) {
+			mode = SDL_GPU_PRESENTMODE_MAILBOX;
+		}
+	}
+	g_aeron.window_draw_disabled = running && mode == SDL_GPU_PRESENTMODE_VSYNC;
+	if (g_aeron.window_draw_disabled) {
+		Aeron_LogWarn("aeron.xr", "the window can only present with vsync, so it is not drawn in VR");
+	}
+	if (mode != g_aeron.present_mode) {
+		const SDL_GPUPresentMode previous = g_aeron.present_mode;
+		g_aeron.present_mode              = mode;
+		if (!Aeron_ConfigureSwapchain(g_aeron.hdr_output_enabled)) {
+			g_aeron.present_mode         = previous;
+			g_aeron.window_draw_disabled = running;
+			Aeron_LogWarn("aeron.xr", "could not change the window's present mode: %s",
+						  Aeron_RenderLastError());
+		} else {
+			Aeron_LogInfo("aeron.xr", "the window presents %s",
+						  mode == SDL_GPU_PRESENTMODE_VSYNC		  ? "with vsync"
+						  : mode == SDL_GPU_PRESENTMODE_IMMEDIATE ? "without waiting (immediate)"
+																  : "without waiting (mailbox)");
+		}
+	}
+	Aeron_ResetPacing();
 }
 
 int Aeron_OutputSupportsHdr(void) {
@@ -1716,7 +1755,29 @@ void Aeron_RenderBackendShutdown(void) {
 	}
 }
 
+static int Aeron_PresentWindow(void);
+
 int Aeron_Present(void) {
+	const uint64_t presented_before = g_aeron.presented_frames;
+	const int      xr_frame         = Aeron_XrSessionRunning();
+	int            ok               = Aeron_PresentWindow();
+
+	/* The headset's frame ends whatever happened to the window's frame. */
+	if (xr_frame) {
+		if (!AeronXr_EndFrame()) {
+			ok = 0;
+		}
+		/* Count the frame when the window didn't. */
+		if (g_aeron.presented_frames == presented_before) {
+			g_aeron.presented_frames++;
+		}
+	}
+	return ok;
+}
+
+/* Composes the submitted layers into the window. */
+static int Aeron_PresentWindow(void) {
+	const int              xr_running = Aeron_XrSessionRunning();
 	SDL_GPUCommandBuffer*  command_buffer;
 	SDL_GPUTexture*        swapchain_texture;
 	SDL_GPURenderPass*     render_pass;
@@ -1739,6 +1800,9 @@ int Aeron_Present(void) {
 	 * in place of a port-side per-tick re-submit. A visible debug overlay still
 	 * forces a present so its windows keep rendering over an idle frame. */
 	if (g_aeron.render_layer_count == 0 && !Aeron_DebugUiVisible()) {
+		return 1;
+	}
+	if (g_aeron.window_draw_disabled) {
 		return 1;
 	}
 
@@ -1786,8 +1850,13 @@ int Aeron_Present(void) {
 	swapchain_height  = 0;
 	SDL_ClearError();
 	const uint64_t acquire_start_us = Aeron_NowUs();
-	const int      acquired         = SDL_WaitAndAcquireGPUSwapchainTexture(
-		command_buffer, g_aeron.window, &swapchain_texture, &swapchain_width, &swapchain_height);
+	/* In VR the window must not hold the headset's frame back: it takes an
+	 * image when one is free and skips this frame otherwise. */
+	const int acquired =
+		xr_running ? SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &swapchain_texture,
+													&swapchain_width, &swapchain_height)
+				   : SDL_WaitAndAcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &swapchain_texture,
+														   &swapchain_width, &swapchain_height);
 	const uint64_t acquire_wait_us = Aeron_NowUs() - acquire_start_us;
 	/* Whether the work submitted since the last present was done when the
 	 * image arrived, which is close to the vsync. */
@@ -1797,7 +1866,7 @@ int Aeron_Present(void) {
 	g_aeron.pacing_fence = NULL;
 	if (!acquired) {
 		const char* error = SDL_GetError();
-		Aeron_SetRenderError("SDL_WaitAndAcquireGPUSwapchainTexture failed: %s",
+		Aeron_SetRenderError("acquiring the window's swapchain image failed: %s",
 							 error && error[0] ? error : "<no SDL error provided>");
 		AeronGpuDebug_Pop(command_buffer);
 		SDL_CancelGPUCommandBuffer(command_buffer);
@@ -1971,7 +2040,7 @@ int Aeron_Present(void) {
 	}
 	g_aeron.render_data_stats.command_buffer_submission_count++;
 	g_aeron.presented_frames++;
-	if (swapchain_texture) {
+	if (swapchain_texture && !xr_running) {
 		Aeron_NotePacingPresent(acquire_wait_us, gpu_done, Aeron_NowUs());
 	}
 	return 1;

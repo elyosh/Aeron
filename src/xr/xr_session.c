@@ -1,9 +1,10 @@
-/* The OpenXR instance, session and reference space of the GPU device.
+/* The OpenXR instance, session and reference spaces of the GPU device, and
+ * the events that drive the session.
  *
  * SDL creates the instance together with the GPU device, because the runtime
  * takes part in creating the device. Aeron then creates the session on that
- * device. The frame loop and the eye images are not here yet, so the frame
- * functions report that there is nothing to render. */
+ * device. The eye images are not here yet, so the view functions report
+ * that there is nothing to render. */
 
 #include "../internal.h"
 #include "xr_internal.h"
@@ -12,37 +13,9 @@
 
 #if AERON_XR
 
-typedef struct AeronXrState {
-	/* The loader is loaded and `runtime` is valid. */
-	int                runtime_loaded;
-	AeronXrRuntimeInfo runtime;
-	/* The extensions asked from the runtime. SDL reads the list while it
-	 * creates the device. */
-	const char* extensions[1];
-	uint32_t    extension_count;
+AeronXrState g_xr;
 
-	/* SDL writes these two while it creates the device. */
-	XrInstance instance;
-	XrSystemId system_id;
-
-	AeronXrFunctions fn;
-	XrSession        session;
-	/* The space that the views are located in. */
-	XrSpace local_space;
-
-	/* The size the runtime recommends for one eye image, and the largest
-	 * size it accepts. Both eyes use the same size. */
-	int view_width, view_height;
-	int view_max_width, view_max_height;
-	/* The format of the eye images. It is an sRGB format: the tone map writes
-	 * linear values and the format encodes them. */
-	SDL_GPUTextureFormat color_format;
-} AeronXrState;
-
-static AeronXrState g_xr;
-
-/* Writes "<what>: <the result's name>" into `error`. */
-static void xr_result_error(char* error, size_t error_size, const char* what, XrResult result) {
+void AeronXr_ResultError(char* error, size_t error_size, const char* what, XrResult result) {
 	char name[XR_MAX_RESULT_STRING_SIZE] = "";
 	if (g_xr.instance && g_xr.fn.xrResultToString)
 		g_xr.fn.xrResultToString(g_xr.instance, result, name);
@@ -88,7 +61,7 @@ static int xr_read_view_configuration(char* error, size_t error_size) {
 		g_xr.fn.xrEnumerateViewConfigurations(g_xr.instance, g_xr.system_id, SDL_arraysize(types),
 											  &type_count, types);
 	if (XR_FAILED(result)) {
-		xr_result_error(error, error_size, "could not list the view configurations", result);
+		AeronXr_ResultError(error, error_size, "could not list the view configurations", result);
 		return 0;
 	}
 	int stereo = 0;
@@ -109,7 +82,7 @@ static int xr_read_view_configuration(char* error, size_t error_size) {
 													   XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2,
 													   &view_count, views);
 	if (XR_FAILED(result) || view_count != 2) {
-		xr_result_error(error, error_size, "could not read the stereo views", result);
+		AeronXr_ResultError(error, error_size, "could not read the stereo views", result);
 		return 0;
 	}
 	g_xr.view_width      = (int)SDL_max(views[0].recommendedImageRectWidth, views[1].recommendedImageRectWidth);
@@ -120,6 +93,31 @@ static int xr_read_view_configuration(char* error, size_t error_size) {
 		SDL_snprintf(error, error_size, "the runtime gave no size for the eye images");
 		return 0;
 	}
+
+	/* The runtime lists the blend modes in its order of preference. */
+	uint32_t blend_count = 0;
+	result = g_xr.fn.xrEnumerateEnvironmentBlendModes(
+		g_xr.instance, g_xr.system_id, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 1, &blend_count,
+		&g_xr.blend_mode);
+	if (result != XR_ERROR_SIZE_INSUFFICIENT && (XR_FAILED(result) || blend_count == 0))
+		g_xr.blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+	return 1;
+}
+
+/* Creates a reference space of this type, at `pose` in it. */
+static int xr_create_space(XrReferenceSpaceType type, XrPosef pose, XrSpace* out, char* error,
+						   size_t error_size) {
+	const XrReferenceSpaceCreateInfo info = {
+		.type                 = XR_TYPE_REFERENCE_SPACE_CREATE_INFO,
+		.referenceSpaceType   = type,
+		.poseInReferenceSpace = pose,
+	};
+	const XrResult result = g_xr.fn.xrCreateReferenceSpace(g_xr.machine.session, &info, out);
+	if (XR_FAILED(result)) {
+		*out = XR_NULL_HANDLE;
+		AeronXr_ResultError(error, error_size, "could not create a reference space", result);
+		return 0;
+	}
 	return 1;
 }
 
@@ -127,7 +125,7 @@ static int xr_read_view_configuration(char* error, size_t error_size) {
  * its order of preference. */
 static int xr_pick_color_format(SDL_GPUDevice* device, char* error, size_t error_size) {
 	int                   count   = 0;
-	SDL_GPUTextureFormat* formats = SDL_GetGPUXRSwapchainFormats(device, g_xr.session, &count);
+	SDL_GPUTextureFormat* formats = SDL_GetGPUXRSwapchainFormats(device, g_xr.machine.session, &count);
 	if (!formats) {
 		SDL_snprintf(error, error_size, "could not list the eye image formats: %s", SDL_GetError());
 		return 0;
@@ -172,24 +170,21 @@ int AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size)
 		return 0;
 
 	const XrSessionCreateInfo session_info = { .type = XR_TYPE_SESSION_CREATE_INFO };
-	XrResult                  result       = SDL_CreateGPUXRSession(device, &session_info, &g_xr.session);
+	XrResult                  result       = SDL_CreateGPUXRSession(device, &session_info, &g_xr.machine.session);
 	if (XR_FAILED(result)) {
-		g_xr.session = XR_NULL_HANDLE;
-		xr_result_error(error, error_size, "could not create the OpenXR session", result);
+		g_xr.machine.session = XR_NULL_HANDLE;
+		AeronXr_ResultError(error, error_size, "could not create the OpenXR session", result);
 		return 0;
 	}
 
-	const XrReferenceSpaceCreateInfo space_info = {
-		.type                 = XR_TYPE_REFERENCE_SPACE_CREATE_INFO,
-		.referenceSpaceType   = XR_REFERENCE_SPACE_TYPE_LOCAL,
-		.poseInReferenceSpace = { .orientation = { 0.0f, 0.0f, 0.0f, 1.0f } },
-	};
-	result = g_xr.fn.xrCreateReferenceSpace(g_xr.session, &space_info, &g_xr.local_space);
-	if (XR_FAILED(result)) {
-		g_xr.local_space = XR_NULL_HANDLE;
-		xr_result_error(error, error_size, "could not create the reference space", result);
+	/* The rig's origin is the runtime's origin until the first frame, which
+	 * recentres. */
+	const XrPosef identity = { .orientation = { 0.0f, 0.0f, 0.0f, 1.0f } };
+	if (!xr_create_space(XR_REFERENCE_SPACE_TYPE_LOCAL, identity, &g_xr.local_space, error, error_size) ||
+		!xr_create_space(XR_REFERENCE_SPACE_TYPE_VIEW, identity, &g_xr.view_space, error, error_size) ||
+		!xr_create_space(XR_REFERENCE_SPACE_TYPE_LOCAL, identity, &g_xr.rig_space, error, error_size))
 		return 0;
-	}
+	g_xr.recenter_pending = 1;
 
 	if (!xr_read_view_configuration(error, error_size) || !xr_pick_color_format(device, error, error_size))
 		return 0;
@@ -204,12 +199,83 @@ void AeronXr_DeviceCreateFailed(void) {
 }
 
 void AeronXr_DestroySession(void) {
-	if (g_xr.local_space)
-		g_xr.fn.xrDestroySpace(g_xr.local_space);
-	if (g_xr.session)
-		g_xr.fn.xrDestroySession(g_xr.session);
+	if (g_xr.machine.session && !g_xr.failed) {
+		AeronXr_EndFrame();
+		const XrSpace spaces[] = { g_xr.rig_space, g_xr.view_space, g_xr.local_space };
+		for (size_t i = 0; i < SDL_arraysize(spaces); i++) {
+			if (spaces[i])
+				g_xr.fn.xrDestroySpace(spaces[i]);
+		}
+		g_xr.fn.xrDestroySession(g_xr.machine.session);
+	}
+	g_xr.rig_space   = XR_NULL_HANDLE;
+	g_xr.view_space  = XR_NULL_HANDLE;
 	g_xr.local_space = XR_NULL_HANDLE;
-	g_xr.session     = XR_NULL_HANDLE;
+	SDL_zero(g_xr.machine);
+}
+
+void AeronXr_Fail(const char* message) {
+	if (g_xr.failed)
+		return;
+	g_xr.failed          = 1;
+	g_xr.frame_open      = 0;
+	g_xr.machine.running = 0;
+	Aeron_LogError("aeron.xr", "%s", message);
+	Aeron_OnXrSessionRunningChanged(0);
+	Aeron_RequestFatalError("VR Error", message);
+}
+
+void AeronXr_PollEvents(void) {
+	if (!g_xr.machine.session || g_xr.failed)
+		return;
+	const int was_running = g_xr.machine.running;
+	const int was_focused = g_xr.machine.focused;
+	for (;;) {
+		XrEventDataBuffer event  = { .type = XR_TYPE_EVENT_DATA_BUFFER };
+		const XrResult    result = g_xr.fn.xrPollEvent(g_xr.instance, &event);
+		char              error[256];
+		if (result == XR_EVENT_UNAVAILABLE)
+			break;
+		if (XR_FAILED(result)) {
+			AeronXr_ResultError(error, sizeof error, "the OpenXR runtime stopped answering", result);
+			AeronXr_Fail(error);
+			return;
+		}
+		if (!AeronXrSession_HandleEvent(&g_xr.machine, &g_xr.fn, &event, error, sizeof error)) {
+			AeronXr_Fail(error);
+			return;
+		}
+	}
+	if (g_xr.machine.running != was_running) {
+		Aeron_LogInfo("aeron.xr", "the VR session %s", g_xr.machine.running ? "started" : "stopped");
+		/* A frame that was open when the session stopped is gone with it. */
+		if (!g_xr.machine.running)
+			g_xr.frame_open = 0;
+		else
+			g_xr.recenter_pending = 1;
+		Aeron_OnXrSessionRunningChanged(g_xr.machine.running);
+	}
+	if (g_xr.machine.focused != was_focused)
+		Aeron_LogInfo("aeron.xr", "the VR session %s the input focus",
+					  g_xr.machine.focused ? "has" : "lost");
+	if (g_xr.machine.exit_requested) {
+		g_xr.machine.exit_requested = 0;
+		Aeron_LogInfo("aeron.xr", "the OpenXR runtime asked the application to quit");
+		Aeron_RequestQuit();
+	}
+}
+
+int Aeron_XrSessionRunning(void) {
+	return g_xr.machine.running;
+}
+
+int Aeron_XrFocused(void) {
+	return g_xr.machine.focused;
+}
+
+void Aeron_XrRecenter(void) {
+	if (g_xr.machine.session)
+		g_xr.recenter_pending = 1;
 }
 
 void AeronXr_DestroyInstance(void) {
@@ -222,7 +288,7 @@ void AeronXr_DestroyInstance(void) {
 }
 
 int Aeron_XrEnabled(void) {
-	return g_xr.session != XR_NULL_HANDLE;
+	return g_xr.machine.session != XR_NULL_HANDLE;
 }
 
 int Aeron_XrViewSize(int* width, int* height) {
@@ -261,6 +327,28 @@ void AeronXr_DestroySession(void) {
 void AeronXr_DestroyInstance(void) {
 }
 
+void AeronXr_PollEvents(void) {
+}
+
+int AeronXr_BeginFrame(void) {
+	return 1;
+}
+
+int AeronXr_EndFrame(void) {
+	return 1;
+}
+
+int Aeron_XrSessionRunning(void) {
+	return 0;
+}
+
+int Aeron_XrFocused(void) {
+	return 0;
+}
+
+void Aeron_XrRecenter(void) {
+}
+
 int Aeron_XrEnabled(void) {
 	return 0;
 }
@@ -277,17 +365,6 @@ int Aeron_XrViewSize(int* width, int* height) {
 
 int Aeron_XrSupported(void) {
 	return AERON_XR != 0;
-}
-
-int Aeron_XrSessionRunning(void) {
-	return 0;
-}
-
-int Aeron_XrFocused(void) {
-	return 0;
-}
-
-void Aeron_XrRecenter(void) {
 }
 
 int Aeron_XrBeginViews(AeronXrFrame* out) {

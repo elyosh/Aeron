@@ -291,6 +291,11 @@ typedef struct AeronRuntime {
 	 * HDR-capable (or stops being one) while the app runs. */
 	int   hdr_output_desired;
 	int   hdr_output_enabled;
+	/* The window's present mode: vsync, except while a VR session runs. */
+	SDL_GPUPresentMode present_mode;
+	/* A VR session runs and the window can't present without waiting for
+	 * its display, so the window isn't drawn. */
+	int window_draw_disabled;
 	int   hdr_reapply_pending;
 	float hdr_headroom;
 	float hdr_sdr_white_level;
@@ -397,6 +402,19 @@ int  AeronXr_PrepareDevice(char* error, size_t error_size);
 int  AeronXr_SetDeviceProperties(SDL_PropertiesID properties);
 int  AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size);
 void AeronXr_DeviceCreateFailed(void);
+/* Reads the runtime's events and runs the session: it begins the session
+ * when the headset is ready and ends it when the runtime stops it.
+ * Aeron_BeginFrame calls it. */
+void AeronXr_PollEvents(void);
+/* While the session runs: waits for the headset's next frame and begins it,
+ * then ends it. These replace the swapchain wait of the window: OpenXR
+ * paces the application. They do nothing when no session runs. They return
+ * 0 when the session failed; the application is then asked to stop. */
+int AeronXr_BeginFrame(void);
+int AeronXr_EndFrame(void);
+/* The render backend's part of a session start or stop: the window stops
+ * waiting for its display's vsync while OpenXR paces the application. */
+void Aeron_OnXrSessionRunningChanged(int running);
 /* Before SDL_DestroyGPUDevice, with the GPU idle. */
 void AeronXr_DestroySession(void);
 /* After SDL_DestroyGPUDevice. Also unloads the OpenXR loader. */

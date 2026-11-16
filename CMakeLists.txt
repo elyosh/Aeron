@@ -542,7 +542,10 @@ add_library(aeron ${AERON_SOURCES})
 
 # Only the files in src/xr use the vendored OpenXR headers.
 if(AERON_XR)
-    target_sources(aeron PRIVATE src/xr/xr_loader.c)
+    target_sources(aeron PRIVATE
+        src/xr/xr_frame.c
+        src/xr/xr_loader.c
+        src/xr/xr_state.c)
     target_compile_definitions(aeron PRIVATE AERON_XR=1)
     target_include_directories(aeron PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include)
@@ -1331,6 +1334,26 @@ if(AERON_BUILD_TOOLS)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
     file(RELATIVE_PATH TEXTURE_TEST_SHADER_DIR "${CMAKE_BINARY_DIR}" "${AERON_SHADER_OUTPUT_DIR}")
     target_compile_definitions(aeron_texture_layers_test PRIVATE TEST_SHADER_DIR="${TEXTURE_TEST_SHADER_DIR}")
+
+    # Tests the OpenXR session state machine and the recentre math, with fake
+    # OpenXR functions. It needs no headset, no window and no GPU.
+    if(AERON_XR)
+        add_executable(aeron_xr_session_test tests/xr_session_test.c src/xr/xr_state.c)
+        target_include_directories(aeron_xr_session_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include)
+        target_compile_definitions(aeron_xr_session_test PRIVATE AERON_XR=1)
+        target_link_libraries(aeron_xr_session_test PRIVATE SDL3::Headers)
+        set_target_properties(aeron_xr_session_test PROPERTIES
+            C_STANDARD 99
+            C_STANDARD_REQUIRED ON
+            C_EXTENSIONS OFF
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+        if(NOT MSVC)
+            target_link_libraries(aeron_xr_session_test PRIVATE m)
+            target_compile_options(aeron_xr_session_test PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    endif()
 
     # Tests the view rig math: fields of view, view cameras, surround setups.
     # It needs no window and no GPU.

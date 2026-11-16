@@ -6,8 +6,10 @@
  * and the cubes are drawn into the eye images. Otherwise the views come
  * from a fixed stereo rig and are drawn side by side in the window.
  *
- * Aeron creates the OpenXR session at startup but doesn't run it yet, so the
- * cubes are always drawn in the window for now.
+ * Aeron runs the OpenXR session, so the headset paces the frames, but it has
+ * no eye images yet: the cubes are always drawn in the window for now. The
+ * program logs its frame rate every five seconds, and the session's state
+ * when it changes.
  *
  * Usage: xr_demo [--vr | --no-vr] [--frames <count>] [--capture <file.ppm>]
  *   --vr                  Fail when VR can't start. Without it, VR is used
@@ -383,8 +385,11 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	long frames         = 0;
-	int  window_frames  = 0;
+	long     frames        = 0;
+	int      window_frames = 0;
+	long     rate_frames   = 0;
+	uint64_t rate_start_us = Aeron_NowUs();
+	int      was_running = -1, was_focused = -1;
 	while (!Aeron_QuitRequested() && !Aeron_FatalErrorRequested()) {
 		const int32_t delta_us = Aeron_BeginFrame();
 		if (Aeron_FatalErrorRequested())
@@ -399,6 +404,24 @@ int main(int argc, char* argv[]) {
 		}
 		if (!Aeron_Present())
 			Aeron_RequestFatalRendererError("frame presentation");
+		Aeron_WaitForNextFrame(0);
+
+		const int running = Aeron_XrSessionRunning(), focused = Aeron_XrFocused();
+		if (running != was_running || focused != was_focused) {
+			Aeron_LogInfo("xr_demo", "VR session: %s, %s", running ? "running" : "not running",
+						  focused ? "focused" : "not focused");
+			was_running = running;
+			was_focused = focused;
+		}
+		rate_frames++;
+		const uint64_t now_us = Aeron_NowUs();
+		if (now_us - rate_start_us >= 5000000u) {
+			Aeron_LogInfo("xr_demo", "%.1f frames per second, paced by the %s",
+						  (double)rate_frames * 1e6 / (double)(now_us - rate_start_us),
+						  running ? "headset" : "window");
+			rate_frames   = 0;
+			rate_start_us = now_us;
+		}
 		if (frame_limit > 0 && ++frames >= frame_limit)
 			Aeron_RequestQuit();
 	}

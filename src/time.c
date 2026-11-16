@@ -75,6 +75,10 @@ void Aeron_WaitForNextFrame(uint64_t app_wake_delay_us) {
 	if (!g_aeron.initialized) {
 		return;
 	}
+	/* The headset paces the frames of a VR session. */
+	if (Aeron_XrSessionRunning()) {
+		return;
+	}
 	deadline_us = app_wake_delay_us > UINT64_MAX - g_aeron.last_frame_us
 					  ? UINT64_MAX
 					  : g_aeron.last_frame_us + app_wake_delay_us;
@@ -125,7 +129,7 @@ void Aeron_ResetPacing(void) {
 
 int Aeron_PacingActive(void) {
 	return g_aeron.pacing.enabled && g_aeron.fence_query_reliable && g_aeron.gpu_device &&
-		   Aeron_PresentationVsyncDivisor() == 1;
+		   Aeron_PresentationVsyncDivisor() == 1 && !Aeron_XrSessionRunning();
 }
 
 void Aeron_NotePacingPresent(uint64_t acquire_wait_us, int gpu_done, uint64_t present_us) {

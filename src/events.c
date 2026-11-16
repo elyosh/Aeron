@@ -115,9 +115,15 @@ int32_t Aeron_BeginFrame(void) {
 	}
 	Aeron_AudioRecordFlush();
 
-	/* Throttle before sampling input so time spent waiting for FIFO
-	 * presentation does not age the state used to build this frame. */
-	if (!Aeron_WaitForPresentationSlot()) {
+	/* Throttle before sampling input so time spent waiting for the next
+	 * frame does not age the state used to build this frame. While a VR
+	 * session runs, the headset sets the pace, not the window's display. */
+	AeronXr_PollEvents();
+	if (Aeron_XrSessionRunning()) {
+		if (!AeronXr_BeginFrame()) {
+			return 0;
+		}
+	} else if (!Aeron_WaitForPresentationSlot()) {
 		Aeron_RequestFatalRendererError("waiting for the next presentation slot");
 		return 0;
 	}
