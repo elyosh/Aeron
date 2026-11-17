@@ -44,6 +44,14 @@ static struct {
 	int                 pipeline_mask_count;
 	Blit2DPipelineEntry pipelines4[AERON_BLIT2D_PIPELINE_CACHE_CAP];
 	int                 pipeline4_count;
+	/* Sprites on planes (AeronDrawList_RenderPlanes) — the shaders are
+	 * loaded on first use. */
+	int                 plane_initialized;
+	int                 plane_failed;
+	AeronShader*        vs_plane;
+	AeronShader*        fs_plane;
+	Blit2DPipelineEntry pipelines_plane[AERON_BLIT2D_PIPELINE_CACHE_CAP];
+	int                 pipeline_plane_count;
 	/* Rounded-rect (UI) shader pair — loaded lazily on first use so
 	 * consumers that never draw rrects pay nothing. */
 	int                 rr_initialized;
@@ -133,6 +141,32 @@ static int blit2d_mask_ensure(void) {
 	return 1;
 }
 
+static int blit2d_plane_ensure(void) {
+	if (G.plane_initialized) {
+		return !G.plane_failed;
+	}
+	G.plane_initialized = 1;
+	G.vs_plane          = Aeron_CreateShader(&(AeronShaderDesc) {
+		.name                 = "scene_blit_plane.vert",
+		.stage                = AERON_SHADER_STAGE_VERTEX,
+		.sampler_count        = 0,
+		.uniform_buffer_count = 1,
+		.storage_buffer_count = 2,
+	});
+	G.fs_plane          = Aeron_CreateShader(&(AeronShaderDesc) {
+		.name                 = "scene_blit_plane.frag",
+		.stage                = AERON_SHADER_STAGE_FRAGMENT,
+		.sampler_count        = 1,
+		.uniform_buffer_count = 0,
+	});
+	if (!G.vs_plane || !G.fs_plane) {
+		Aeron_LogError("aeron.scene", "plane blit shader load failed");
+		G.plane_failed = 1;
+		return 0;
+	}
+	return 1;
+}
+
 static int blit2d_rr_ensure(void) {
 	if (G.rr_initialized) {
 		return !G.rr_failed;
@@ -181,6 +215,15 @@ static void blit2d_shutdown(void) {
 			Aeron_DestroyGraphicsPipeline(G.pipelines_rr[i].pipe);
 		}
 	}
+	for (int i = 0; i < G.pipeline_plane_count; i++) {
+		if (G.pipelines_plane[i].pipe) {
+			Aeron_DestroyGraphicsPipeline(G.pipelines_plane[i].pipe);
+		}
+	}
+	if (G.vs_plane)
+		Aeron_DestroyShader(G.vs_plane);
+	if (G.fs_plane)
+		Aeron_DestroyShader(G.fs_plane);
 	if (G.sampler_nearest)
 		Aeron_DestroySampler(G.sampler_nearest);
 	if (G.sampler_linear)
@@ -301,6 +344,17 @@ static AeronGraphicsPipeline* blit2d_pipeline4(AeronTextureFormat color_format, 
 						sample_count, depth_test, "blit4 pipeline");
 }
 
+/* Sprites on planes never depth-test. */
+static AeronGraphicsPipeline* blit2d_pipeline_plane(AeronTextureFormat color_format, AeronBlit2DBlend blend,
+													AeronTextureFormat depth_format,
+													AeronSampleCount   sample_count) {
+	if (!blit2d_ensure() || !blit2d_plane_ensure()) {
+		return NULL;
+	}
+	return cache_lookup(G.pipelines_plane, &G.pipeline_plane_count, G.vs_plane, G.fs_plane, color_format,
+						blend, depth_format, sample_count, 0, "plane blit pipeline");
+}
+
 /* Rounded rects always blend PMA and never depth-test. */
 static AeronGraphicsPipeline* blit2d_pipeline_rr(AeronTextureFormat color_format,
 												 AeronTextureFormat depth_format,
@@ -318,8 +372,31 @@ typedef struct Blit2DInstance {
 	float tint_r, tint_g, tint_b, tint_a;
 	float bias_r, bias_g, bias_b, bias_a;
 	float trap_top_dx_left, trap_top_dx_right, trap_top_w, monochrome;
-	float source, mip_bias, _source_pad[2]; /* source: Dl2dSource */
+	/* source: Dl2dSource. plane: the index of the quad's plane. solid: 1 for
+	 * a fill, whose edges are smoothed on a plane. Only
+	 * scene_blit_plane.vert reads the last two. */
+	float source, mip_bias, plane, solid;
 } Blit2DInstance;
+
+/* A plane of a list (AeronDrawList_AddPlane). Storage layout MUST match
+ * BlitPlane in scene_blit_plane.vert.hlsl: the rows of the matrix, then w. */
+typedef struct Blit2DPlane {
+	float row_x[4];
+	float row_y[4];
+	float row_z[4];
+	float w[4];
+} Blit2DPlane;
+
+/* Uniform layout MUST match BlitPlaneRun in scene_blit_plane.vert.hlsl. */
+typedef struct Blit2DPlaneRunUniform {
+	float    view_x[4];
+	float    view_y[4];
+	float    view_w[4];
+	float    output_rgb_scale;
+	float    opacity;
+	uint32_t base_instance;
+	float    unused;
+} Blit2DPlaneRunUniform;
 
 typedef struct Blit2DQuad4Uniform {
 	float corners[4][4];
@@ -350,6 +427,8 @@ typedef struct Blit2DRRectInstance {
 typedef char Blit2DInstanceSizeCheck[sizeof(Blit2DInstance) == 96 ? 1 : -1];
 typedef char Blit2DQuad4UniformSizeCheck[sizeof(Blit2DQuad4Uniform) == 144 ? 1 : -1];
 typedef char Blit2DRunUniformSizeCheck[sizeof(Blit2DRunUniform) == 16 ? 1 : -1];
+typedef char Blit2DPlaneSizeCheck[sizeof(Blit2DPlane) == 64 ? 1 : -1];
+typedef char Blit2DPlaneRunUniformSizeCheck[sizeof(Blit2DPlaneRunUniform) == 64 ? 1 : -1];
 typedef char Blit2DRRectInstanceSizeCheck[sizeof(Blit2DRRectInstance) == 112 ? 1 : -1];
 
 static void blit2d_draw_quad4(AeronRenderPass* pass, AeronGraphicsPipeline* pipe, AeronTexture* tex,
@@ -395,6 +474,7 @@ typedef struct Dl2dRecord {
 	AeronTexture*     texture;
 	AeronRectI        scissor; /* zero w/h = none */
 	uint32_t          instance_index;
+	uint32_t          plane; /* index into the list's planes */
 
 	union {
 		Blit2DInstance      quad;
@@ -415,6 +495,15 @@ struct AeronDrawList2D {
 	AeronBuffer*             rr_instance_buffer;
 	uint32_t                 rr_instance_buffer_capacity;
 	uint32_t                 rr_instance_count;
+	/* Planes — allocated on the first AddPlane, so that the lists that are
+	 * only drawn flat pay nothing. Plane 0 is the identity. */
+	Blit2DPlane*             planes;
+	AeronBuffer*             plane_buffer;
+	uint32_t                 plane_buffer_capacity;
+	uint32_t                 plane_cap;
+	uint32_t                 plane_count;
+	uint32_t                 current_plane;
+	int                      rrect_plane_logged;
 	int                      cap;
 	int                      count;
 	int                      dropped;
@@ -454,6 +543,8 @@ void AeronDrawList_Destroy(AeronDrawList2D* l) {
 	}
 	Aeron_DestroyBuffer(l->instance_buffer);
 	Aeron_DestroyBuffer(l->rr_instance_buffer);
+	Aeron_DestroyBuffer(l->plane_buffer);
+	free(l->planes);
 	free(l->rr_instances);
 	free(l->instances);
 	free(l->records);
@@ -518,6 +609,48 @@ void AeronDrawList_Begin(AeronDrawList2D* l, AeronRenderTarget* target, int targ
 	l->active         = 1;
 	l->prepared       = 0;
 	l->has_depth_mask = 0;
+	l->plane_count    = 0;
+	l->current_plane  = 0;
+}
+
+int AeronDrawList_AddPlane(AeronDrawList2D* l, const float matrix[9], float w) {
+	if (!l || !l->active || !matrix) {
+		return -1;
+	}
+	/* The first plane added in a frame comes after plane 0, the identity. */
+	const uint32_t needed = l->plane_count ? l->plane_count + 1u : 2u;
+	if (needed > l->plane_cap) {
+		uint32_t cap = l->plane_cap ? l->plane_cap : 16u;
+		while (cap < needed) {
+			cap *= 2u;
+		}
+		Blit2DPlane* planes = (Blit2DPlane*)realloc(l->planes, (size_t)cap * sizeof *planes);
+		if (!planes) {
+			Aeron_LogWarn("aeron.scene", "drawlist2d cannot grow past %u planes", l->plane_cap);
+			return -1;
+		}
+		l->planes    = planes;
+		l->plane_cap = cap;
+	}
+	if (!l->plane_count) {
+		l->planes[0]   = (Blit2DPlane) { { 1.0f, 0.0f, 0.0f, 0.0f },
+										 { 0.0f, 1.0f, 0.0f, 0.0f },
+										 { 0.0f, 0.0f, 1.0f, 0.0f },
+										 { 0.0f, 0.0f, 0.0f, 0.0f } };
+		l->plane_count = 1;
+	}
+	l->planes[l->plane_count] = (Blit2DPlane) { { matrix[0], matrix[1], matrix[2], 0.0f },
+												{ matrix[3], matrix[4], matrix[5], 0.0f },
+												{ matrix[6], matrix[7], matrix[8], 0.0f },
+												{ w, 0.0f, 0.0f, 0.0f } };
+	l->prepared               = 0;
+	return (int)l->plane_count++;
+}
+
+void AeronDrawList_UsePlane(AeronDrawList2D* l, int plane) {
+	if (l && plane >= 0 && (uint32_t)plane < (l->plane_count ? l->plane_count : 1u)) {
+		l->current_plane = (uint32_t)plane;
+	}
 }
 
 /* Doubles the record capacity, and the instance arrays with it. Returns 0
@@ -578,6 +711,7 @@ void AeronDrawList_AddSprite(AeronDrawList2D* l, const AeronDrawList2DSprite* s)
 	r->filter  = s->filter;
 	r->texture = s->texture;
 	r->scissor = s->scissor;
+	r->plane   = l->current_plane;
 
 	Blit2DInstance* q = &r->u.quad;
 	q->dst_x          = s->dst_x; /* px; converted to NDC at Render */
@@ -604,6 +738,8 @@ void AeronDrawList_AddSprite(AeronDrawList2D* l, const AeronDrawList2DSprite* s)
 	q->monochrome        = s->monochrome;
 	q->source            = dl2d_source(l, s->texture);
 	q->mip_bias          = s->mip_bias;
+	q->plane             = (float)l->current_plane;
+	q->solid             = 0.0f;
 }
 
 void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) {
@@ -620,6 +756,7 @@ void AeronDrawList_AddQuad4(AeronDrawList2D* l, const AeronDrawList2DQuad4* in) 
 	r->texture    = in->texture;
 	r->scissor    = in->scissor;
 	r->depth_test = in->depth_test != 0;
+	r->plane      = l->current_plane;
 
 	Blit2DQuad4Uniform* q = &r->u.quad4;
 	/* Header order TL,TR,BL,BR happens to BE the strip zig-zag order
@@ -778,7 +915,11 @@ void AeronDrawList_AddFill(AeronDrawList2D* l, float x, float y, float w, float 
 	if (scissor) {
 		s.scissor = *scissor;
 	}
+	const int before = l ? l->count : 0;
 	AeronDrawList_AddSprite(l, &s);
+	if (l && l->count > before) {
+		l->records[l->count - 1].u.quad.solid = 1.0f;
+	}
 }
 
 void AeronDrawList_AddFrame(AeronDrawList2D* l, float x, float y, float w, float h, float thickness_px,
@@ -867,6 +1008,11 @@ int AeronDrawList_Prepare(AeronDrawList2D* l, AeronCommandBuffer* cmd) {
 		!dl2d_upload_storage(l, cmd, &l->rr_instance_buffer, &l->rr_instance_buffer_capacity, l->rr_instances,
 							 l->rr_instance_count * (uint32_t)sizeof *l->rr_instances,
 							 "scene.draw_list2d.rrect_instances")) {
+		return 0;
+	}
+	if (l->plane_count > 0 &&
+		!dl2d_upload_storage(l, cmd, &l->plane_buffer, &l->plane_buffer_capacity, l->planes,
+							 l->plane_count * (uint32_t)sizeof *l->planes, "scene.draw_list2d.planes")) {
 		return 0;
 	}
 	l->prepared             = 1;
@@ -1019,6 +1165,122 @@ void AeronDrawList_RenderIntoPass(AeronDrawList2D* l, AeronCommandBuffer* cmd, A
 		return;
 	}
 	if (!draw_list_encode(l, pass, target)) {
+		Aeron_CommandBufferSetFailure(cmd, "2D draw-list encoding failed");
+	}
+}
+
+/* A sprite run on planes: the records' scissors don't apply. */
+static int dl2d_same_plane_sprite_state(const Dl2dRecord* a, const Dl2dRecord* b) {
+	return b->kind == DL2D_SPRITE && a->blend == b->blend && a->filter == b->filter &&
+		   a->texture == b->texture;
+}
+
+static int draw_list_encode_planes(AeronDrawList2D* l, AeronRenderPass* pass, AeronRenderTarget* target,
+								   const float view[12], float opacity) {
+	const AeronTextureFormat    fmt          = Aeron_TextureGetFormat(Aeron_RenderTargetGetTexture(target));
+	const AeronTextureFormat    depth_format = Aeron_RenderPassGetDepthFormat(pass);
+	const AeronSampleCount      sample_count = Aeron_RenderPassGetSampleCount(pass);
+	const float                 output_rgb_scale = Aeron_RenderPassOutputRgbScale(pass);
+	const Blit2DPlaneRunUniform run_base         = {
+		.view_x           = { view[0], view[1], view[2], view[3] },
+		.view_y           = { view[4], view[5], view[6], view[7] },
+		.view_w           = { view[8], view[9], view[10], view[11] },
+		.output_rgb_scale = output_rgb_scale,
+		.opacity          = opacity,
+	};
+
+	for (int i = 0; i < l->count;) {
+		const Dl2dRecord* r = &l->records[i];
+		if (r->kind == DL2D_SPRITE) {
+			int end = i + 1;
+			while (end < l->count && dl2d_same_plane_sprite_state(r, &l->records[end])) {
+				++end;
+			}
+			AeronGraphicsPipeline* pipe    = blit2d_pipeline_plane(fmt, r->blend, depth_format, sample_count);
+			AeronSampler*          sampler = blit2d_sampler(r->filter);
+			if (!pipe || !sampler || !l->instance_buffer || !l->plane_buffer) {
+				return 0;
+			}
+			Blit2DPlaneRunUniform run = run_base;
+			run.base_instance         = r->instance_index;
+			Aeron_BindGraphicsPipeline(pass, pipe);
+			Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0, r->texture, sampler);
+			Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, l->instance_buffer);
+			Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, l->plane_buffer);
+			Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &run, sizeof run);
+			Aeron_DrawInstanced(pass, 4, (uint32_t)(end - i), 0);
+			i = end;
+			continue;
+		}
+		if (r->kind == DL2D_RRECT) {
+			if (!l->rrect_plane_logged) {
+				Aeron_LogWarn("aeron.scene", "drawlist2d: rounded rectangles are not drawn on planes");
+				l->rrect_plane_logged = 1;
+			}
+			++i;
+			continue;
+		}
+
+		/* A free quad: its corners go through the plane and the view here.
+		 * scene_blit4.vert then gets them in NDC, with the view's w folded
+		 * into each corner's q. */
+		const Blit2DPlane* plane   = &l->planes[r->plane < l->plane_count ? r->plane : 0];
+		Blit2DQuad4Uniform q       = r->u.quad4;
+		int                visible = 1;
+		for (int c = 0; c < 4; c++) {
+			const float x = q.corners[c][0], y = q.corners[c][1];
+			const float v[4] = { plane->row_x[0] * x + plane->row_x[1] * y + plane->row_x[2],
+								 plane->row_y[0] * x + plane->row_y[1] * y + plane->row_y[2],
+								 plane->row_z[0] * x + plane->row_z[1] * y + plane->row_z[2], plane->w[0] };
+			const float cx   = view[0] * v[0] + view[1] * v[1] + view[2] * v[2] + view[3] * v[3];
+			const float cy   = view[4] * v[0] + view[5] * v[1] + view[6] * v[2] + view[7] * v[3];
+			const float cw   = view[8] * v[0] + view[9] * v[1] + view[10] * v[2] + view[11] * v[3];
+			if (!(cw > 1e-6f)) {
+				visible = 0;
+				break;
+			}
+			q.corners[c][0] = cx / cw;
+			q.corners[c][1] = cy / cw;
+			q.q[c] *= cw;
+			q.ndc_depth[c] = 0.0f;
+		}
+		++i;
+		if (!visible) {
+			continue;
+		}
+		AeronGraphicsPipeline* pipe    = blit2d_pipeline4(fmt, r->blend, depth_format, sample_count, 0);
+		AeronSampler*          sampler = blit2d_sampler(r->filter);
+		if (!pipe || !sampler) {
+			return 0;
+		}
+		const float rgb = output_rgb_scale * opacity;
+		q.tint_r *= rgb;
+		q.tint_g *= rgb;
+		q.tint_b *= rgb;
+		q.tint_a *= opacity;
+		q.bias_r *= rgb;
+		q.bias_g *= rgb;
+		q.bias_b *= rgb;
+		q.bias_a *= opacity;
+		blit2d_draw_quad4(pass, pipe, r->texture, sampler, &q);
+	}
+	return 1;
+}
+
+void AeronDrawList_RenderPlanes(AeronDrawList2D* l, AeronCommandBuffer* cmd, AeronRenderPass* pass,
+								AeronRenderTarget* target, const float view[12], float opacity) {
+	if (!l || !cmd || !pass || !target || !view || l->count == 0) {
+		return;
+	}
+	if (!l->prepared || !l->plane_count) {
+		Aeron_CommandBufferSetFailure(cmd, "2D draw list on planes was not prepared, or has no plane");
+		return;
+	}
+	if (!Aeron_RenderTargetGetTexture(target) || !blit2d_ensure()) {
+		Aeron_CommandBufferSetFailure(cmd, "2D draw-list pass preparation failed");
+		return;
+	}
+	if (!draw_list_encode_planes(l, pass, target, view, opacity)) {
 		Aeron_CommandBufferSetFailure(cmd, "2D draw-list encoding failed");
 	}
 }

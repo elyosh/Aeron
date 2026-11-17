@@ -415,6 +415,8 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit_depth_mask.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit_plane.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_blit_plane.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_vel.vert.hlsl
@@ -1404,6 +1406,7 @@ endif()
 option(AERON_BUILD_EXAMPLES "Build Aeron example apps" OFF)
 if(AERON_BUILD_EXAMPLES)
     add_subdirectory(examples/ui_demo)
+    add_subdirectory(examples/planes_demo)
     add_subdirectory(examples/xr_demo)
 endif()
 

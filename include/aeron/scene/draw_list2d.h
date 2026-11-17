@@ -149,6 +149,24 @@ int AeronDrawList_UsesSrgbValues(const AeronDrawList2D* list);
 void AeronDrawList_Begin(AeronDrawList2D* list, AeronRenderTarget* target, int target_w, int target_h,
 						 AeronDrawList2DClearMode clear_mode, const float clear_rgba[4]);
 
+/* Planes. A list can be drawn flat into a target of its size
+ * (RenderIntoPass), or on planes in 3D (RenderPlanes). A plane places a part
+ * of the drawing: it is a 3x3 matrix P, row-major, and a number w.
+ *
+ *     v = P * (x, y, 1)         (x, y) in the list's pixels, Y down
+ *     clip = V * (v, w)         V is given to RenderPlanes
+ *
+ * With w = 0, v is a direction and the drawing is at infinity. With w = 1,
+ * v is a point. The caller chooses the space of v: it is the space that V
+ * projects.
+ *
+ * AddPlane adds a plane and returns its index, or -1 when the list can't
+ * grow. Plane 0 always exists once a plane was added, and is the identity
+ * with w = 0. UsePlane sets the plane of the records added after it; Begin
+ * sets plane 0. A list that is drawn flat ignores its planes. */
+int  AeronDrawList_AddPlane(AeronDrawList2D* list, const float matrix[9], float w);
+void AeronDrawList_UsePlane(AeronDrawList2D* list, int plane);
+
 void AeronDrawList_AddSprite(AeronDrawList2D* list, const AeronDrawList2DSprite* sprite);
 void AeronDrawList_AddQuad4(AeronDrawList2D* list, const AeronDrawList2DQuad4* quad);
 void AeronDrawList_AddRRect(AeronDrawList2D* list, const AeronDrawList2DRRect* rrect);
@@ -205,6 +223,23 @@ void AeronDrawList_Render(AeronDrawList2D* list, AeronCommandBuffer* cmd);
  * draw-list clear mode is ignored. */
 void AeronDrawList_RenderIntoPass(AeronDrawList2D* list, AeronCommandBuffer* cmd, AeronRenderPass* pass,
 								  AeronRenderTarget* target);
+
+/* Replays an already-prepared generation into an active render pass, on the
+ * list's planes. `view` has the rows x, y and w of a view-projection
+ * matrix, row-major 3x4, for column vectors. `opacity` multiplies every
+ * colour. The list must have at least one plane (AeronDrawList_AddPlane).
+ *
+ * The pass's viewport and scissor are used as they are, and the list's own
+ * size is not compared with the target's: it only names the drawing's
+ * pixels. On planes:
+ *   - record scissors are ignored;
+ *   - rounded rectangles are not drawn;
+ *   - the depth mask is not applied;
+ *   - a free quad with a corner behind the view is not drawn;
+ *   - the edges of fills (AddFill, AddFrame) are antialiased, because they
+ *     aren't aligned with the target's pixels. */
+void AeronDrawList_RenderPlanes(AeronDrawList2D* list, AeronCommandBuffer* cmd, AeronRenderPass* pass,
+								AeronRenderTarget* target, const float view[12], float opacity);
 
 #ifdef __cplusplus
 }
