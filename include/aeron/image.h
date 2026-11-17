@@ -77,6 +77,11 @@ bool Aeron_ImageWritePngRgb8(AeronVfs* vfs, AeronVfsRoot root, const char* path,
 uint8_t* Aeron_ImageReadPngRgba8(AeronVfs* vfs, AeronVfsRoot root, const char* path, int* out_width,
 								 int* out_height);
 
+/* Decodes a PNG or JPEG file held in memory as RGBA8, top row first, with
+ * straight alpha. Returns NULL when the bytes are neither. The caller
+ * releases the pixels with free(). */
+uint8_t* Aeron_ImageDecodeRgba8(const uint8_t* bytes, size_t size, int* out_width, int* out_height);
+
 #ifdef __cplusplus
 }
 #endif

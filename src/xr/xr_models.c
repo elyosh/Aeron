@@ -3,15 +3,49 @@
  * binary glTF file, with named nodes that the runtime moves: the trigger,
  * the buttons, the stick.
  *
- * For now this file only logs what the runtime offers: for each model its
- * hand, the size of its file and the names of its moving nodes. Nothing is
- * loaded or drawn. */
+ * This file keeps one model for each hand: its file, the names of its
+ * moving nodes and the space that gives its pose. The application reads the
+ * file once (Aeron_XrControllerModel), and the model's pose and the poses
+ * of its moving nodes each frame (Aeron_XrControllerModelState). */
 
 #include "../internal.h"
 #include "xr_internal.h"
 
+#include <string.h>
+
 #define XR_MODEL_MAX 16
-#define XR_MODEL_NODE_MAX 64
+
+/* The model that a hand holds. */
+typedef struct XrHandModel {
+	XrRenderModelEXT model;
+	XrSpace          space;
+	uint8_t*         glb;
+	size_t           glb_size;
+	uint32_t         node_count;
+	char             node_names[AERON_XR_MODEL_NODE_MAX][XR_MAX_RENDER_MODEL_ASSET_NODE_NAME_SIZE_EXT];
+} XrHandModel;
+
+static XrHandModel g_hand_models[2];
+/* Changes each time the models are read again. */
+static uint32_t g_model_generation;
+
+static void xr_models_release(void) {
+	for (int hand = 0; hand < 2; hand++) {
+		XrHandModel* slot = &g_hand_models[hand];
+		if (slot->space)
+			g_xr.fn.xrDestroySpace(slot->space);
+		if (slot->model && g_xr.model_fn.xrDestroyRenderModelEXT)
+			g_xr.model_fn.xrDestroyRenderModelEXT(slot->model);
+		SDL_free(slot->glb);
+		SDL_zerop(slot);
+	}
+	g_model_generation++;
+}
+
+void AeronXrModels_Shutdown(void) {
+	xr_models_release();
+	g_xr.models_available = 0;
+}
 
 void AeronXrModels_Init(void) {
 	PFN_xrGetInstanceProcAddr get_proc = (PFN_xrGetInstanceProcAddr)SDL_OpenXR_GetXrGetInstanceProcAddr();
@@ -37,6 +71,8 @@ void AeronXrModels_Init(void) {
 	XR_MODEL_FUNCTION(xrDestroyRenderModelAssetEXT)
 	XR_MODEL_FUNCTION(xrGetRenderModelAssetDataEXT)
 	XR_MODEL_FUNCTION(xrGetRenderModelAssetPropertiesEXT)
+	XR_MODEL_FUNCTION(xrCreateRenderModelSpaceEXT)
+	XR_MODEL_FUNCTION(xrGetRenderModelStateEXT)
 #undef XR_MODEL_FUNCTION
 	if (!found)
 		SDL_zero(g_xr.model_fn);
@@ -86,8 +122,8 @@ static int xr_model_create(XrRenderModelIdEXT id, XrRenderModelEXT* model) {
 	return 1;
 }
 
-/* Which hand the model is drawn for, as text for the log. */
-static const char* xr_model_hand(XrRenderModelEXT model) {
+/* Which hand the model is drawn for: 0 or 1, or -1. */
+static int xr_model_hand(XrRenderModelEXT model) {
 	const XrInteractionRenderModelTopLevelUserPathGetInfoEXT info = {
 		.type                  = XR_TYPE_INTERACTION_RENDER_MODEL_TOP_LEVEL_USER_PATH_GET_INFO_EXT,
 		.topLevelUserPathCount = 2,
@@ -95,18 +131,24 @@ static const char* xr_model_hand(XrRenderModelEXT model) {
 	};
 	XrPath path = XR_NULL_PATH;
 	if (XR_FAILED(g_xr.model_fn.xrGetRenderModelPoseTopLevelUserPathEXT(model, &info, &path)))
-		return "unknown hand";
-	if (path == g_xr.input.hand_paths[0])
-		return "left hand";
-	if (path == g_xr.input.hand_paths[1])
-		return "right hand";
-	return "no hand";
+		return -1;
+	return path == g_xr.input.hand_paths[0] ? 0 : path == g_xr.input.hand_paths[1] ? 1 : -1;
 }
 
-static void xr_model_log(XrRenderModelIdEXT id) {
+/* Reads the model with this ID and keeps it for its hand. A hand keeps the
+ * first model that the runtime lists for it. */
+static void xr_model_read(XrRenderModelIdEXT id) {
 	XrRenderModelEXT model;
 	if (!xr_model_create(id, &model))
 		return;
+	const int    hand = xr_model_hand(model);
+	XrHandModel* slot = hand >= 0 ? &g_hand_models[hand] : NULL;
+	if (!slot || slot->model) {
+		Aeron_LogInfo("aeron.xr", "controller model: %s, left out",
+					  slot ? "a second model for a hand" : "a model for no hand");
+		g_xr.model_fn.xrDestroyRenderModelEXT(model);
+		return;
+	}
 
 	const XrRenderModelPropertiesGetInfoEXT get_info   = { .type =
 															   XR_TYPE_RENDER_MODEL_PROPERTIES_GET_INFO_EXT };
@@ -133,15 +175,25 @@ static void xr_model_log(XrRenderModelIdEXT id) {
 	const XrRenderModelAssetDataGetInfoEXT data_info = { .type =
 															 XR_TYPE_RENDER_MODEL_ASSET_DATA_GET_INFO_EXT };
 	XrRenderModelAssetDataEXT              data      = { .type = XR_TYPE_RENDER_MODEL_ASSET_DATA_EXT };
+	uint8_t*                               glb       = NULL;
 	result = g_xr.model_fn.xrGetRenderModelAssetDataEXT(asset, &data_info, &data);
-	if (XR_FAILED(result))
-		xr_model_warn("could not read the size of the model's file", result);
+	if (XR_SUCCEEDED(result) && data.bufferCountOutput > 0) {
+		glb                      = (uint8_t*)SDL_malloc(data.bufferCountOutput);
+		data.bufferCapacityInput = data.bufferCountOutput;
+		data.buffer              = glb;
+		result                   = glb ? g_xr.model_fn.xrGetRenderModelAssetDataEXT(asset, &data_info, &data)
+									   : XR_ERROR_OUT_OF_MEMORY;
+	}
+	if (XR_FAILED(result) || !glb) {
+		xr_model_warn("could not read the model's file", result);
+		SDL_free(glb);
+		g_xr.model_fn.xrDestroyRenderModelAssetEXT(asset);
+		g_xr.model_fn.xrDestroyRenderModelEXT(model);
+		return;
+	}
 
-	Aeron_LogInfo("aeron.xr", "controller model (%s): %u bytes, %u moving nodes", xr_model_hand(model),
-				  (unsigned)data.bufferCountOutput, (unsigned)properties.animatableNodeCount);
-
-	XrRenderModelAssetNodePropertiesEXT nodes[XR_MODEL_NODE_MAX];
-	const uint32_t node_count = SDL_min(properties.animatableNodeCount, (uint32_t)XR_MODEL_NODE_MAX);
+	XrRenderModelAssetNodePropertiesEXT nodes[AERON_XR_MODEL_NODE_MAX];
+	const uint32_t node_count = SDL_min(properties.animatableNodeCount, (uint32_t)AERON_XR_MODEL_NODE_MAX);
 	const XrRenderModelAssetPropertiesGetInfoEXT nodes_info = {
 		.type = XR_TYPE_RENDER_MODEL_ASSET_PROPERTIES_GET_INFO_EXT,
 	};
@@ -151,25 +203,48 @@ static void xr_model_log(XrRenderModelIdEXT id) {
 		.nodeProperties    = nodes,
 	};
 	SDL_zero(nodes);
-	if (node_count > 0) {
+	/* The states are given for every moving node, in this order, so a model
+	 * with more of them than Aeron keeps can't be animated. */
+	if (properties.animatableNodeCount > AERON_XR_MODEL_NODE_MAX) {
+		Aeron_LogWarn("aeron.xr", "controller model: %u moving nodes are too many; the model stays still",
+					  (unsigned)properties.animatableNodeCount);
+	} else if (node_count > 0) {
 		result = g_xr.model_fn.xrGetRenderModelAssetPropertiesEXT(asset, &nodes_info, &asset_properties);
-		if (XR_FAILED(result)) {
+		if (XR_FAILED(result))
 			xr_model_warn("could not read the names of the model's nodes", result);
-		} else {
-			for (uint32_t i = 0; i < node_count; i++) {
-				nodes[i].uniqueName[sizeof nodes[i].uniqueName - 1] = '\0';
-				Aeron_LogInfo("aeron.xr", "  node %u: %s", (unsigned)i, nodes[i].uniqueName);
-			}
-		}
+		else
+			slot->node_count = node_count;
 	}
+	for (uint32_t i = 0; i < slot->node_count; i++)
+		SDL_strlcpy(slot->node_names[i], nodes[i].uniqueName, sizeof slot->node_names[i]);
 	g_xr.model_fn.xrDestroyRenderModelAssetEXT(asset);
-	g_xr.model_fn.xrDestroyRenderModelEXT(model);
+
+	const XrRenderModelSpaceCreateInfoEXT space_info = {
+		.type        = XR_TYPE_RENDER_MODEL_SPACE_CREATE_INFO_EXT,
+		.renderModel = model,
+	};
+	result = g_xr.model_fn.xrCreateRenderModelSpaceEXT(g_xr.machine.session, &space_info, &slot->space);
+	if (XR_FAILED(result)) {
+		xr_model_warn("could not create the model's space", result);
+		SDL_free(glb);
+		g_xr.model_fn.xrDestroyRenderModelEXT(model);
+		SDL_zerop(slot);
+		return;
+	}
+	slot->model    = model;
+	slot->glb      = glb;
+	slot->glb_size = data.bufferCountOutput;
+	Aeron_LogInfo("aeron.xr", "controller model (%s hand): %u bytes, %u moving nodes",
+				  hand ? "right" : "left", (unsigned)slot->glb_size, (unsigned)slot->node_count);
+	for (uint32_t i = 0; i < slot->node_count; i++)
+		Aeron_LogInfo("aeron.xr", "  node %u: %s", (unsigned)i, slot->node_names[i]);
 }
 
 void AeronXrModels_Update(void) {
 	if (!g_xr.models_available || !g_xr.models_stale || !g_xr.input.ready)
 		return;
 	g_xr.models_stale = 0;
+	xr_models_release();
 
 	const XrInteractionRenderModelIdsEnumerateInfoEXT info = {
 		.type = XR_TYPE_INTERACTION_RENDER_MODEL_IDS_ENUMERATE_INFO_EXT,
@@ -184,5 +259,66 @@ void AeronXrModels_Update(void) {
 	}
 	Aeron_LogInfo("aeron.xr", "the runtime lists %u controller models", (unsigned)count);
 	for (uint32_t i = 0; i < count && i < XR_MODEL_MAX; i++)
-		xr_model_log(ids[i]);
+		xr_model_read(ids[i]);
+}
+
+int Aeron_XrControllerModel(int hand, AeronXrControllerModel* out) {
+	if (!out || hand < 0 || hand > 1 || !g_hand_models[hand].model)
+		return 0;
+	const XrHandModel* slot = &g_hand_models[hand];
+	SDL_zerop(out);
+	out->generation = g_model_generation;
+	out->glb        = slot->glb;
+	out->glb_size   = slot->glb_size;
+	out->node_count = (int)slot->node_count;
+	for (uint32_t i = 0; i < slot->node_count; i++)
+		out->node_names[i] = slot->node_names[i];
+	return 1;
+}
+
+int Aeron_XrControllerModelState(int hand, AeronXrControllerModelState* out) {
+	if (!out || hand < 0 || hand > 1 || !g_hand_models[hand].model || !g_xr.machine.running || g_xr.failed)
+		return 0;
+	const XrHandModel*         slot     = &g_hand_models[hand];
+	XrSpaceLocation            location = { .type = XR_TYPE_SPACE_LOCATION };
+	const XrSpaceLocationFlags needed =
+		XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+	if (XR_FAILED(g_xr.fn.xrLocateSpace(slot->space, g_xr.rig_space, g_xr.frame_display_time, &location)) ||
+		(location.locationFlags & needed) != needed)
+		return 0;
+	SDL_zerop(out);
+	out->pose.position_m[0]  = location.pose.position.x;
+	out->pose.position_m[1]  = location.pose.position.y;
+	out->pose.position_m[2]  = location.pose.position.z;
+	out->pose.orientation[0] = location.pose.orientation.x;
+	out->pose.orientation[1] = location.pose.orientation.y;
+	out->pose.orientation[2] = location.pose.orientation.z;
+	out->pose.orientation[3] = location.pose.orientation.w;
+
+	XrRenderModelNodeStateEXT          states[AERON_XR_MODEL_NODE_MAX];
+	const XrRenderModelStateGetInfoEXT info = {
+		.type        = XR_TYPE_RENDER_MODEL_STATE_GET_INFO_EXT,
+		.displayTime = g_xr.frame_display_time,
+	};
+	XrRenderModelStateEXT state = {
+		.type           = XR_TYPE_RENDER_MODEL_STATE_EXT,
+		.nodeStateCount = slot->node_count,
+		.nodeStates     = states,
+	};
+	/* Without the nodes' states the model is still drawn, at rest. */
+	if (slot->node_count == 0 ||
+		XR_FAILED(g_xr.model_fn.xrGetRenderModelStateEXT(slot->model, &info, &state)))
+		return 1;
+	out->node_count = (int)slot->node_count;
+	for (uint32_t i = 0; i < slot->node_count; i++) {
+		out->nodes[i].position_m[0]  = states[i].nodePose.position.x;
+		out->nodes[i].position_m[1]  = states[i].nodePose.position.y;
+		out->nodes[i].position_m[2]  = states[i].nodePose.position.z;
+		out->nodes[i].orientation[0] = states[i].nodePose.orientation.x;
+		out->nodes[i].orientation[1] = states[i].nodePose.orientation.y;
+		out->nodes[i].orientation[2] = states[i].nodePose.orientation.z;
+		out->nodes[i].orientation[3] = states[i].nodePose.orientation.w;
+		out->node_visible[i]         = states[i].isVisible == XR_TRUE;
+	}
+	return 1;
 }

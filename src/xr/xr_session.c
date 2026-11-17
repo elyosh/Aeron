@@ -225,6 +225,7 @@ void AeronXr_DestroySession(SDL_GPUDevice* device) {
 	AeronXr_DestroySwapchains(device);
 	AeronXr_FreeAreaMeshes();
 	if (g_xr.machine.session && !g_xr.failed)
+		AeronXrModels_Shutdown();
 		AeronXrInput_Destroy();
 	SDL_zero(g_xr.input);
 	SDL_zero(g_xr.model_fn);
@@ -394,6 +395,18 @@ int Aeron_XrBeginViews(AeronXrFrame* out) {
 void Aeron_XrSubmitViews(void) {}
 
 void Aeron_XrSubmitViewsOver(void) {}
+
+int Aeron_XrControllerModel(int hand, AeronXrControllerModel* out) {
+	(void)hand;
+	(void)out;
+	return 0;
+}
+
+int Aeron_XrControllerModelState(int hand, AeronXrControllerModelState* out) {
+	(void)hand;
+	(void)out;
+	return 0;
+}
 
 AeronRenderTarget* Aeron_XrPanelBegin(const AeronXrPanelDesc* desc) {
 	(void)desc;

@@ -1191,6 +1191,7 @@ add_subdirectory(tools/brdf_lut_gen)
 
 add_library(aeron_asset STATIC
     src/asset/opt_model.c
+    src/asset/plain_gltf_model.c
     src/asset/decode_types.c
     src/asset/bmp.c
     src/asset/abp_font.c
@@ -1210,7 +1211,7 @@ target_include_directories(aeron_asset
 )
 target_link_libraries(aeron_asset
     PUBLIC aeron_scene
-    PRIVATE opt2gltf_lib aeron_gltf_cook_lib
+    PRIVATE opt2gltf_lib aeron_gltf_cook_lib aeron_cjson
 )
 if(NOT MSVC)
     target_link_libraries(aeron_asset PRIVATE m)

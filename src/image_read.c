@@ -9,6 +9,7 @@
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
 #define STBI_NO_STDIO
 /* The compiler reports unused static functions at the end of the file, so
  * the warning has to stay off until then. */
@@ -33,6 +34,18 @@ uint8_t* Aeron_ImageReadPngRgba8(AeronVfs* vfs, AeronVfsRoot root, const char* p
 	int      width = 0, height = 0, channels = 0;
 	uint8_t* pixels = stbi_load_from_memory(bytes, (int)size, &width, &height, &channels, 4);
 	free(bytes);
+	if (!pixels)
+		return NULL;
+	*out_width  = width;
+	*out_height = height;
+	return pixels;
+}
+
+uint8_t* Aeron_ImageDecodeRgba8(const uint8_t* bytes, size_t size, int* out_width, int* out_height) {
+	if (!bytes || size == 0 || size > (size_t)INT_MAX || !out_width || !out_height)
+		return NULL;
+	int      width = 0, height = 0, channels = 0;
+	uint8_t* pixels = stbi_load_from_memory(bytes, (int)size, &width, &height, &channels, 4);
 	if (!pixels)
 		return NULL;
 	*out_width  = width;

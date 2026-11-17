@@ -229,6 +229,8 @@ typedef struct AeronXrModelFunctions {
 	PFN_xrDestroyRenderModelAssetEXT            xrDestroyRenderModelAssetEXT;
 	PFN_xrGetRenderModelAssetDataEXT            xrGetRenderModelAssetDataEXT;
 	PFN_xrGetRenderModelAssetPropertiesEXT      xrGetRenderModelAssetPropertiesEXT;
+	PFN_xrCreateRenderModelSpaceEXT             xrCreateRenderModelSpaceEXT;
+	PFN_xrGetRenderModelStateEXT                xrGetRenderModelStateEXT;
 } AeronXrModelFunctions;
 
 /* The OpenXR state of the GPU device, shared by the files in src/xr. */
@@ -343,6 +345,8 @@ void AeronXrInput_ProfileChanged(void);
  * Init finds the functions. Changed marks the list as stale, on the
  * runtime's event. Update reads a stale list and logs each model. */
 void AeronXrModels_Init(void);
+/* Releases the models, before the session and its spaces are destroyed. */
+void AeronXrModels_Shutdown(void);
 void AeronXrModels_Changed(void);
 void AeronXrModels_Update(void);
 /* Releases every image that is still held. xrEndFrame calls it: by then

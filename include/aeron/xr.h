@@ -114,6 +114,45 @@ void Aeron_XrSubmitViews(void);
  * are empty, with colours premultiplied by alpha. */
 void Aeron_XrSubmitViewsOver(void);
 
+/* The runtime's model of the controller that a hand holds: a binary glTF
+ * 2.0 file, and the names of the nodes of that file that the runtime moves,
+ * such as the trigger and the buttons. Few runtimes give models (SteamVR
+ * does), and only while a session runs. */
+#define AERON_XR_MODEL_NODE_MAX 64
+
+typedef struct AeronXrControllerModel {
+	/* Changes when the runtime's models change: the file must be read
+	 * again. */
+	uint32_t generation;
+	/* Borrowed until the next Aeron_BeginFrame. */
+	const uint8_t* glb;
+	size_t         glb_size;
+	int            node_count;
+	const char*    node_names[AERON_XR_MODEL_NODE_MAX];
+} AeronXrControllerModel;
+
+/* Gives the model of a hand's controller. `hand` is 0 for the left hand and
+ * 1 for the right one. Returns 0 when the runtime has none. */
+int Aeron_XrControllerModel(int hand, AeronXrControllerModel* out);
+
+typedef struct AeronXrControllerModelState {
+	/* The model's origin in the rig's space. */
+	AeronViewPose pose;
+	/* For each moving node, in the order of the model's node_names: its pose
+	 * in the space of its parent node, in place of the pose that the file
+	 * gives it, and whether it is shown. A node that isn't shown hides its
+	 * descendants. node_count is 0 when the runtime gave no states: the
+	 * model is then at rest. */
+	int           node_count;
+	AeronViewPose nodes[AERON_XR_MODEL_NODE_MAX];
+	uint8_t       node_visible[AERON_XR_MODEL_NODE_MAX];
+} AeronXrControllerModelState;
+
+/* Gives where a hand's controller model is, and how its moving nodes are,
+ * when the current frame is shown. Returns 0 when the hand has no model or
+ * the runtime doesn't know where it is. */
+int Aeron_XrControllerModelState(int hand, AeronXrControllerModelState* out);
+
 /* The panel: a second flat surface in the headset, beside the virtual
  * screen, that the application draws itself, such as a keyboard. */
 typedef struct AeronXrPanelDesc {
