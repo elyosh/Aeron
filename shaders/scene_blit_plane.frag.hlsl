@@ -50,6 +50,7 @@ float4 main(VSOut input) : SV_Target
         float2 c      = saturate(inside / pixel + 0.5f);
         coverage      = c.x * c.y;
     }
-    /* The colour is premultiplied, so the coverage scales it whole. */
+    /* The colour is premultiplied, so the coverage multiplies all four
+       channels. */
     return float4(rgb, a) * coverage;
 }

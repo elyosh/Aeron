@@ -326,7 +326,7 @@ typedef struct AeronRuntime {
 	/* The screen holds a picture, and its empty parts are transparent. */
 	int xr_screen_has_content;
 	int xr_screen_transparent;
-	/* Aeron_XrSetScreenScale; 0 is 1. */
+	/* Aeron_XrSetScreenScale; 0 means 1. */
 	float xr_screen_scale;
 	/* The pointer drawn on the virtual screen in the headset. */
 	SDL_GPUTexture* xr_pointer_texture;
