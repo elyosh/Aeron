@@ -285,6 +285,8 @@ typedef struct AeronXrState {
 	 * eye images, and Aeron_XrSubmitViews said that they are complete. */
 	int    views_begun;
 	int    views_submitted;
+	/* The submitted eye images go over the virtual screen (Aeron_XrSubmitViewsOver). */
+	int    views_over;
 	XrView located_views[2];
 	/* The eyes' area meshes (xr_mask.c). The function is NULL when the
 	 * runtime doesn't have XR_KHR_visibility_mask. */

@@ -69,7 +69,8 @@ int AeronXr_BeginFrame(void) {
 }
 
 /* The layer that shows the two eye images. */
-static void xr_fill_projection(XrCompositionLayerProjection* layer, XrCompositionLayerProjectionView views[2]) {
+static void xr_fill_projection(XrCompositionLayerProjection* layer, XrCompositionLayerProjectionView views[2],
+							   int blended) {
 	for (int eye = 0; eye < 2; eye++) {
 		views[eye] = (XrCompositionLayerProjectionView) {
 			.type     = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
@@ -82,10 +83,11 @@ static void xr_fill_projection(XrCompositionLayerProjection* layer, XrCompositio
 		};
 	}
 	*layer = (XrCompositionLayerProjection) {
-		.type      = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
-		.space     = g_xr.rig_space,
-		.viewCount = 2,
-		.views     = views,
+		.type       = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
+		.layerFlags = blended ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT : 0,
+		.space      = g_xr.rig_space,
+		.viewCount  = 2,
+		.views      = views,
 	};
 }
 
@@ -145,26 +147,33 @@ int AeronXr_EndFrame(void) {
 	AeronXr_ReleaseImages();
 	const int show_views  = g_xr.views_submitted;
 	const int show_screen = g_xr.screen_visible && g_xr.screen.tracker.released_once;
+	const int views_over  = g_xr.views_over;
 	g_xr.views_begun      = 0;
 	g_xr.views_submitted  = 0;
+	g_xr.views_over       = 0;
 	g_xr.screen_visible   = 0;
 	g_xr.screen_shown     = g_xr.frame_should_render && show_screen;
 	if (g_xr.failed)
 		return 0;
 
-	/* The eye images are behind the virtual screen. */
+	/* The eye images are behind the virtual screen, unless they only hold
+	 * something to show over it. */
 	XrCompositionLayerProjection       projection;
 	XrCompositionLayerProjectionView   projection_views[2];
 	XrCompositionLayerQuad             screen;
 	const XrCompositionLayerBaseHeader* layers[2];
 	uint32_t                            layer_count = 0;
-	if (g_xr.frame_should_render && show_views) {
-		xr_fill_projection(&projection, projection_views);
+	if (g_xr.frame_should_render && show_views && !views_over) {
+		xr_fill_projection(&projection, projection_views, 0);
 		layers[layer_count++] = (const XrCompositionLayerBaseHeader*)&projection;
 	}
 	if (g_xr.frame_should_render && show_screen) {
 		xr_fill_screen(&screen);
 		layers[layer_count++] = (const XrCompositionLayerBaseHeader*)&screen;
+	}
+	if (g_xr.frame_should_render && show_views && views_over) {
+		xr_fill_projection(&projection, projection_views, 1);
+		layers[layer_count++] = (const XrCompositionLayerBaseHeader*)&projection;
 	}
 
 	const XrFrameEndInfo end_info = {

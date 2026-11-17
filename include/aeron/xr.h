@@ -107,6 +107,12 @@ int Aeron_XrBeginViews(AeronXrFrame* out);
 /* The eye images are complete. Without this call Aeron_Present releases
  * them and leaves the projection layer out. */
 void Aeron_XrSubmitViews(void);
+/* As Aeron_XrSubmitViews, for eye images that only hold something to show
+ * over the virtual screen, such as the beam of a hand that points at it.
+ * The headset then shows the screen first, as on a frame without eye
+ * images, and the eye images over it: they must be transparent where they
+ * are empty, with colours premultiplied by alpha. */
+void Aeron_XrSubmitViewsOver(void);
 /* Asks Aeron_Present to call `desc->callback` while it draws the window, so
  * the application can show there what the headset shows. The callback draws
  * into the whole window, behind the copy of the virtual screen. A required

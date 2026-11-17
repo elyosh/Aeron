@@ -201,7 +201,16 @@ void Aeron_XrSubmitViews(void) {
 		g_xr.views_submitted = 1;
 }
 
-int AeronXr_ViewsSubmitted(void) { return g_xr.views_submitted; }
+void Aeron_XrSubmitViewsOver(void) {
+	if (g_xr.views_begun) {
+		g_xr.views_submitted = 1;
+		g_xr.views_over      = 1;
+	}
+}
+
+/* Eye images that go over the virtual screen don't count: the screen is
+ * then drawn as on a frame without eye images. */
+int AeronXr_ViewsSubmitted(void) { return g_xr.views_submitted && !g_xr.views_over; }
 
 uint64_t AeronXr_FramePeriodUs(void) { return (uint64_t)g_xr.frame_period / 1000u; }
 
