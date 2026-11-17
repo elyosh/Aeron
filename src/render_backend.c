@@ -270,6 +270,7 @@ void Aeron_OnXrSessionRunningChanged(int running) {
 		Aeron_RaiseWindow();
 	}
 	g_aeron.window_draw_disabled = running && mode == SDL_GPU_PRESENTMODE_VSYNC;
+	g_aeron.xr_window_next_us    = 0;
 	if (g_aeron.window_draw_disabled) {
 		Aeron_LogWarn("aeron.xr", "the window can only present with vsync, so it is not drawn in VR");
 	}
@@ -2270,6 +2271,10 @@ static int Aeron_PresentFrame(void) {
 	 * forces a present so its windows keep rendering over an idle frame. */
 	draw_window =
 		!g_aeron.window_draw_disabled && (has_layers || Aeron_DebugUiVisible() || xr_views || xr_mirror);
+	/* In VR the window draws no more frames than its display shows. */
+	if (draw_window && xr_running && !Aeron_XrWindowFrameDue()) {
+		draw_window = 0;
+	}
 	if (!has_layers && !draw_window && !draw_headset_screen) {
 		return 1;
 	}

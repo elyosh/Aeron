@@ -179,6 +179,9 @@ typedef struct AeronXrState {
 	int    frame_open;
 	XrTime frame_display_time;
 	int    frame_should_render;
+	/* The time between two frames of the headset, or 0 when the runtime
+	 * gave none. */
+	XrDuration frame_period;
 
 	/* The size of one eye image, and the largest size the runtime accepts.
 	 * Both eyes use the same size: the size the runtime recommends, times

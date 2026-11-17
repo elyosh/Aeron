@@ -313,6 +313,9 @@ typedef struct AeronRuntime {
 	/* A VR session runs and the window can't present without waiting for
 	 * its display, so the window isn't drawn. */
 	int   window_draw_disabled;
+	/* When the window draws its next frame in VR (Aeron_XrWindowFrameDue),
+	 * or 0 for the next frame of the headset. */
+	uint64_t xr_window_next_us;
 	/* The virtual screen: with VR, the layers are composed into this
 	 * texture instead of the window. The headset shows it as a flat screen
 	 * and the window shows a copy. NULL without VR. */
@@ -417,6 +420,9 @@ void Aeron_RefreshPresentationTiming(void);
 void Aeron_ResetPacing(void);
 int  Aeron_PacingActive(void);
 void Aeron_NotePacingPresent(uint64_t acquire_wait_us, int gpu_done, uint64_t present_us);
+/* In VR, whether the window draws this frame of the headset. The window
+ * draws no more frames than its display shows. */
+int Aeron_XrWindowFrameDue(void);
 
 int  Aeron_WindowInit(const AeronConfig* config);
 void Aeron_WindowShutdown(void);
@@ -462,6 +468,9 @@ void Aeron_OnXrSessionRunningChanged(int running);
 void AeronXr_DestroySession(SDL_GPUDevice* device);
 /* Whether this frame's eye images are complete (Aeron_XrSubmitViews). */
 int AeronXr_ViewsSubmitted(void);
+/* The time between two frames of the headset, in microseconds, or 0 when
+ * it isn't known. */
+uint64_t AeronXr_FramePeriodUs(void);
 /* Acquires this frame's image of the virtual screen, which the headset
  * shows as a flat screen. Returns NULL when the headset shows nothing this
  * frame. The image is released when the frame ends. */

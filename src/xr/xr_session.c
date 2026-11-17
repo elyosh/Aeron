@@ -334,6 +334,8 @@ void AeronXr_DestroySession(SDL_GPUDevice* device) { (void)device; }
 
 int AeronXr_ViewsSubmitted(void) { return 0; }
 
+uint64_t AeronXr_FramePeriodUs(void) { return 0; }
+
 SDL_GPUTexture* AeronXr_AcquireScreenImage(SDL_GPUTextureFormat* format, int* width, int* height) {
 	(void)format;
 	(void)width;

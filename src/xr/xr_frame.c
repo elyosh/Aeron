@@ -62,6 +62,7 @@ int AeronXr_BeginFrame(void) {
 	g_xr.frame_open          = 1;
 	g_xr.frame_display_time  = state.predictedDisplayTime;
 	g_xr.frame_should_render = state.shouldRender == XR_TRUE;
+	g_xr.frame_period        = state.predictedDisplayPeriod > 0 ? state.predictedDisplayPeriod : 0;
 	if (g_xr.recenter_pending)
 		xr_apply_recenter();
 	return 1;

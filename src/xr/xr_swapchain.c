@@ -203,6 +203,8 @@ void Aeron_XrSubmitViews(void) {
 
 int AeronXr_ViewsSubmitted(void) { return g_xr.views_submitted; }
 
+uint64_t AeronXr_FramePeriodUs(void) { return (uint64_t)g_xr.frame_period / 1000u; }
+
 SDL_GPUTexture* AeronXr_AcquireScreenImage(SDL_GPUTextureFormat* format, int* width, int* height) {
 	char error[256];
 

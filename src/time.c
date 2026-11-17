@@ -110,6 +110,27 @@ void Aeron_WaitForNextFrame(uint64_t app_wake_delay_us) {
 	}
 }
 
+/* The headset's frames come at its own rate, and the window shows them
+ * without waiting for its display. A display that is slower than the
+ * headset can't show them all, so the window draws the frame that comes
+ * closest to each refresh of its display and skips the others. Half a
+ * headset frame of tolerance keeps every frame when the two rates are
+ * equal. A display that is faster than the headset is always late for the
+ * next refresh, so the window then draws every frame. */
+int Aeron_XrWindowFrameDue(void) {
+	const uint64_t now_us      = Aeron_NowUs();
+	const uint64_t interval_us = Aeron_PresentationIntervalUs();
+
+	if (now_us + AeronXr_FramePeriodUs() / 2u < g_aeron.xr_window_next_us) {
+		return 0;
+	}
+	g_aeron.xr_window_next_us += interval_us;
+	if (g_aeron.xr_window_next_us <= now_us) {
+		g_aeron.xr_window_next_us = now_us + interval_us;
+	}
+	return 1;
+}
+
 /* Latency pacing. The delay grows by a small step while the GPU work is done
  * when the swapchain image arrives and the present still waited for it. It
  * falls by a larger step when the GPU work isn't done by then, so about one
