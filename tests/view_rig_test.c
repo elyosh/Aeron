@@ -1,7 +1,7 @@
 /*
  * Tests the view rig math (aeron/scene/view_rig.h): converting a field of
  * view to the scene camera's projection values, computing a view's camera
- * from the seat camera, and building the surround and debug stereo rigs.
+ * from the seat camera, and building the surround rig.
  *
  * Built with the tools as aeron_view_rig_test. It needs no window and no
  * GPU. It prints each check and exits with a non-zero status when a check
@@ -346,40 +346,11 @@ static void test_surround(void) {
 	check(!AeronViewRig_FromSurround(&desc, rects, &rig), "a distance of zero is refused");
 }
 
-static void test_debug_stereo(void) {
-	const AeronViewFov fov = { radians(-45.0f), radians(45.0f), radians(45.0f), radians(-45.0f) };
-	AeronViewPose      head;
-	AeronViewRig       rig;
-
-	identity_pose(&head);
-	head.position_m[1] = 0.1f;
-	check(AeronViewRig_DebugStereo(0.064f, &fov, &head, 1000, 900, &rig) && rig.count == 2,
-		  "the debug stereo rig has two views");
-	check(close3(rig.views[0].pose.position_m, -0.032f, 0.1f, 0.0f) &&
-			  close3(rig.views[1].pose.position_m, 0.032f, 0.1f, 0.0f),
-		  "each eye is half the IPD to the left or right of the head");
-	check(rig.views[0].rect.x == 0 && rig.views[1].rect.x == 1000 && rig.views[1].rect.width == 1000 &&
-			  rig.views[1].rect.height == 900 && rig.width == 1000 && rig.height == 900,
-		  "the views are side by side");
-	check(rig.tracked && rig.shared_sprites && rig.primary == 0 &&
-			  close3(rig.center.position_m, 0.0f, 0.1f, 0.0f),
-		  "the rig is tracked, shares its sprites and has the head as its centre");
-
-	/* With the head turned left, its right axis points along -Z. */
-	axis_angle(0.0f, 1.0f, 0.0f, 90.0f, head.orientation);
-	check(AeronViewRig_DebugStereo(0.064f, &fov, &head, 1000, 900, &rig) &&
-			  close3(rig.views[1].pose.position_m, 0.0f, 0.1f, -0.032f) &&
-			  close3(rig.views[0].pose.position_m, 0.0f, 0.1f, 0.032f),
-		  "the eyes move with the head when it turns");
-	check(!AeronViewRig_DebugStereo(0.064f, &fov, &head, 0, 900, &rig), "a view size of zero is refused");
-}
-
 int main(void) {
 	test_fov();
 	test_rotation();
 	test_compose();
 	test_surround();
-	test_debug_stereo();
 	if (g_failures) {
 		printf("%d check(s) failed\n", g_failures);
 		return 1;

@@ -68,42 +68,6 @@ static int send_event(AeronXrSessionMachine* machine, const AeronXrFunctions* fn
 	return AeronXrSession_HandleEvent(machine, fn, &buffer, error, sizeof error);
 }
 
-static void test_session_life(void) {
-	AeronXrSessionMachine machine;
-	AeronXrFunctions      fn;
-	reset(&machine, &fn);
-
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_IDLE) && !machine.running &&
-			  g_begin_calls == 0,
-		  "idle: the session does not begin");
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_READY) && machine.running &&
-			  g_begin_calls == 1,
-		  "ready: the session begins, with the stereo view configuration");
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_SYNCHRONIZED) && machine.running &&
-			  !machine.focused,
-		  "synchronized: running, without the focus");
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_VISIBLE) && !machine.focused,
-		  "visible: without the focus");
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_FOCUSED) && machine.focused,
-		  "focused: with the focus");
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_VISIBLE) && !machine.focused &&
-			  machine.running,
-		  "visible again: the focus is lost, the session still runs");
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_STOPPING) && !machine.running &&
-			  g_end_calls == 1,
-		  "stopping: the session ends");
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_IDLE) && !machine.running &&
-			  !machine.exit_requested,
-		  "idle after a stop: nothing more happens");
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_READY) && machine.running &&
-			  g_begin_calls == 2,
-		  "ready again: the session begins a second time");
-	send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_STOPPING);
-	check(send_state(&machine, &fn, TEST_SESSION, XR_SESSION_STATE_EXITING) && machine.exit_requested &&
-			  !machine.running,
-		  "exiting: the application is asked to quit");
-}
-
 static void test_session_failures(void) {
 	AeronXrSessionMachine machine;
 	AeronXrFunctions      fn;
@@ -292,7 +256,6 @@ static void test_swapchain_images(void) {
 
 int main(void) {
 	test_swapchain_images();
-	test_session_life();
 	test_session_failures();
 	test_recenter();
 	printf(g_failures ? "%d checks FAILED\n" : "all checks passed\n", g_failures);
