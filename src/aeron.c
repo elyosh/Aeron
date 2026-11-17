@@ -68,6 +68,9 @@ int Aeron_Init(const AeronConfig* config) {
 	}
 #endif
 
+	/* The application also has the focus while a headset has it, and the
+	 * desktop window may not. Joysticks and gamepads must still be read then. */
+	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD)) {
 		Aeron_LogError("aeron", "SDL_Init failed: %s", SDL_GetError());
 		return 0;

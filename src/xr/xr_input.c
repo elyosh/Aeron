@@ -608,8 +608,9 @@ static void xr_log_profile(int hand) {
 		xr_input_warn("could not read the interaction profile of a hand", result);
 		return;
 	}
-	if (state.interactionProfile == g_xr.input.logged_profiles[hand])
+	if (g_xr.input.profile_logged[hand] && state.interactionProfile == g_xr.input.logged_profiles[hand])
 		return;
+	g_xr.input.profile_logged[hand]  = 1;
 	g_xr.input.logged_profiles[hand] = state.interactionProfile;
 	if (state.interactionProfile != XR_NULL_PATH &&
 		XR_FAILED(

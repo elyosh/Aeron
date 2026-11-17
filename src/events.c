@@ -91,8 +91,9 @@ static void Aeron_UpdateLogicalMouse(AeronInputSnapshot* input, const SDL_Rect* 
  * outside the picture would give the keyboard to another window. So the
  * pointer is kept inside the picture while the window has the focus. */
 static void Aeron_UpdateMouseConfinement(const SDL_Rect* content_rect) {
-	const int confine = Aeron_XrSessionRunning() && g_aeron.input.has_focus &&
-						!g_aeron.relative_mouse_enabled && content_rect->w > 0 && content_rect->h > 0;
+	const int window_focus = (SDL_GetWindowFlags(g_aeron.window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+	const int confine      = Aeron_XrSessionRunning() && window_focus && !g_aeron.relative_mouse_enabled &&
+							 content_rect->w > 0 && content_rect->h > 0;
 
 	if (!confine) {
 		if (g_aeron.mouse_confined) {
@@ -164,7 +165,11 @@ int32_t Aeron_BeginFrame(void) {
 	SDL_GetWindowSize(g_aeron.window, &g_aeron.input.window_width, &g_aeron.input.window_height);
 	Aeron_ComputePresentationRect(g_aeron.input.window_width, g_aeron.input.window_height, &content_rect);
 	window_flags            = SDL_GetWindowFlags(g_aeron.window);
-	g_aeron.input.has_focus = (window_flags & SDL_WINDOW_INPUT_FOCUS) != 0;
+	/* A VR player who only uses the controllers may never click the desktop
+	 * window. So the application has the focus while the window has it, or
+	 * while the headset has the user's input focus. Keys still only arrive
+	 * while the window has the focus. */
+	g_aeron.input.has_focus = (window_flags & SDL_WINDOW_INPUT_FOCUS) != 0 || Aeron_XrFocused();
 	has_platform_position   = Aeron_UpdateRawMouseFromPlatform(&g_aeron.input);
 	has_mouse_position      = has_platform_position && Aeron_RawMouseInsideWindow(&g_aeron.input);
 	Aeron_UpdateLogicalMouse(&g_aeron.input, &content_rect, has_mouse_position);

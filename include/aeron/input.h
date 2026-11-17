@@ -301,7 +301,9 @@ typedef struct AeronInputSnapshot {
 	uint32_t                text_length;
 	int                     window_width;
 	int                     window_height;
-	int                     has_focus;
+	/* The window has the keyboard focus, or the VR headset has the user's
+	 * input focus. */
+	int has_focus;
 	/* Ordered events supplement the legacy arrays; overflow leaves those arrays intact. */
 	AeronKeyEvent key_events[AERON_KEY_EVENT_CAPACITY];
 	uint16_t      key_event_count;

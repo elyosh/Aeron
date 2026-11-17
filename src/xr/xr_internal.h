@@ -214,6 +214,7 @@ typedef struct AeronXrInputState {
 	int sync_failed;
 	/* The kind of controller that each hand was last logged with. */
 	XrPath logged_profiles[2];
+	int    profile_logged[2];
 } AeronXrInputState;
 
 /* The functions of XR_EXT_render_model and XR_EXT_interaction_render_model
