@@ -30,6 +30,11 @@ int Aeron_XrSessionRunning(void);
 int Aeron_XrFocused(void);
 /* Makes the current head position and yaw the origin of the rig. */
 void Aeron_XrRecenter(void);
+/* Sets the size of the virtual screen, as a multiple of the width of the
+ * startup options. The screen keeps its distance and its shape, so this is
+ * how large it looks. It applies from the next frame. A value that isn't
+ * above 0 is ignored. */
+void Aeron_XrSetScreenScale(float scale);
 /* The size of one eye image, in pixels: the size the runtime recommends,
  * times the render scale of the startup options. Returns 0 when VR is off. */
 int Aeron_XrViewSize(int* width, int* height);

@@ -290,6 +290,11 @@ void Aeron_XrRecenter(void) {
 		g_xr.recenter_pending = 1;
 }
 
+void Aeron_XrSetScreenScale(float scale) {
+	if (scale > 0.0f)
+		g_aeron.xr_screen_scale = scale;
+}
+
 void AeronXr_DestroyInstance(void) {
 	/* SDL_DestroyGPUDevice leaves the instance alone. */
 	if (g_xr.instance && g_xr.fn.xrDestroyInstance)
@@ -369,6 +374,8 @@ int Aeron_XrSessionRunning(void) { return 0; }
 int Aeron_XrFocused(void) { return 0; }
 
 void Aeron_XrRecenter(void) {}
+
+void Aeron_XrSetScreenScale(float scale) { (void)scale; }
 
 int Aeron_XrEnabled(void) { return 0; }
 

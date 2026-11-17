@@ -95,8 +95,9 @@ static void xr_fill_screen(XrCompositionLayerQuad* layer) {
 	const AeronStartupOptions* options = &g_aeron.xr_options;
 	const float distance = options->xr_screen_distance_m > 0.0f ? options->xr_screen_distance_m
 																: AERON_XR_SCREEN_DEFAULT_DISTANCE_M;
-	const float width =
-		options->xr_screen_width_m > 0.0f ? options->xr_screen_width_m : AERON_XR_SCREEN_DEFAULT_WIDTH_M;
+	const float                width =
+		(options->xr_screen_width_m > 0.0f ? options->xr_screen_width_m : AERON_XR_SCREEN_DEFAULT_WIDTH_M) *
+		(g_aeron.xr_screen_scale > 0.0f ? g_aeron.xr_screen_scale : 1.0f);
 	*layer = (XrCompositionLayerQuad) {
 		.type          = XR_TYPE_COMPOSITION_LAYER_QUAD,
 		.layerFlags    = g_xr.screen_transparent ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT : 0,
