@@ -113,6 +113,31 @@ void Aeron_XrSubmitViews(void);
  * images, and the eye images over it: they must be transparent where they
  * are empty, with colours premultiplied by alpha. */
 void Aeron_XrSubmitViewsOver(void);
+
+/* The panel: a second flat surface in the headset, beside the virtual
+ * screen, that the application draws itself, such as a keyboard. */
+typedef struct AeronXrPanelDesc {
+	int           width_px, height_px; /* the size of its image */
+	float         width_m;             /* its width in the headset; the height follows the image's shape */
+	AeronViewPose pose;                /* its centre in the rig's space, with X to the right and Y up on it */
+} AeronXrPanelDesc;
+
+/* Returns the image to draw the panel into for this frame, or NULL when no
+ * VR session runs or the frame isn't rendered. The headset shows the panel
+ * in the frames where this is called, over the virtual screen and under the
+ * eye images of Aeron_XrSubmitViewsOver. The image must be transparent
+ * where the panel is empty, with colours premultiplied by alpha. The image
+ * is created at the first call, and again when the size in pixels changes. */
+AeronRenderTarget* Aeron_XrPanelBegin(const AeronXrPanelDesc* desc);
+/* Finds where the aim ray of a hand meets the panel of the last
+ * Aeron_XrPanelBegin: `x` and `y` are in the image's pixels, from its top
+ * left corner. `hand` is 0 for the left hand and 1 for the right one.
+ * Returns 0 when the ray misses the panel, or there is no panel. */
+int Aeron_XrPanelHit(int hand, float* x, float* y);
+/* The point of the panel at the pixel (x, y), in the rig's space. Returns 0
+ * when there is no panel. */
+int Aeron_XrPanelPoint(float x, float y, float point_m[3]);
+
 /* Asks Aeron_Present to call `desc->callback` while it draws the window, so
  * the application can show there what the headset shows. The callback draws
  * into the whole window, behind the copy of the virtual screen. A required

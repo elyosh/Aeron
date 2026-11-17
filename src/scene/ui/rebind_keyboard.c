@@ -10,6 +10,8 @@ void AeronUi_CancelKeyboardCapture(AeronUiContext* ctx) {
 		memset(&ctx->keyboard_capture, 0, sizeof ctx->keyboard_capture);
 }
 
+int AeronUi_TextEditActive(const AeronUiContext* ctx) { return ctx && ctx->text_edit_id != 0; }
+
 int AeronUi_KeyboardCaptureActive(const AeronUiContext* ctx) {
 	return ctx && (ctx->keyboard_capture.id || ctx->keyboard_capture_frame);
 }

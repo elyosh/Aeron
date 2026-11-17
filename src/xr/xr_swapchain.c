@@ -91,13 +91,16 @@ int AeronXr_CreateSwapchains(SDL_GPUDevice* device, char* error, size_t error_si
 }
 
 void AeronXr_DestroySwapchains(SDL_GPUDevice* device) {
+	xr_destroy_swapchain(device, &g_xr.panel);
+	g_xr.panel_begun = 0;
 	xr_destroy_swapchain(device, &g_xr.eyes[0]);
 	xr_destroy_swapchain(device, &g_xr.eyes[1]);
 	xr_destroy_swapchain(device, &g_xr.screen);
 }
 
 void AeronXr_ReleaseImages(void) {
-	AeronXrSwapchain* swapchains[] = { &g_xr.eyes[0], &g_xr.eyes[1], &g_xr.screen };
+	/* A swapchain that doesn't exist holds no image. */
+	AeronXrSwapchain* swapchains[] = { &g_xr.eyes[0], &g_xr.eyes[1], &g_xr.screen, &g_xr.panel };
 	char              error[256];
 	for (size_t i = 0; i < SDL_arraysize(swapchains); i++) {
 		if (!g_xr.failed && !AeronXrImage_Release(&swapchains[i]->tracker, &g_xr.fn, error, sizeof error))
@@ -228,6 +231,37 @@ SDL_GPUTexture* AeronXr_AcquireScreenImage(SDL_GPUTextureFormat* format, int* wi
 	*width  = g_xr.screen.width;
 	*height = g_xr.screen.height;
 	return g_xr.screen.textures[g_xr.screen.tracker.index];
+}
+
+AeronRenderTarget* Aeron_XrPanelBegin(const AeronXrPanelDesc* desc) {
+	char error[256];
+
+	if (!desc || desc->width_px <= 0 || desc->height_px <= 0 || !(desc->width_m > 0.0f) ||
+		!xr_frame_renders())
+		return NULL;
+	if (g_xr.panel.tracker.swapchain &&
+		(g_xr.panel.width != desc->width_px || g_xr.panel.height != desc->height_px)) {
+		/* An image of the old size that is still held can't be shown. */
+		if (g_xr.panel.tracker.held)
+			return NULL;
+		xr_destroy_swapchain(g_aeron.gpu_device, &g_xr.panel);
+	}
+	if (!g_xr.panel.tracker.swapchain &&
+		!xr_create_swapchain(g_aeron.gpu_device, desc->width_px, desc->height_px, "panel", &g_xr.panel, error,
+							 sizeof error)) {
+		xr_destroy_swapchain(g_aeron.gpu_device, &g_xr.panel);
+		Aeron_LogWarn("aeron.xr", "%s", error);
+		return NULL;
+	}
+	if (!g_xr.panel.tracker.held &&
+		!AeronXrImage_Acquire(&g_xr.panel.tracker, &g_xr.fn, error, sizeof error)) {
+		AeronXr_Fail(error);
+		return NULL;
+	}
+	g_xr.panel_desc  = *desc;
+	g_xr.panel_begun = 1;
+	AeronXr_SetPanel(desc);
+	return &g_xr.panel.targets[g_xr.panel.tracker.index];
 }
 
 void AeronXr_SetScreenLayer(int visible, int transparent) {

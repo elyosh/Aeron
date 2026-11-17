@@ -567,6 +567,9 @@ int AeronXr_HandHasRumble(int hand);
 void AeronXr_UpdatePointer(AeronInputSnapshot* input);
 /* Nonzero while a hand moves the mouse. */
 int AeronXr_PointerActive(void);
+/* Remembers the panel for Aeron_XrPanelHit; NULL forgets it. */
+struct AeronXrPanelDesc;
+void AeronXr_SetPanel(const struct AeronXrPanelDesc* desc);
 
 void Aeron_InitVfs(const AeronConfig* config);
 

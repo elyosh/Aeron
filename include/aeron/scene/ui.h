@@ -382,6 +382,8 @@ AeronUiKeyboardCaptureResult AeronUi_KeyboardCapture(AeronUiContext* ctx, const 
 void                         AeronUi_CancelKeyboardCapture(AeronUiContext* ctx);
 /* Includes ownership of the completion/cancellation frame. */
 int AeronUi_KeyboardCaptureActive(const AeronUiContext* ctx);
+/* Whether a text field is being edited: typed characters go to it. */
+int AeronUi_TextEditActive(const AeronUiContext* ctx);
 
 /* Read-only signed axis visualization with center, deadzone, live marker,
  * and numeric value. */

@@ -357,7 +357,52 @@ static struct {
 
 int Aeron_XrPointerHand(void) { return g_pointer.hand; }
 
+/* The panel of the last Aeron_XrPanelBegin. */
+static struct {
+	int              valid;
+	AeronXrPanelDesc desc;
+} g_panel;
+
+void AeronXr_SetPanel(const struct AeronXrPanelDesc* desc) {
+	g_panel.valid = desc != NULL;
+	if (desc)
+		g_panel.desc = *desc;
+}
+
+static float panel_height_m(void) {
+	return g_panel.desc.width_m * (float)g_panel.desc.height_px / (float)g_panel.desc.width_px;
+}
+
 int AeronXr_PointerActive(void) { return g_pointer.hand >= 0; }
+
+static int pointer_hit(const AeronHandState* hand, const AeronViewPose* screen, float width, float height,
+					   float* u, float* v);
+
+int Aeron_XrPanelHit(int hand, float* x, float* y) {
+	float u, v;
+	if (!g_panel.valid || hand < 0 || hand > 1 ||
+		!pointer_hit(&g_hands.hands[hand], &g_panel.desc.pose, g_panel.desc.width_m, panel_height_m(), &u,
+					 &v))
+		return 0;
+	if (x)
+		*x = u * (float)g_panel.desc.width_px;
+	if (y)
+		*y = v * (float)g_panel.desc.height_px;
+	return 1;
+}
+
+int Aeron_XrPanelPoint(float x, float y, float point_m[3]) {
+	float rotation[9];
+	if (!g_panel.valid)
+		return 0;
+	hand_pose_rotation(&g_panel.desc.pose, rotation);
+	const float across = (x / (float)g_panel.desc.width_px - 0.5f) * g_panel.desc.width_m;
+	const float up     = (0.5f - y / (float)g_panel.desc.height_px) * panel_height_m();
+	for (int axis = 0; axis < 3; axis++)
+		point_m[axis] = g_panel.desc.pose.position_m[axis] + rotation[axis * 3 + 0] * across +
+						rotation[axis * 3 + 1] * up;
+	return 1;
+}
 
 /* Finds where a hand's aim ray meets the virtual screen. `u` and `v` go from
  * 0 to 1 over the screen, from its top left corner. Returns 0 when the ray

@@ -87,6 +87,12 @@ typedef enum AeronKey {
  * Writes out_key only on success. This operation is not thread-safe. */
 int AeronKey_FromName(const char* name, AeronKey* out_key);
 
+/* Sends a key press or release as if the system had sent it, with the
+ * modifiers `modifiers` (AERON_KEY_MOD_*) held, and with the text it types
+ * (UTF-8, at most 7 bytes, or NULL). Aeron_BeginFrame sees them in the next
+ * frame, as it sees a real key. A virtual keyboard uses this. */
+void Aeron_InjectKey(AeronKey key, int down, int repeat, uint8_t modifiers, const char* utf8);
+
 /* Physical-key names are borrowed from SDL and remain valid until shutdown. */
 const char* AeronKey_Name(AeronKey key);
 

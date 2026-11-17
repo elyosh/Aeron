@@ -281,6 +281,11 @@ typedef struct AeronXrState {
 	/* One swapchain for each eye, and one for the virtual screen. */
 	AeronXrSwapchain eyes[2];
 	AeronXrSwapchain screen;
+	/* The panel (Aeron_XrPanelBegin): created when first used, and shown in
+	 * the frames where the application asked for its image. */
+	AeronXrSwapchain panel;
+	AeronXrPanelDesc panel_desc;
+	int              panel_begun;
 	/* This frame: Aeron_XrBeginViews located the views and acquired the
 	 * eye images, and Aeron_XrSubmitViews said that they are complete. */
 	int    views_begun;

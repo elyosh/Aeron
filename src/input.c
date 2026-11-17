@@ -45,6 +45,43 @@ int AeronKey_FromName(const char* name, AeronKey* out_key) {
 	return 1;
 }
 
+void Aeron_InjectKey(AeronKey key, int down, int repeat, uint8_t modifiers, const char* utf8) {
+	/* A text event points at its text, which must stay there until the event
+	 * is read in the next frame. */
+	static char texts[16][8];
+	static int  next_text;
+	if (key <= 0 || key >= AERON_KEY_COUNT || !g_aeron.window)
+		return;
+	SDL_Keymod mod = SDL_KMOD_NONE;
+	if (modifiers & AERON_KEY_MOD_SHIFT)
+		mod |= SDL_KMOD_LSHIFT;
+	if (modifiers & AERON_KEY_MOD_CTRL)
+		mod |= SDL_KMOD_LCTRL;
+	if (modifiers & AERON_KEY_MOD_ALT)
+		mod |= SDL_KMOD_LALT;
+	SDL_Event event;
+	SDL_zero(event);
+	event.type          = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+	event.key.windowID  = SDL_GetWindowID(g_aeron.window);
+	event.key.scancode  = (SDL_Scancode)key;
+	event.key.key       = SDL_GetKeyFromScancode((SDL_Scancode)key, mod, false);
+	event.key.mod       = mod;
+	event.key.down      = down != 0;
+	event.key.repeat    = down && repeat;
+	event.key.timestamp = SDL_GetTicksNS();
+	SDL_PushEvent(&event);
+	if (down && utf8 && utf8[0]) {
+		char* text = texts[next_text++ % (int)SDL_arraysize(texts)];
+		SDL_strlcpy(text, utf8, sizeof texts[0]);
+		SDL_zero(event);
+		event.type           = SDL_EVENT_TEXT_INPUT;
+		event.text.windowID  = SDL_GetWindowID(g_aeron.window);
+		event.text.text      = text;
+		event.text.timestamp = SDL_GetTicksNS();
+		SDL_PushEvent(&event);
+	}
+}
+
 void Aeron_BeginInputFrame(AeronInputSnapshot* input) {
 	input->key_event_count     = 0;
 	input->key_events_overflow = 0;

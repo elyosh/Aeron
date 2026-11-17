@@ -122,6 +122,27 @@ static void xr_fill_screen(XrCompositionLayerQuad* layer) {
 	};
 }
 
+/* The layer that shows the panel. Its colours are premultiplied by alpha. */
+static void xr_fill_panel(XrCompositionLayerQuad* layer) {
+	const AeronXrPanelDesc* desc = &g_xr.panel_desc;
+	*layer = (XrCompositionLayerQuad) {
+		.type          = XR_TYPE_COMPOSITION_LAYER_QUAD,
+		.layerFlags    = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
+		.space         = g_xr.rig_space,
+		.eyeVisibility = XR_EYE_VISIBILITY_BOTH,
+		.subImage = {
+			.swapchain = g_xr.panel.tracker.swapchain,
+			.imageRect = { { 0, 0 }, { g_xr.panel.width, g_xr.panel.height } },
+		},
+		.pose = {
+			.orientation = { desc->pose.orientation[0], desc->pose.orientation[1], desc->pose.orientation[2],
+							 desc->pose.orientation[3] },
+			.position    = { desc->pose.position_m[0], desc->pose.position_m[1], desc->pose.position_m[2] },
+		},
+		.size = { desc->width_m, desc->width_m * (float)g_xr.panel.height / (float)g_xr.panel.width },
+	};
+}
+
 int Aeron_XrScreenQuad(AeronViewPose* pose, float* width_m, float* height_m) {
 	float distance, width, height;
 	if (!g_xr.machine.running || g_xr.failed || !g_xr.screen_shown || g_xr.screen.width <= 0)
@@ -148,6 +169,8 @@ int AeronXr_EndFrame(void) {
 	const int show_views  = g_xr.views_submitted;
 	const int show_screen = g_xr.screen_visible && g_xr.screen.tracker.released_once;
 	const int views_over  = g_xr.views_over;
+	const int show_panel  = g_xr.panel_begun && g_xr.panel.tracker.released_once;
+	g_xr.panel_begun      = 0;
 	g_xr.views_begun      = 0;
 	g_xr.views_submitted  = 0;
 	g_xr.views_over       = 0;
@@ -161,7 +184,8 @@ int AeronXr_EndFrame(void) {
 	XrCompositionLayerProjection       projection;
 	XrCompositionLayerProjectionView   projection_views[2];
 	XrCompositionLayerQuad             screen;
-	const XrCompositionLayerBaseHeader* layers[2];
+	XrCompositionLayerQuad              panel;
+	const XrCompositionLayerBaseHeader* layers[3];
 	uint32_t                            layer_count = 0;
 	if (g_xr.frame_should_render && show_views && !views_over) {
 		xr_fill_projection(&projection, projection_views, 0);
@@ -170,6 +194,10 @@ int AeronXr_EndFrame(void) {
 	if (g_xr.frame_should_render && show_screen) {
 		xr_fill_screen(&screen);
 		layers[layer_count++] = (const XrCompositionLayerBaseHeader*)&screen;
+	}
+	if (g_xr.frame_should_render && show_panel) {
+		xr_fill_panel(&panel);
+		layers[layer_count++] = (const XrCompositionLayerBaseHeader*)&panel;
 	}
 	if (g_xr.frame_should_render && show_views && views_over) {
 		xr_fill_projection(&projection, projection_views, 1);

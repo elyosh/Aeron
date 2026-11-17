@@ -289,6 +289,7 @@ void AeronXr_PollEvents(void) {
 			g_xr.views_begun     = 0;
 			g_xr.views_submitted = 0;
 			g_xr.views_over      = 0;
+			g_xr.panel_begun     = 0;
 			g_xr.screen_visible  = 0;
 			AeronXr_ReleaseImages();
 		} else {
@@ -393,6 +394,11 @@ int Aeron_XrBeginViews(AeronXrFrame* out) {
 void Aeron_XrSubmitViews(void) {}
 
 void Aeron_XrSubmitViewsOver(void) {}
+
+AeronRenderTarget* Aeron_XrPanelBegin(const AeronXrPanelDesc* desc) {
+	(void)desc;
+	return NULL;
+}
 
 void AeronXr_DestroyInstance(void) {}
 
