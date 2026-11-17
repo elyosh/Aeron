@@ -497,6 +497,12 @@ int Aeron_WarpMouseLogical(int x, int y) {
 	if (!g_aeron.window || g_aeron.logical_width <= 0 || g_aeron.logical_height <= 0) {
 		return 0;
 	}
+	/* A VR hand can't be moved. While one points at the virtual screen, the
+	 * pointer stays where the hand points. Moving the real mouse here would
+	 * also look like the user took the mouse back. */
+	if (AeronXr_PointerActive()) {
+		return 1;
+	}
 
 	SDL_GetWindowSize(g_aeron.window, &window_width, &window_height);
 	Aeron_ComputePresentationRect(window_width, window_height, &content_rect);

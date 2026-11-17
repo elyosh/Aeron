@@ -56,6 +56,12 @@ typedef struct AeronXrHand {
  * Index 0 is the left hand. Returns 0 when neither hand is active. */
 int Aeron_XrHands(AeronXrHand out[2]);
 
+/* The hand that points at the virtual screen and moves the mouse of the
+ * input snapshot in this frame: 0 for the left hand, 1 for the right one, or
+ * -1 when the mouse is the real one. Its trigger is the left mouse button,
+ * its squeeze the right one, and its thumbstick scrolls. */
+int Aeron_XrPointerHand(void);
+
 /* A hand for tests without a headset. `buttons` has one bit for each
  * AeronVrHandButton. A pressed trigger or squeeze button also sets its axis
  * to the full value. */

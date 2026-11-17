@@ -188,7 +188,8 @@ const AeronInputSnapshot* Aeron_InputSnapshot(void);
 AeronVfs* Aeron_GetVfs(void);
 /* Shows or hides the host OS cursor; returns nonzero on success. */
 int Aeron_SetHostCursorVisible(int visible);
-/* Warps the host mouse to an application logical coordinate. */
+/* Warps the host mouse to an application logical coordinate. It does nothing
+ * while a VR hand points at the virtual screen (Aeron_XrPointerHand). */
 int Aeron_WarpMouseLogical(int x, int y);
 /* Enables or disables relative mouse mode for flight-style delta input. */
 int Aeron_SetRelativeMouseMode(int enabled);

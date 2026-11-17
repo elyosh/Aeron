@@ -561,6 +561,12 @@ int AeronXr_HandFromInstance(uint32_t instance_id);
 int AeronXr_RumbleHand(int hand, uint16_t low_frequency_rumble, uint16_t high_frequency_rumble,
 					   uint32_t duration_ms);
 int AeronXr_HandHasRumble(int hand);
+/* Moves the snapshot's mouse to where a hand points on the virtual screen,
+ * and makes the hand's trigger and squeeze its buttons. It runs after the
+ * real mouse was read. */
+void AeronXr_UpdatePointer(AeronInputSnapshot* input);
+/* Nonzero while a hand moves the mouse. */
+int AeronXr_PointerActive(void);
 
 void Aeron_InitVfs(const AeronConfig* config);
 

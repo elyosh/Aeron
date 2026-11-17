@@ -168,6 +168,22 @@ static void hand_log_inputs(int hand, const AeronControllerSnapshot* snapshot) {
 	}
 }
 
+/* Converts a pose's orientation to a row-major 3x3 matrix, which rotates
+ * from the pose's axes to the rig's axes. */
+static void hand_pose_rotation(const AeronViewPose* pose, float out[9]) {
+	const float x = pose->orientation[0], y = pose->orientation[1];
+	const float z = pose->orientation[2], w = pose->orientation[3];
+	out[0] = 1.0f - 2.0f * (y * y + z * z);
+	out[1] = 2.0f * (x * y - w * z);
+	out[2] = 2.0f * (x * z + w * y);
+	out[3] = 2.0f * (x * y + w * z);
+	out[4] = 1.0f - 2.0f * (x * x + z * z);
+	out[5] = 2.0f * (y * z - w * x);
+	out[6] = 2.0f * (x * z - w * y);
+	out[7] = 2.0f * (y * z + w * x);
+	out[8] = 1.0f - 2.0f * (x * x + y * y);
+}
+
 /* The direction a pose points in: its -Z axis, in the rig's space. */
 static void hand_pose_forward(const AeronViewPose* pose, float out[3]) {
 	const float x = pose->orientation[0], y = pose->orientation[1];
@@ -285,6 +301,239 @@ void AeronXr_UpdateHands(AeronInputSnapshot* input) {
 	}
 	if (g_hands.log_inputs)
 		hand_log_poses();
+}
+
+/* The pointer on the virtual screen.
+ *
+ * A hand that points at the screen moves the mouse of the input snapshot:
+ * the trigger is the left button, the squeeze is the right button and the
+ * thumbstick scrolls. The frontend and the UI then work as with a mouse. */
+
+/* Two presses this close in time and in place make a double click. */
+#define AERON_XR_POINTER_DOUBLE_CLICK_US 400000u
+/* After a press, the pointer stays still this long, so that pulling the
+ * trigger doesn't move it off a small target. */
+#define AERON_XR_POINTER_PRESS_HOLD_US 100000u
+/* The thumbstick scrolls one step each time this long passes while it is
+ * pushed more than half way. */
+#define AERON_XR_POINTER_WHEEL_US 150000u
+/* The one-euro filter of the pointer's position, which is in screen widths.
+ * A slow hand is filtered at the low cutoff, in Hz, so that a tremor doesn't
+ * move the pointer. A fast hand raises the cutoff, so that the pointer
+ * doesn't lag. */
+#define AERON_XR_POINTER_MIN_CUTOFF 1.5f
+#define AERON_XR_POINTER_SPEED_CUTOFF 40.0f
+#define AERON_XR_POINTER_DERIVATIVE_CUTOFF 1.0f
+
+static struct {
+	/* The hand that points at the screen in this frame, or -1. */
+	int hand;
+	/* The hand that last pressed its trigger on the screen: it wins when
+	 * both hands point at the screen. */
+	int preferred;
+	/* The real mouse moved. It keeps the pointer until a hand presses its
+	 * trigger on the screen. */
+	int mouse_has_pointer;
+	/* The mouse buttons that this code set in the snapshot last frame. */
+	uint32_t buttons;
+	/* A hand's buttons that were already down when the hand started to
+	 * point at the screen. They don't click until they are released. */
+	uint32_t held_before[2];
+	/* The filtered position on the screen, from 0 to 1, and its speed. */
+	int      filtered;
+	float    u, v;
+	float    du, dv;
+	uint64_t updated_us;
+	/* The pointer stays at `hold_x`, `hold_y` until this time. */
+	uint64_t hold_until_us;
+	int      hold_x, hold_y;
+	/* The last press of each button, for the double click. */
+	uint64_t pressed_us[2];
+	int      pressed_x[2], pressed_y[2];
+	uint64_t wheel_us;
+	/* The pointing hand that was last logged. */
+	int logged_hand;
+} g_pointer = { .hand = -1, .preferred = 1, .logged_hand = -1 };
+
+int Aeron_XrPointerHand(void) { return g_pointer.hand; }
+
+int AeronXr_PointerActive(void) { return g_pointer.hand >= 0; }
+
+/* Finds where a hand's aim ray meets the virtual screen. `u` and `v` go from
+ * 0 to 1 over the screen, from its top left corner. Returns 0 when the ray
+ * misses the screen or comes from behind it. */
+static int pointer_hit(const AeronHandState* hand, const AeronViewPose* screen, float width, float height,
+					   float* u, float* v) {
+	float rotation[9], direction[3], local[3];
+	if (!hand->connected || !hand->tracked)
+		return 0;
+	hand_pose_rotation(screen, rotation);
+	/* The screen's X, Y and Z axes are the columns of its rotation. Its Z
+	 * axis points at the viewer. */
+	const float normal[3] = { rotation[2], rotation[5], rotation[8] };
+	hand_pose_forward(&hand->aim, direction);
+	const float facing = direction[0] * normal[0] + direction[1] * normal[1] + direction[2] * normal[2];
+	if (facing > -1e-4f)
+		return 0;
+	float distance = 0.0f;
+	for (int i = 0; i < 3; i++)
+		distance += (screen->position_m[i] - hand->aim.position_m[i]) * normal[i];
+	distance /= facing;
+	if (distance <= 0.0f)
+		return 0;
+	for (int i = 0; i < 3; i++)
+		local[i] = hand->aim.position_m[i] + distance * direction[i] - screen->position_m[i];
+	*u = 0.5f + (local[0] * rotation[0] + local[1] * rotation[3] + local[2] * rotation[6]) / width;
+	*v = 0.5f - (local[0] * rotation[1] + local[1] * rotation[4] + local[2] * rotation[7]) / height;
+	return *u >= 0.0f && *u <= 1.0f && *v >= 0.0f && *v <= 1.0f;
+}
+
+static float pointer_low_pass(float cutoff, float dt, float value, float previous) {
+	const float alpha = 1.0f / (1.0f + 1.0f / (2.0f * 3.14159265f * cutoff * dt));
+	return previous + alpha * (value - previous);
+}
+
+/* Smooths the pointer's position with a one-euro filter. */
+static void pointer_filter(float u, float v, uint64_t now) {
+	const float dt = (float)(now - g_pointer.updated_us) * 1e-6f;
+	if (!g_pointer.filtered || dt <= 0.0f || dt > 0.25f) {
+		g_pointer.u  = u;
+		g_pointer.v  = v;
+		g_pointer.du = 0.0f;
+		g_pointer.dv = 0.0f;
+	} else {
+		g_pointer.du =
+			pointer_low_pass(AERON_XR_POINTER_DERIVATIVE_CUTOFF, dt, (u - g_pointer.u) / dt, g_pointer.du);
+		g_pointer.dv =
+			pointer_low_pass(AERON_XR_POINTER_DERIVATIVE_CUTOFF, dt, (v - g_pointer.v) / dt, g_pointer.dv);
+		const float speed  = sqrtf(g_pointer.du * g_pointer.du + g_pointer.dv * g_pointer.dv);
+		const float cutoff = AERON_XR_POINTER_MIN_CUTOFF + AERON_XR_POINTER_SPEED_CUTOFF * speed;
+		g_pointer.u        = pointer_low_pass(cutoff, dt, u, g_pointer.u);
+		g_pointer.v        = pointer_low_pass(cutoff, dt, v, g_pointer.v);
+	}
+	g_pointer.filtered   = 1;
+	g_pointer.updated_us = now;
+}
+
+/* The mouse buttons that a hand holds: the trigger is the left button and
+ * the squeeze is the right one. */
+static uint32_t pointer_hand_buttons(const AeronHandState* hand) {
+	return ((hand->buttons & (1u << AERON_VR_HAND_BUTTON_TRIGGER)) ? AERON_MOUSE_BUTTON_LEFT : 0) |
+		   ((hand->buttons & (1u << AERON_VR_HAND_BUTTON_SQUEEZE)) ? AERON_MOUSE_BUTTON_RIGHT : 0);
+}
+
+void AeronXr_UpdatePointer(AeronInputSnapshot* input) {
+	AeronViewPose  screen;
+	float          width = 0.0f, height = 0.0f;
+	float          u[2] = { 0.0f, 0.0f }, v[2] = { 0.0f, 0.0f };
+	int            hit[2]  = { 0, 0 };
+	uint32_t       held[2] = { 0, 0 };
+	const uint64_t now     = Aeron_NowUs();
+	const uint32_t was     = g_pointer.buttons;
+	const int      usable  = !g_aeron.relative_mouse_enabled && g_aeron.logical_width > 0 &&
+							 g_aeron.logical_height > 0 && Aeron_XrScreenQuad(&screen, &width, &height);
+
+	/* Take back the buttons that this code set last frame: the snapshot keeps
+	 * its buttons from one frame to the next. */
+	input->mouse.buttons &= ~was;
+	g_pointer.buttons = 0;
+	g_pointer.hand    = -1;
+
+	for (int hand = 0; hand < 2; hand++) {
+		const AeronHandState* state = &g_hands.hands[hand];
+		held[hand]                  = pointer_hand_buttons(state);
+		hit[hand] = usable && pointer_hit(state, &screen, width, height, &u[hand], &v[hand]);
+		/* A button that is already down when the hand reaches the screen
+		 * doesn't click. */
+		if (!hit[hand])
+			g_pointer.held_before[hand] = held[hand];
+		else
+			g_pointer.held_before[hand] &= held[hand];
+		if (hit[hand] && (held[hand] & ~g_pointer.held_before[hand] & AERON_MOUSE_BUTTON_LEFT)) {
+			g_pointer.preferred         = hand;
+			g_pointer.mouse_has_pointer = 0;
+		}
+	}
+	/* The real mouse moved or clicked: it has the pointer again. */
+	if (input->mouse.relative_x != 0.0f || input->mouse.relative_y != 0.0f || input->mouse.pressed_buttons)
+		g_pointer.mouse_has_pointer = 1;
+
+	int hand = -1;
+	if (!g_pointer.mouse_has_pointer) {
+		if (hit[g_pointer.preferred])
+			hand = g_pointer.preferred;
+		else if (hit[1 - g_pointer.preferred])
+			hand = 1 - g_pointer.preferred;
+	}
+	if (g_hands.log_inputs && hand != g_pointer.logged_hand) {
+		if (hand < 0)
+			Aeron_LogInfo("aeron.xr", "pointer: the mouse");
+		else
+			Aeron_LogInfo("aeron.xr", "pointer: the %s hand, at %.2f, %.2f of the screen", g_handNames[hand],
+						  u[hand], v[hand]);
+		g_pointer.logged_hand = hand;
+	}
+	if (hand < 0) {
+		g_pointer.filtered = 0;
+		/* The buttons that the hand held are released. */
+		input->mouse.released_buttons |= was & ~input->mouse.buttons;
+		return;
+	}
+	g_pointer.hand = hand;
+
+	pointer_filter(u[hand], v[hand], now);
+	int x = (int)(g_pointer.u * (float)g_aeron.logical_width);
+	int y = (int)(g_pointer.v * (float)g_aeron.logical_height);
+	x     = SDL_clamp(x, 0, g_aeron.logical_width - 1);
+	y     = SDL_clamp(y, 0, g_aeron.logical_height - 1);
+
+	const uint32_t buttons  = held[hand] & ~g_pointer.held_before[hand];
+	const uint32_t pressed  = buttons & ~was;
+	const uint32_t released = was & ~buttons;
+	if (pressed) {
+		g_pointer.hold_until_us = now + AERON_XR_POINTER_PRESS_HOLD_US;
+		g_pointer.hold_x        = x;
+		g_pointer.hold_y        = y;
+	}
+	if (now < g_pointer.hold_until_us) {
+		x = g_pointer.hold_x;
+		y = g_pointer.hold_y;
+	}
+
+	input->mouse.x              = x;
+	input->mouse.y              = y;
+	input->mouse.inside_content = 1;
+	input->mouse.buttons |= buttons;
+	input->mouse.pressed_buttons |= pressed;
+	input->mouse.released_buttons |= released & ~input->mouse.buttons;
+	g_pointer.buttons = buttons;
+
+	/* A double click: the same button, pressed twice at about the same
+	 * place. The distance allowed follows the size of the picture. */
+	const int reach = SDL_max(8, g_aeron.logical_height / 60);
+	for (int button = 0; button < 2; button++) {
+		const uint32_t mask = button == 0 ? AERON_MOUSE_BUTTON_LEFT : AERON_MOUSE_BUTTON_RIGHT;
+		if (!(pressed & mask))
+			continue;
+		if (g_pointer.pressed_us[button] &&
+			now - g_pointer.pressed_us[button] < AERON_XR_POINTER_DOUBLE_CLICK_US &&
+			abs(x - g_pointer.pressed_x[button]) <= reach && abs(y - g_pointer.pressed_y[button]) <= reach) {
+			input->mouse.double_clicked_buttons |= mask;
+			g_pointer.pressed_us[button] = 0;
+		} else {
+			g_pointer.pressed_us[button] = now;
+			g_pointer.pressed_x[button]  = x;
+			g_pointer.pressed_y[button]  = y;
+		}
+	}
+
+	const float stick = g_hands.hands[hand].axes[AERON_VR_HAND_AXIS_THUMBSTICK_Y];
+	if (fabsf(stick) <= 0.5f) {
+		g_pointer.wheel_us = 0;
+	} else if (now >= g_pointer.wheel_us) {
+		input->mouse.wheel_y += stick > 0.0f ? 1 : -1;
+		g_pointer.wheel_us = now + AERON_XR_POINTER_WHEEL_US;
+	}
 }
 
 int AeronXr_HandHasRumble(int hand) { return hand >= 0 && hand < 2 && g_hands.hands[hand].connected; }

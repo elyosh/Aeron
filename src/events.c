@@ -174,6 +174,7 @@ int32_t Aeron_BeginFrame(void) {
 	has_mouse_position      = has_platform_position && Aeron_RawMouseInsideWindow(&g_aeron.input);
 	Aeron_UpdateLogicalMouse(&g_aeron.input, &content_rect, has_mouse_position);
 	Aeron_UpdateMouseConfinement(&content_rect);
+	AeronXr_UpdatePointer(&g_aeron.input);
 	Aeron_DebugUiFilterInput(&g_aeron.input);
 
 	now_us   = Aeron_NowUs();
