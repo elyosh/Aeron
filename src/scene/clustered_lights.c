@@ -170,8 +170,10 @@ int AeronSceneClusteredLights_Build(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return 0;
 	}
 
-	/* One thread per tile, then one per depth bin. */
-	const uint32_t            thread_count = (uint32_t)tile_count + u->grid_z;
+	/* One thread for each word of each tile's mask (32 lights), then one for
+	 * each depth bin. The threads are short, so the GPU runs them side by
+	 * side: a thread for a whole tile would test every light in turn. */
+	const uint32_t            thread_count = (uint32_t)tile_count * u->mask_words + u->grid_z;
 	AeronComputeBufferBinding output       = { s->cluster_data_buffer, 1 };
 	AeronComputePass*         build        = Aeron_BeginComputePass(&(AeronComputePassDesc) {
 		.command_buffer     = cmd,

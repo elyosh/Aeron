@@ -117,8 +117,12 @@ bool spot_outside_plane(float offset, float facing, float range, float cos_outer
  * the merged light when the tile is farther from the group's centre than
  * the merge distance, the group's lights otherwise. The tile's distance is
  * the largest distance of the centre outside one of the tile's planes,
- * which is never more than the true distance. */
-void build_tile(uint tile_index) {
+ * which is never more than the true distance.
+ *
+ * One thread builds one word of the tile's mask: 32 lights. A thread for
+ * the whole tile would test every light in turn, and the frame waits for
+ * the longest thread. */
+void build_tile(uint tile_index, uint word) {
 	uint  tile_x       = tile_index % fs_cluster_grid_x;
 	uint  tile_y       = tile_index / fs_cluster_grid_x;
 	float width        = (float)fs_cluster_viewport_width;
@@ -142,61 +146,61 @@ void build_tile(uint tile_index) {
 	uint   spot_start    = min(fs_cluster_kind_starts & 0xffffu, tube_start);
 
 	uint base = clustered_light_mask_base(tile_index);
-	for (uint word = 0u; word < fs_cluster_mask_words; ++word) {
-		uint bits = 0u;
-		uint end  = min(32u, fs_cluster_point_count - (word << 5u));
-		for (uint bit = 0u; bit < end; ++bit) {
-			uint   index = (word << 5u) + bit;
-			float4 light = g_lights[index].bound;
-			float3 p     = light.xyz;
-			float  r     = light.w;
-			float4 side  = float4(p.x - slopes.x * p.z, slopes.y * p.z - p.x, p.y - slopes.z * p.z,
-								  slopes.w * p.z - p.y);
-			if (!(p.z + r >= fs_cluster_near_z && all(side >= -r * plane_lengths)))
-				continue;
-			if (index >= spot_start && index < tube_start) {
-				float4 merge = g_lights[index].merge;
-				if (merge.w != 0.0f) {
-					float4 outside  = float4(slopes.x * merge.z - merge.x, merge.x - slopes.y * merge.z,
-											 slopes.z * merge.z - merge.y, merge.y - slopes.w * merge.z) /
-									 plane_lengths;
-					float  distance = max(max(fs_cluster_near_z - merge.z, 0.0f),
-										  max(max(outside.x, outside.y), max(outside.z, outside.w)));
-					/* A light of the group in a far tile, or the merged light
-					 * in a near one. */
-					if ((distance > abs(merge.w)) != (merge.w < 0.0f))
-						continue;
-				}
-				float4 spot      = g_lights[index].spot_position_range;
-				float4 direction = g_lights[index].spot_direction_cos;
-				float  cos_outer = direction.w;
-				float  sin_outer = sqrt(max(1.0f - cos_outer * cos_outer, 0.0f));
-				/* The side planes go through the camera, so the same
-				 * expressions give the direction's components along their
-				 * normals. */
-				float4 offset = float4(spot.x - slopes.x * spot.z, slopes.y * spot.z - spot.x,
-									   spot.y - slopes.z * spot.z, slopes.w * spot.z - spot.y) /
-								plane_lengths;
-				float4 facing = float4(direction.x - slopes.x * direction.z, slopes.y * direction.z - direction.x,
-									   direction.y - slopes.z * direction.z, slopes.w * direction.z - direction.y) /
-								plane_lengths;
-				if (spot_outside_plane(spot.z - fs_cluster_near_z, direction.z, spot.w, cos_outer, sin_outer) ||
-					spot_outside_plane(offset.x, facing.x, spot.w, cos_outer, sin_outer) ||
-					spot_outside_plane(offset.y, facing.y, spot.w, cos_outer, sin_outer) ||
-					spot_outside_plane(offset.z, facing.z, spot.w, cos_outer, sin_outer) ||
-					spot_outside_plane(offset.w, facing.w, spot.w, cos_outer, sin_outer))
+	uint bits = 0u;
+	uint end  = min(32u, fs_cluster_point_count - (word << 5u));
+	for (uint bit = 0u; bit < end; ++bit) {
+		uint   index = (word << 5u) + bit;
+		float4 light = g_lights[index].bound;
+		float3 p     = light.xyz;
+		float  r     = light.w;
+		float4 side  = float4(p.x - slopes.x * p.z, slopes.y * p.z - p.x, p.y - slopes.z * p.z,
+							  slopes.w * p.z - p.y);
+		if (!(p.z + r >= fs_cluster_near_z && all(side >= -r * plane_lengths)))
+			continue;
+		if (index >= spot_start && index < tube_start) {
+			float4 merge = g_lights[index].merge;
+			if (merge.w != 0.0f) {
+				float4 outside  = float4(slopes.x * merge.z - merge.x, merge.x - slopes.y * merge.z,
+										 slopes.z * merge.z - merge.y, merge.y - slopes.w * merge.z) /
+								 plane_lengths;
+				float  distance = max(max(fs_cluster_near_z - merge.z, 0.0f),
+									  max(max(outside.x, outside.y), max(outside.z, outside.w)));
+				/* A light of the group in a far tile, or the merged light
+				 * in a near one. */
+				if ((distance > abs(merge.w)) != (merge.w < 0.0f))
 					continue;
 			}
-			bits |= 1u << bit;
+			float4 spot      = g_lights[index].spot_position_range;
+			float4 direction = g_lights[index].spot_direction_cos;
+			float  cos_outer = direction.w;
+			float  sin_outer = sqrt(max(1.0f - cos_outer * cos_outer, 0.0f));
+			/* The side planes go through the camera, so the same
+			 * expressions give the direction's components along their
+			 * normals. */
+			float4 offset = float4(spot.x - slopes.x * spot.z, slopes.y * spot.z - spot.x,
+								   spot.y - slopes.z * spot.z, slopes.w * spot.z - spot.y) /
+							plane_lengths;
+			float4 facing = float4(direction.x - slopes.x * direction.z, slopes.y * direction.z - direction.x,
+								   direction.y - slopes.z * direction.z, slopes.w * direction.z - direction.y) /
+							plane_lengths;
+			if (spot_outside_plane(spot.z - fs_cluster_near_z, direction.z, spot.w, cos_outer, sin_outer) ||
+				spot_outside_plane(offset.x, facing.x, spot.w, cos_outer, sin_outer) ||
+				spot_outside_plane(offset.y, facing.y, spot.w, cos_outer, sin_outer) ||
+				spot_outside_plane(offset.z, facing.z, spot.w, cos_outer, sin_outer) ||
+				spot_outside_plane(offset.w, facing.w, spot.w, cos_outer, sin_outer))
+				continue;
 		}
-		g_data[base + word] = bits;
+		bits |= 1u << bit;
 	}
+	g_data[base + word] = bits;
 }
 
 [numthreads(AERON_CLUSTER_THREADS, 1, 1)] void main(uint3 thread : SV_DispatchThreadID) {
-	uint tile_count = fs_cluster_grid_x * fs_cluster_grid_y;
-	if (thread.x < tile_count)
-		build_tile(thread.x);
-	else if (thread.x < tile_count + fs_cluster_grid_z)
-		build_bin(thread.x - tile_count);
+	/* One thread for each word of each tile's mask, then one for each depth
+	 * bin (AeronSceneClusteredLights_Build). */
+	uint tile_threads = fs_cluster_grid_x * fs_cluster_grid_y * fs_cluster_mask_words;
+	if (thread.x < tile_threads)
+		build_tile(thread.x / fs_cluster_mask_words, thread.x % fs_cluster_mask_words);
+	else if (thread.x < tile_threads + fs_cluster_grid_z)
+		build_bin(thread.x - tile_threads);
 }
