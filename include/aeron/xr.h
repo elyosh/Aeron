@@ -39,6 +39,43 @@ void Aeron_XrSetScreenScale(float scale);
  * times the render scale of the startup options. Returns 0 when VR is off. */
 int Aeron_XrViewSize(int* width, int* height);
 
+/* One hand's controller, in the space of the view rig. */
+typedef struct AeronXrHand {
+	/* The controller is on and the headset knows where it is. */
+	int active;
+	/* The pose of the palm, and the pose to point with: the ray starts at
+	 * the aim pose's position and goes along its -Z axis. */
+	AeronViewPose grip;
+	AeronViewPose aim;
+	/* How far the trigger and the squeeze are pressed, from 0 to 1. */
+	float trigger;
+	float squeeze;
+} AeronXrHand;
+
+/* Gives the two hands, where they will be when the current frame is shown.
+ * Index 0 is the left hand. Returns 0 when neither hand is active. */
+int Aeron_XrHands(AeronXrHand out[2]);
+
+/* A hand for tests without a headset. `buttons` has one bit for each
+ * AeronVrHandButton. A pressed trigger or squeeze button also sets its axis
+ * to the full value. */
+typedef struct AeronXrFakeHand {
+	int           active;
+	AeronViewPose pose; /* both the grip pose and the aim pose */
+	uint32_t      buttons;
+} AeronXrFakeHand;
+
+/* Sets the two hands that the input snapshot and Aeron_XrHands report while
+ * the device has no VR session. Index 0 is the left hand. NULL removes
+ * them. */
+void Aeron_XrSetFakeHands(const AeronXrFakeHand hands[2]);
+
+/* Gives the virtual screen's rectangle in the space of the view rig: the
+ * pose of its centre, with X to the right and Y up on the screen, and its
+ * size in metres. Returns 0 when the headset didn't show the screen in the
+ * last frame. */
+int Aeron_XrScreenQuad(AeronViewPose* pose, float* width_m, float* height_m);
+
 /* A part of an eye image, as a list of triangles: two floats for each
  * vertex, X to the right and Y up, on the plane one unit in front of the
  * eye. `vertex_count` is zero when the headset gives none. `generation`

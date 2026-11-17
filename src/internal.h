@@ -546,6 +546,22 @@ void Aeron_ControllersShutdown(void);
 void Aeron_HandleControllerEvent(const SDL_Event* event);
 void Aeron_UpdateControllers(AeronInputSnapshot* input);
 
+/* The two VR hands (src/xr/xr_input.c). They use the last two controller
+ * slots, which SDL's devices never get. */
+#define AERON_CONTROLLER_SDL_MAX (AERON_CONTROLLER_MAX - 2)
+/* Reads the hands from the headset, or the fake hands when there is no VR
+ * session, and fills their two entries of the input snapshot. It runs once
+ * in each frame, after AeronXr_BeginFrame. */
+void AeronXr_UpdateHands(AeronInputSnapshot* input);
+/* The hand that has this instance ID: 0 for the left one, 1 for the right
+ * one, or -1 when the ID belongs to no hand. */
+int AeronXr_HandFromInstance(uint32_t instance_id);
+/* Vibrates a hand's controller, as Aeron_RumbleController does for a
+ * joystick. The stronger of the two motor values gives the strength. */
+int AeronXr_RumbleHand(int hand, uint16_t low_frequency_rumble, uint16_t high_frequency_rumble,
+					   uint32_t duration_ms);
+int AeronXr_HandHasRumble(int hand);
+
 void Aeron_InitVfs(const AeronConfig* config);
 
 /* Starts the session log file and crash handler once per process, both writing to the

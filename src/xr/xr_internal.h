@@ -16,10 +16,26 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_openxr.h>
 
+/* The optional OpenXR extensions that aeron uses when the runtime has them. */
+typedef enum AeronXrExtension {
+	AERON_XR_EXT_VISIBILITY_MASK,          /* XR_KHR_visibility_mask */
+	AERON_XR_EXT_UUID,                     /* XR_EXT_uuid */
+	AERON_XR_EXT_RENDER_MODEL,             /* XR_EXT_render_model */
+	AERON_XR_EXT_INTERACTION_RENDER_MODEL, /* XR_EXT_interaction_render_model */
+	AERON_XR_EXT_HP_CONTROLLER,            /* XR_EXT_hp_mixed_reality_controller */
+	AERON_XR_EXT_TOUCH_PRO,                /* XR_FB_touch_controller_pro */
+	AERON_XR_EXT_TOUCH_PLUS,               /* XR_META_touch_controller_plus */
+	AERON_XR_EXT_COUNT,
+} AeronXrExtension;
+
+/* The name of an extension, as the runtime lists it. */
+const char* AeronXr_ExtensionName(AeronXrExtension extension);
+
 /* What the installed OpenXR runtime offers, read before an instance exists. */
 typedef struct AeronXrRuntimeInfo {
 	uint32_t extension_count;
-	int      has_visibility_mask; /* XR_KHR_visibility_mask */
+	/* Nonzero for each extension that the runtime lists. */
+	uint8_t has[AERON_XR_EXT_COUNT];
 } AeronXrRuntimeInfo;
 
 /* Loads the OpenXR loader through SDL and lists the runtime's extensions.
@@ -53,7 +69,23 @@ void AeronXr_UnloadRuntime(void);
 	X(xrEnumerateSwapchainImages)                                                                            \
 	X(xrAcquireSwapchainImage)                                                                               \
 	X(xrWaitSwapchainImage)                                                                                  \
-	X(xrReleaseSwapchainImage)
+	X(xrReleaseSwapchainImage)                                                                               \
+	X(xrStringToPath)                                                                                        \
+	X(xrPathToString)                                                                                        \
+	X(xrCreateActionSet)                                                                                     \
+	X(xrDestroyActionSet)                                                                                    \
+	X(xrCreateAction)                                                                                        \
+	X(xrSuggestInteractionProfileBindings)                                                                   \
+	X(xrAttachSessionActionSets)                                                                             \
+	X(xrGetCurrentInteractionProfile)                                                                        \
+	X(xrCreateActionSpace)                                                                                   \
+	X(xrSyncActions)                                                                                         \
+	X(xrGetActionStateBoolean)                                                                               \
+	X(xrGetActionStateFloat)                                                                                 \
+	X(xrGetActionStateVector2f)                                                                              \
+	X(xrGetActionStatePose)                                                                                  \
+	X(xrApplyHapticFeedback)                                                                                 \
+	X(xrStopHapticFeedback)
 
 typedef struct AeronXrFunctions {
 #define AERON_XR_FUNCTION_FIELD(name) PFN_##name name;
@@ -146,15 +178,68 @@ typedef struct AeronXrAreaState {
 	int                  stale;
 } AeronXrAreaState;
 
+/* The actions of the two hand controllers (xr_input.c). Each action exists
+ * once and is read for each hand. */
+typedef enum AeronXrAction {
+	AERON_XR_ACTION_TRIGGER,
+	AERON_XR_ACTION_SQUEEZE,
+	AERON_XR_ACTION_THUMBSTICK,
+	AERON_XR_ACTION_TRACKPAD,
+	AERON_XR_ACTION_TRIGGER_CLICK,
+	AERON_XR_ACTION_SQUEEZE_CLICK,
+	AERON_XR_ACTION_PRIMARY,
+	AERON_XR_ACTION_SECONDARY,
+	AERON_XR_ACTION_THUMBSTICK_CLICK,
+	AERON_XR_ACTION_TRACKPAD_CLICK,
+	AERON_XR_ACTION_MENU,
+	AERON_XR_ACTION_GRIP_POSE,
+	AERON_XR_ACTION_AIM_POSE,
+	AERON_XR_ACTION_HAPTIC,
+	AERON_XR_ACTION_COUNT,
+} AeronXrAction;
+
+typedef struct AeronXrInputState {
+	/* The actions exist and are attached to the session. */
+	int         ready;
+	XrActionSet action_set;
+	XrAction    actions[AERON_XR_ACTION_COUNT];
+	/* /user/hand/left and /user/hand/right. */
+	XrPath hand_paths[2];
+	/* The spaces of the grip pose and of the aim pose, for each hand. */
+	XrSpace grip_spaces[2];
+	XrSpace aim_spaces[2];
+	/* The last xrSyncActions gave the actions' states. */
+	int synced;
+	/* A failed xrSyncActions was logged; the next ones are not. */
+	int sync_failed;
+	/* The kind of controller that each hand was last logged with. */
+	XrPath logged_profiles[2];
+} AeronXrInputState;
+
+/* The functions of XR_EXT_render_model and XR_EXT_interaction_render_model
+ * (xr_models.c). They are NULL when the runtime lacks one of the two. */
+typedef struct AeronXrModelFunctions {
+	PFN_xrEnumerateInteractionRenderModelIdsEXT xrEnumerateInteractionRenderModelIdsEXT;
+	PFN_xrGetRenderModelPoseTopLevelUserPathEXT xrGetRenderModelPoseTopLevelUserPathEXT;
+	PFN_xrCreateRenderModelEXT                  xrCreateRenderModelEXT;
+	PFN_xrDestroyRenderModelEXT                 xrDestroyRenderModelEXT;
+	PFN_xrGetRenderModelPropertiesEXT           xrGetRenderModelPropertiesEXT;
+	PFN_xrCreateRenderModelAssetEXT             xrCreateRenderModelAssetEXT;
+	PFN_xrDestroyRenderModelAssetEXT            xrDestroyRenderModelAssetEXT;
+	PFN_xrGetRenderModelAssetDataEXT            xrGetRenderModelAssetDataEXT;
+	PFN_xrGetRenderModelAssetPropertiesEXT      xrGetRenderModelAssetPropertiesEXT;
+} AeronXrModelFunctions;
+
 /* The OpenXR state of the GPU device, shared by the files in src/xr. */
 typedef struct AeronXrState {
 	/* The loader is loaded and `runtime` is valid. */
 	int                runtime_loaded;
 	AeronXrRuntimeInfo runtime;
-	/* The extensions asked from the runtime. SDL reads the list while it
-	 * creates the device. */
-	const char* extensions[1];
+	/* The extensions requested from the runtime: their names, which SDL reads
+	 * while it creates the device, and one flag for each extension. */
+	const char* extensions[AERON_XR_EXT_COUNT];
 	uint32_t    extension_count;
+	uint8_t     extension_enabled[AERON_XR_EXT_COUNT];
 
 	/* SDL writes these two while it creates the device. */
 	XrInstance instance;
@@ -208,6 +293,16 @@ typedef struct AeronXrState {
 	 * whether the eye images show through where the screen is empty. */
 	int screen_visible;
 	int screen_transparent;
+	/* The headset showed the virtual screen in the last frame. */
+	int screen_shown;
+
+	AeronXrInputState input;
+	/* The controller models. `models_available` says that the functions
+	 * are there, and `models_stale` that the runtime's list changed and
+	 * must be read again. */
+	AeronXrModelFunctions model_fn;
+	int                   models_available;
+	int                   models_stale;
 } AeronXrState;
 
 extern AeronXrState g_xr;
@@ -229,6 +324,19 @@ void AeronXr_InitAreaMeshes(void);
 void AeronXr_FreeAreaMeshes(void);
 void AeronXr_AreaMeshChanged(uint32_t view_index);
 void AeronXr_GetAreaMeshes(AeronXrFrame* frame);
+/* The hand controllers (xr_input.c). Create makes the actions and attaches
+ * them to the new session; when it fails, it logs why and the session has no
+ * controllers. ProfileChanged logs which kind of controller each hand holds,
+ * on the runtime's event. */
+void AeronXrInput_Create(void);
+void AeronXrInput_Destroy(void);
+void AeronXrInput_ProfileChanged(void);
+/* The controller models that the runtime has for the hands (xr_models.c).
+ * Init finds the functions. Changed marks the list as stale, on the
+ * runtime's event. Update reads a stale list and logs each model. */
+void AeronXrModels_Init(void);
+void AeronXrModels_Changed(void);
+void AeronXrModels_Update(void);
 /* Releases every image that is still held. xrEndFrame calls it: by then
  * every command buffer that draws into the images was submitted. */
 void AeronXr_ReleaseImages(void);

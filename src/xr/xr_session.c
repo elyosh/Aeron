@@ -32,9 +32,19 @@ int AeronXr_PrepareDevice(char* error, size_t error_size) {
 	g_xr.runtime_loaded = 1;
 	/* An extension that the runtime doesn't have makes SDL's device creation
 	 * fail, so only ask for the ones it lists. */
+	const uint8_t* has = g_xr.runtime.has;
+	/* The controller models need the two render model extensions together.
+	 * Their structures hold an XrUuidEXT, so XR_EXT_uuid goes with them. */
+	const int models     = has[AERON_XR_EXT_UUID] && has[AERON_XR_EXT_RENDER_MODEL] &&
+						   has[AERON_XR_EXT_INTERACTION_RENDER_MODEL];
 	g_xr.extension_count = 0;
-	if (g_xr.runtime.has_visibility_mask)
-		g_xr.extensions[g_xr.extension_count++] = XR_KHR_VISIBILITY_MASK_EXTENSION_NAME;
+	for (int i = 0; i < AERON_XR_EXT_COUNT; i++) {
+		const int is_model        = i == AERON_XR_EXT_UUID || i == AERON_XR_EXT_RENDER_MODEL ||
+									i == AERON_XR_EXT_INTERACTION_RENDER_MODEL;
+		g_xr.extension_enabled[i] = has[i] && (!is_model || models);
+		if (g_xr.extension_enabled[i])
+			g_xr.extensions[g_xr.extension_count++] = AeronXr_ExtensionName((AeronXrExtension)i);
+	}
 	return 1;
 }
 
@@ -157,7 +167,13 @@ static void xr_log_runtime(void) {
 				  g_xr.view_height, g_xr.view_max_width, g_xr.view_max_height,
 				  g_xr.color_format == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB ? "RGBA8 sRGB"
 																				 : "BGRA8 sRGB",
-				  g_xr.extension_count ? "yes" : "no");
+				  g_xr.extension_enabled[AERON_XR_EXT_VISIBILITY_MASK] ? "yes" : "no");
+	char extensions[512] = "";
+	for (uint32_t i = 0; i < g_xr.extension_count; i++) {
+		SDL_strlcat(extensions, i ? ", " : "", sizeof extensions);
+		SDL_strlcat(extensions, g_xr.extensions[i], sizeof extensions);
+	}
+	Aeron_LogInfo("aeron.xr", "OpenXR extensions in use: %s", extensions[0] ? extensions : "none");
 	Aeron_LogInfo("aeron.xr", "virtual screen %dx%d, %u images for each swapchain", g_xr.screen.width,
 				  g_xr.screen.height, (unsigned)g_xr.screen.image_count);
 }
@@ -192,6 +208,8 @@ int AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size)
 		return 0;
 	AeronXr_InitAreaMeshes();
 	xr_log_runtime();
+	AeronXrModels_Init();
+	AeronXrInput_Create();
 	return 1;
 }
 
@@ -206,6 +224,11 @@ void AeronXr_DestroySession(SDL_GPUDevice* device) {
 		AeronXr_EndFrame();
 	AeronXr_DestroySwapchains(device);
 	AeronXr_FreeAreaMeshes();
+	if (g_xr.machine.session && !g_xr.failed)
+		AeronXrInput_Destroy();
+	SDL_zero(g_xr.input);
+	SDL_zero(g_xr.model_fn);
+	g_xr.models_available = 0;
 	if (g_xr.machine.session && !g_xr.failed) {
 		const XrSpace spaces[] = { g_xr.rig_space, g_xr.view_space, g_xr.local_space };
 		for (size_t i = 0; i < SDL_arraysize(spaces); i++) {
@@ -351,6 +374,13 @@ SDL_GPUTexture* AeronXr_AcquireScreenImage(SDL_GPUTextureFormat* format, int* wi
 void AeronXr_SetScreenLayer(int visible, int transparent) {
 	(void)visible;
 	(void)transparent;
+}
+
+int Aeron_XrScreenQuad(AeronViewPose* pose, float* width_m, float* height_m) {
+	(void)pose;
+	(void)width_m;
+	(void)height_m;
+	return 0;
 }
 
 int Aeron_XrBeginViews(AeronXrFrame* out) {

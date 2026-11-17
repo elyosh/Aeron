@@ -6,6 +6,19 @@
 #include <stdio.h>
 #include <string.h>
 
+const char* AeronXr_ExtensionName(AeronXrExtension extension) {
+	static const char* const names[AERON_XR_EXT_COUNT] = {
+		[AERON_XR_EXT_VISIBILITY_MASK]          = XR_KHR_VISIBILITY_MASK_EXTENSION_NAME,
+		[AERON_XR_EXT_UUID]                     = XR_EXT_UUID_EXTENSION_NAME,
+		[AERON_XR_EXT_RENDER_MODEL]             = XR_EXT_RENDER_MODEL_EXTENSION_NAME,
+		[AERON_XR_EXT_INTERACTION_RENDER_MODEL] = XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME,
+		[AERON_XR_EXT_HP_CONTROLLER]            = XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME,
+		[AERON_XR_EXT_TOUCH_PRO]                = XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME,
+		[AERON_XR_EXT_TOUCH_PLUS]               = XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME,
+	};
+	return names[extension];
+}
+
 int AeronXr_LoadRuntime(AeronXrRuntimeInfo* out, char* error, size_t error_size) {
 	memset(out, 0, sizeof *out);
 	if (!SDL_OpenXR_LoadLibrary()) {
@@ -59,8 +72,10 @@ int AeronXr_LoadRuntime(AeronXrRuntimeInfo* out, char* error, size_t error_size)
 
 	out->extension_count = count;
 	for (uint32_t i = 0; i < count; i++) {
-		if (strcmp(properties[i].extensionName, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME) == 0)
-			out->has_visibility_mask = 1;
+		for (int extension = 0; extension < AERON_XR_EXT_COUNT; extension++) {
+			if (strcmp(properties[i].extensionName, AeronXr_ExtensionName((AeronXrExtension)extension)) == 0)
+				out->has[extension] = 1;
+		}
 	}
 	SDL_free(properties);
 	return 1;

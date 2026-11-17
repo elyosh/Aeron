@@ -13,7 +13,7 @@ void AeronXr_InitAreaMeshes(void) {
 	PFN_xrGetInstanceProcAddr get_proc = (PFN_xrGetInstanceProcAddr)SDL_OpenXR_GetXrGetInstanceProcAddr();
 	g_xr.get_visibility_mask           = NULL;
 	/* The function only exists when the extension was asked for. */
-	if (g_xr.extension_count == 0 || !get_proc ||
+	if (!g_xr.extension_enabled[AERON_XR_EXT_VISIBILITY_MASK] || !get_proc ||
 		XR_FAILED(get_proc(g_xr.instance, "xrGetVisibilityMaskKHR",
 						   (PFN_xrVoidFunction*)&g_xr.get_visibility_mask))) {
 		g_xr.get_visibility_mask = NULL;

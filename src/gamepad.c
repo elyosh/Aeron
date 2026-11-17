@@ -148,12 +148,17 @@ static int Aeron_ControllerAxisDigitalDown(int16_t value, const AeronControllerD
 	return Aeron_ControllerAxisDigitalAmount(value, source) >= threshold;
 }
 
+/* A joystick and a VR hand are read through their raw axes and buttons. */
+static int Aeron_ControllerKindIsRaw(AeronControllerKind kind) {
+	return kind == AERON_CONTROLLER_KIND_JOYSTICK || kind == AERON_CONTROLLER_KIND_VR_HAND;
+}
+
 int Aeron_ControllerAxisAvailable(const AeronControllerSnapshot* controller, int axis) {
 	if (!controller || !controller->connected || axis < 0)
 		return 0;
 	if (controller->kind == AERON_CONTROLLER_KIND_GAMEPAD)
 		return axis < AERON_GAMEPAD_AXIS_COUNT && (controller->gamepad_available_axes & (1u << axis));
-	return controller->kind == AERON_CONTROLLER_KIND_JOYSTICK && axis < controller->axis_count &&
+	return Aeron_ControllerKindIsRaw(controller->kind) && axis < controller->axis_count &&
 		   axis < AERON_CONTROLLER_AXIS_MAX;
 }
 
@@ -180,8 +185,8 @@ int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      contro
 				return (controller->gamepad_available_buttons & bit) != 0 &&
 					   (controller->gamepad_buttons & bit) != 0;
 			}
-			if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK &&
-				source->index < controller->button_count && source->index < AERON_CONTROLLER_BUTTON_MAX) {
+			if (Aeron_ControllerKindIsRaw(controller->kind) && source->index < controller->button_count &&
+				source->index < AERON_CONTROLLER_BUTTON_MAX) {
 				return Aeron_ControllerButtonBit(controller->raw_buttons, source->index);
 			}
 			return 0;
@@ -195,8 +200,8 @@ int Aeron_ControllerDigitalSourceDown(const AeronControllerSnapshot*      contro
 				return Aeron_ControllerAxisDigitalDown(controller->gamepad_axes[source->index], source,
 													   was_down);
 			}
-			if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK &&
-				source->index < controller->axis_count && source->index < AERON_CONTROLLER_AXIS_MAX) {
+			if (Aeron_ControllerKindIsRaw(controller->kind) && source->index < controller->axis_count &&
+				source->index < AERON_CONTROLLER_AXIS_MAX) {
 				return Aeron_ControllerAxisDigitalDown(controller->raw_axes[source->index], source, was_down);
 			}
 			return 0;
@@ -230,7 +235,7 @@ float Aeron_ControllerDigitalSourceAxisAmount(const AeronControllerSnapshot*    
 static int Aeron_FindControllerSlot(SDL_JoystickID instance_id) {
 	int slot;
 
-	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
+	for (slot = 0; slot < AERON_CONTROLLER_SDL_MAX; ++slot) {
 		if (g_aeron.controllers[slot].joystick != NULL &&
 			g_aeron.controllers[slot].instance_id == instance_id) {
 			return slot;
@@ -243,7 +248,7 @@ static int Aeron_FindControllerSlot(SDL_JoystickID instance_id) {
 static int Aeron_FindFreeControllerSlot(void) {
 	int slot;
 
-	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
+	for (slot = 0; slot < AERON_CONTROLLER_SDL_MAX; ++slot) {
 		if (g_aeron.controllers[slot].joystick == NULL) {
 			return slot;
 		}
@@ -322,7 +327,7 @@ static int Aeron_OpenControllerInSlot(int slot, SDL_JoystickID instance_id) {
 	SDL_Joystick*          joystick      = NULL;
 	int                    owns_joystick = 0;
 
-	if (slot < 0 || slot >= AERON_CONTROLLER_MAX) {
+	if (slot < 0 || slot >= AERON_CONTROLLER_SDL_MAX) {
 		return 0;
 	}
 
@@ -394,7 +399,7 @@ static void Aeron_OpenController(SDL_JoystickID instance_id) {
 static void Aeron_CloseControllerSlot(int slot) {
 	AeronControllerDevice* device;
 
-	if (slot < 0 || slot >= AERON_CONTROLLER_MAX) {
+	if (slot < 0 || slot >= AERON_CONTROLLER_SDL_MAX) {
 		return;
 	}
 	device = &g_aeron.controllers[slot];
@@ -432,7 +437,7 @@ void Aeron_ControllersInit(void) {
 void Aeron_ControllersShutdown(void) {
 	int slot;
 
-	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
+	for (slot = 0; slot < AERON_CONTROLLER_SDL_MAX; ++slot) {
 		Aeron_CloseControllerSlot(slot);
 	}
 }
@@ -514,12 +519,17 @@ void Aeron_UpdateControllers(AeronInputSnapshot* input) {
 		return;
 	}
 
-	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
+	/* The last two slots belong to the VR hands (AeronXr_UpdateHands). */
+	for (slot = 0; slot < AERON_CONTROLLER_SDL_MAX; ++slot) {
 		Aeron_UpdateControllerSnapshot(slot, &input->controllers[slot]);
 	}
 }
 
 int Aeron_ControllerHasRumble(uint32_t instance_id) {
+	const int hand = AeronXr_HandFromInstance(instance_id);
+	if (hand >= 0) {
+		return AeronXr_HandHasRumble(hand);
+	}
 	int slot = Aeron_FindControllerSlot((SDL_JoystickID)instance_id);
 	return slot >= 0 ? g_aeron.controllers[slot].has_rumble : 0;
 }
@@ -529,7 +539,11 @@ int Aeron_RumbleController(uint32_t instance_id, uint16_t low_frequency_rumble,
 	int                    slot = Aeron_FindControllerSlot((SDL_JoystickID)instance_id);
 	AeronControllerDevice* device;
 	const int stopping = (low_frequency_rumble == 0 && high_frequency_rumble == 0) || duration_ms == 0;
+	const int              hand     = AeronXr_HandFromInstance(instance_id);
 
+	if (hand >= 0) {
+		return AeronXr_RumbleHand(hand, low_frequency_rumble, high_frequency_rumble, duration_ms);
+	}
 	if (slot < 0) {
 		if (!stopping) {
 			Aeron_LogWarn("aeron.input", "Rumble requested for disconnected controller id=%u",

@@ -89,15 +89,23 @@ static void xr_fill_projection(XrCompositionLayerProjection* layer, XrCompositio
 	};
 }
 
+/* Where the virtual screen is: its distance straight ahead of the rig's
+ * origin, and its size in metres. */
+static void xr_screen_rect(float* distance, float* width, float* height) {
+	const AeronStartupOptions* options = &g_aeron.xr_options;
+	*distance = options->xr_screen_distance_m > 0.0f ? options->xr_screen_distance_m
+													 : AERON_XR_SCREEN_DEFAULT_DISTANCE_M;
+	*width =
+		(options->xr_screen_width_m > 0.0f ? options->xr_screen_width_m : AERON_XR_SCREEN_DEFAULT_WIDTH_M) *
+		(g_aeron.xr_screen_scale > 0.0f ? g_aeron.xr_screen_scale : 1.0f);
+	*height = *width * (float)g_xr.screen.height / (float)g_xr.screen.width;
+}
+
 /* The layer that shows the virtual screen: a flat rectangle straight ahead
  * of the rig's origin. Its colours are premultiplied by alpha. */
 static void xr_fill_screen(XrCompositionLayerQuad* layer) {
-	const AeronStartupOptions* options = &g_aeron.xr_options;
-	const float distance = options->xr_screen_distance_m > 0.0f ? options->xr_screen_distance_m
-																: AERON_XR_SCREEN_DEFAULT_DISTANCE_M;
-	const float                width =
-		(options->xr_screen_width_m > 0.0f ? options->xr_screen_width_m : AERON_XR_SCREEN_DEFAULT_WIDTH_M) *
-		(g_aeron.xr_screen_scale > 0.0f ? g_aeron.xr_screen_scale : 1.0f);
+	float distance, width, height;
+	xr_screen_rect(&distance, &width, &height);
 	*layer = (XrCompositionLayerQuad) {
 		.type          = XR_TYPE_COMPOSITION_LAYER_QUAD,
 		.layerFlags    = g_xr.screen_transparent ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT : 0,
@@ -108,8 +116,24 @@ static void xr_fill_screen(XrCompositionLayerQuad* layer) {
 			.imageRect = { { 0, 0 }, { g_xr.screen.width, g_xr.screen.height } },
 		},
 		.pose = { .orientation = { 0.0f, 0.0f, 0.0f, 1.0f }, .position = { 0.0f, 0.0f, -distance } },
-		.size = { width, width * (float)g_xr.screen.height / (float)g_xr.screen.width },
+		.size = { width, height },
 	};
+}
+
+int Aeron_XrScreenQuad(AeronViewPose* pose, float* width_m, float* height_m) {
+	float distance, width, height;
+	if (!g_xr.machine.running || g_xr.failed || !g_xr.screen_shown || g_xr.screen.width <= 0)
+		return 0;
+	xr_screen_rect(&distance, &width, &height);
+	if (pose) {
+		*pose               = (AeronViewPose) { .orientation = { 0.0f, 0.0f, 0.0f, 1.0f } };
+		pose->position_m[2] = -distance;
+	}
+	if (width_m)
+		*width_m = width;
+	if (height_m)
+		*height_m = height;
+	return 1;
 }
 
 int AeronXr_EndFrame(void) {
@@ -124,6 +148,7 @@ int AeronXr_EndFrame(void) {
 	g_xr.views_begun      = 0;
 	g_xr.views_submitted  = 0;
 	g_xr.screen_visible   = 0;
+	g_xr.screen_shown     = g_xr.frame_should_render && show_screen;
 	if (g_xr.failed)
 		return 0;
 

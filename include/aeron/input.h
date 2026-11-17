@@ -195,7 +195,42 @@ typedef enum AeronControllerKind {
 	AERON_CONTROLLER_KIND_NONE = 0,
 	AERON_CONTROLLER_KIND_JOYSTICK,
 	AERON_CONTROLLER_KIND_GAMEPAD,
+	/* One hand's VR controller. Its axes and buttons are in raw_axes and
+	 * raw_buttons, in the order of AeronVrHandAxis and AeronVrHandButton.
+	 * The order is the same for every controller model. */
+	AERON_CONTROLLER_KIND_VR_HAND,
 } AeronControllerKind;
+
+/* The axes of a VR hand. The trigger and the squeeze go from 0 to 32767.
+ * The thumbstick and the trackpad go from -32768 to 32767, with right and
+ * up positive. An input that the controller doesn't have stays at 0. */
+typedef enum AeronVrHandAxis {
+	AERON_VR_HAND_AXIS_TRIGGER,
+	AERON_VR_HAND_AXIS_SQUEEZE,
+	AERON_VR_HAND_AXIS_THUMBSTICK_X,
+	AERON_VR_HAND_AXIS_THUMBSTICK_Y,
+	AERON_VR_HAND_AXIS_TRACKPAD_X,
+	AERON_VR_HAND_AXIS_TRACKPAD_Y,
+	AERON_VR_HAND_AXIS_COUNT,
+} AeronVrHandAxis;
+
+/* The buttons of a VR hand. The primary button is A on the right hand and
+ * X on the left one; the secondary button is B or Y. */
+typedef enum AeronVrHandButton {
+	AERON_VR_HAND_BUTTON_TRIGGER,
+	AERON_VR_HAND_BUTTON_SQUEEZE,
+	AERON_VR_HAND_BUTTON_PRIMARY,
+	AERON_VR_HAND_BUTTON_SECONDARY,
+	AERON_VR_HAND_BUTTON_THUMBSTICK,
+	AERON_VR_HAND_BUTTON_TRACKPAD,
+	AERON_VR_HAND_BUTTON_MENU,
+	AERON_VR_HAND_BUTTON_COUNT,
+} AeronVrHandButton;
+
+/* The instance IDs of the two VR hands. SDL never gives these values to a
+ * joystick. */
+#define AERON_VR_HAND_INSTANCE_LEFT 0xFFFFFF00u
+#define AERON_VR_HAND_INSTANCE_RIGHT 0xFFFFFF01u
 
 /* SDL-compatible joystick hat bits. Diagonals are bitwise combinations. */
 typedef enum AeronControllerHat {
@@ -207,9 +242,11 @@ typedef enum AeronControllerHat {
 } AeronControllerHat;
 
 /*
- * State for one connected SDL controller. Raw axis values use SDL's signed
- * 16-bit joystick range. When kind is GAMEPAD, gamepad_axes/buttons also
- * expose SDL's standardized layout; trigger axes are 0..32767.
+ * State for one connected controller: an SDL joystick or gamepad, or a VR
+ * hand. Raw axis values use SDL's signed 16-bit joystick range. When kind is
+ * GAMEPAD, gamepad_axes/buttons also expose SDL's standardized layout;
+ * trigger axes are 0..32767. Each VR hand has a fixed GUID, the same for
+ * every controller model.
  */
 typedef struct AeronControllerSnapshot {
 	int                 connected;
@@ -327,6 +364,13 @@ int Aeron_RumbleController(uint32_t instance_id, uint16_t low_frequency_rumble,
 						   uint16_t high_frequency_rumble, uint32_t duration_ms);
 /* Non-zero if the connected controller reports rumble capability. */
 int Aeron_ControllerHasRumble(uint32_t instance_id);
+
+/* Names to show for the axes and buttons of a VR hand, such as "Trigger" or
+ * "Thumbstick Click". `hand` is 0 for the left hand and 1 for the right one:
+ * the primary and secondary buttons are named X and Y on the left, A and B
+ * on the right. Returns NULL for an index out of range. */
+const char* Aeron_VrHandAxisName(int hand, int axis);
+const char* Aeron_VrHandButtonName(int hand, int button);
 
 #ifdef __cplusplus
 }

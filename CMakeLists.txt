@@ -540,6 +540,7 @@ set(AERON_SOURCES
     src/vfs.c
     src/vfs_iso9660.c
     src/window.c
+    src/xr/xr_input.c
     src/xr/xr_session.c
 )
 
@@ -551,6 +552,7 @@ if(AERON_XR)
         src/xr/xr_frame.c
         src/xr/xr_loader.c
         src/xr/xr_mask.c
+        src/xr/xr_models.c
         src/xr/xr_state.c
         src/xr/xr_swapchain.c)
     target_compile_definitions(aeron PRIVATE AERON_XR=1)
