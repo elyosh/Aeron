@@ -361,6 +361,15 @@ typedef struct AeronSceneViewDesc {
 	 * motion vectors. With NULL, the camera has no velocity in this frame. */
 	const float* prev_view_proj; /* float[16] */
 	const float* prev_ori;       /* float[4] */
+	/* Optional: the hidden-area mesh of a headset's eye, the part of the
+	 * image that the lens never shows. It is a list of triangles, two
+	 * floats for each vertex: X to the right and Y up, on the plane one unit
+	 * in front of the eye. The scene shades no pixel under it. The pointer
+	 * must stay valid until the frame's AeronScene_EndFrame. Change
+	 * `hidden_area_generation` when the mesh changes. */
+	const float* hidden_area_xy;
+	int          hidden_area_vertex_count;
+	uint32_t     hidden_area_generation;
 } AeronSceneViewDesc;
 
 /* Sets the views that the frame is rendered into, for AeronScene_RenderView.

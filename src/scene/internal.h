@@ -452,6 +452,17 @@ typedef struct AeronSceneShadowFitHistory {
  * directly: it reads the scene's own camera, view-projection, motion and
  * cluster fields. scene_view_enter copies a view's state into those fields
  * before the view is rendered. */
+/* A view's hidden-area mesh (hidden_area.c). */
+typedef struct AeronSceneHiddenAreaView {
+	const float* xy;
+	uint32_t     count; /* vertices */
+	uint32_t     generation;
+	/* tan of the half angles and the projection offsets the mesh was
+	 * projected with. */
+	float    projection[4];
+	uint32_t first; /* the first vertex in the vertex buffer */
+} AeronSceneHiddenAreaView;
+
 typedef struct AeronSceneViewState {
 	AeronSceneCamera camera;
 	/* Set by AeronScene_SetMotionContext. mb_prev_view_proj_set is zero when
@@ -1003,6 +1014,17 @@ struct AeronScene3D {
 	AeronGraphicsPipeline* pbr_emission_bloom_pipes[3];
 	/* Nearest and clamped, for the scene's depth. */
 	AeronSampler* pbr_emission_bloom_depth_sampler;
+
+	/* hidden_area.c */
+	AeronSceneHiddenAreaView hidden_area_views[AERON_MAX_VIEWS];
+	int                      hidden_area_active; /* this frame's views were given meshes */
+	int                      hidden_area_dirty;  /* the vertex buffer must be filled again */
+	AeronBuffer*             hidden_area_vb;
+	uint32_t                 hidden_area_vb_vertices;
+	AeronShader*             hidden_area_vs;
+	AeronShader*             hidden_area_ps;
+	AeronGraphicsPipeline*   hidden_area_prepass_pipeline;
+	AeronGraphicsPipeline*   hidden_area_color_pipeline;
 };
 
 /* Shared small helpers (util.c). */
@@ -1062,6 +1084,17 @@ void AeronSceneProbeOcclusion_OccupancyMapping(const struct AeronScene3D* s, flo
  * off rather than fail the frame. */
 void AeronScenePlanarReflection_Render(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void AeronScenePlanarReflection_Release(struct AeronScene3D* s);
+
+/* The hidden-area mesh of a headset's eyes (hidden_area.c). Reset says that
+ * the frame has no mesh, and SetView gives one view's mesh. Prepare fills
+ * the vertex buffer when a mesh changed. Draw writes the current view's mesh
+ * at the near depth; `color_pass` picks the pipeline of the colour pass or
+ * of the depth prepass. */
+void AeronSceneHiddenArea_Reset(struct AeronScene3D* s);
+void AeronSceneHiddenArea_SetView(struct AeronScene3D* s, int view, const AeronSceneViewDesc* desc);
+int  AeronSceneHiddenArea_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void AeronSceneHiddenArea_Draw(struct AeronScene3D* s, AeronRenderPass* pass, int color_pass);
+void AeronSceneHiddenArea_Release(struct AeronScene3D* s);
 /* The reflection the floor reads (a placeholder while inactive), and the
  * lighting block's floor fields for probe set `set` drawing an instance
  * that is (`receiver`) or is not its owner. */

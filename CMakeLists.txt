@@ -365,6 +365,8 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_compose.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_probe_occupancy_downsample.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_planar_reflection_resolve.comp.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_hidden_area.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_hidden_area.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/env_build_store_face.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/env_build_downsample.comp.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/env_build_irradiance.comp.hlsl
@@ -545,6 +547,7 @@ if(AERON_XR)
     target_sources(aeron PRIVATE
         src/xr/xr_frame.c
         src/xr/xr_loader.c
+        src/xr/xr_mask.c
         src/xr/xr_state.c
         src/xr/xr_swapchain.c)
     target_compile_definitions(aeron PRIVATE AERON_XR=1)
@@ -1088,6 +1091,7 @@ add_library(aeron_scene STATIC
     src/scene/clustered_lights.c
     src/scene/probe_occlusion.c
     src/scene/planar_reflection.c
+    src/scene/hidden_area.c
     src/scene/world.c
     src/scene/view_rig.c
     src/scene/settings.c

@@ -131,6 +131,15 @@ typedef struct AeronXrSwapchain {
 	int                       width, height;
 } AeronXrSwapchain;
 
+/* One eye's hidden-area mesh, as triangles (xr_mask.c). It is read again
+ * from the runtime when it is stale. */
+typedef struct AeronXrHiddenAreaState {
+	float*   xy;
+	int      vertex_count;
+	uint32_t generation;
+	int      stale;
+} AeronXrHiddenAreaState;
+
 /* The OpenXR state of the GPU device, shared by the files in src/xr. */
 typedef struct AeronXrState {
 	/* The loader is loaded and `runtime` is valid. */
@@ -182,6 +191,10 @@ typedef struct AeronXrState {
 	int    views_begun;
 	int    views_submitted;
 	XrView located_views[2];
+	/* The eyes' hidden-area meshes (xr_mask.c). The function is NULL when
+	 * the runtime doesn't have XR_KHR_visibility_mask. */
+	PFN_xrGetVisibilityMaskKHR get_visibility_mask;
+	AeronXrHiddenAreaState     hidden[2];
 	/* This frame's virtual screen layer: whether the headset shows it, and
 	 * whether the eye images show through where the screen is empty. */
 	int screen_visible;
@@ -199,6 +212,14 @@ void AeronXr_Fail(const char* message);
  * destroys them (xr_swapchain.c). */
 int  AeronXr_CreateSwapchains(SDL_GPUDevice* device, char* error, size_t error_size);
 void AeronXr_DestroySwapchains(SDL_GPUDevice* device);
+/* The eyes' hidden-area meshes (xr_mask.c). Init finds the runtime's
+ * function, after the instance's other functions are loaded. Changed marks
+ * an eye's mesh as stale, on the runtime's event. Get reads the stale meshes
+ * and puts both in `frame`. */
+void AeronXr_InitHiddenAreas(void);
+void AeronXr_FreeHiddenAreas(void);
+void AeronXr_HiddenAreaChanged(uint32_t view_index);
+void AeronXr_GetHiddenAreas(AeronXrFrame* frame);
 /* Releases every image that is still held. xrEndFrame calls it: by then
  * every command buffer that draws into the images was submitted. */
 void AeronXr_ReleaseImages(void);

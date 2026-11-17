@@ -461,6 +461,7 @@ void AeronScene_Destroy(AeronScene3D* s) {
 	AeronSceneClusteredLights_Release(s);
 	AeronSceneProbeOcclusion_Release(s);
 	AeronScenePlanarReflection_Release(s);
+	AeronSceneHiddenArea_Release(s);
 	AeronSceneStorage_Release(s);
 	AeronScenePbr_Release(s);
 	AeronSceneTemporal_Release(s);
@@ -582,6 +583,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	state->camera                = *camera;
 	state->mb_prev_view_proj_set = 0;
 	s->view_count                = 1;
+	AeronSceneHiddenArea_Reset(s);
 	s->primary_view              = 0;
 	s->frame_prepared            = 0;
 	scene_view_enter(s, 0);
@@ -1061,6 +1063,7 @@ int AeronScene_SetViews(AeronScene3D* s, const AeronSceneViewDesc* views, int co
 		if (views[i].prev_view_proj) {
 			memcpy(state->mb_prev_view_proj, views[i].prev_view_proj, sizeof state->mb_prev_view_proj);
 		}
+		AeronSceneHiddenArea_SetView(s, i, &views[i]);
 	}
 	s->view_count   = count;
 	s->primary_view = primary;
@@ -3309,6 +3312,8 @@ int AeronScene_PrepareFrame(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (s->overlay_vertex_count > 0 && !AeronSceneMeshOverlay_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene mesh-overlay preparation failed");
 	}
+	/* A failure only costs the saving: the views are drawn in full. */
+	(void)AeronSceneHiddenArea_Prepare(s, cmd);
 	const uint32_t draws_before_shadows = scene_recorded_draws();
 	if (!AeronSceneDirectionalShadow_Prepare(s) || !AeronSceneDirectionalShadow_Render(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene directional-shadow preparation failed");
@@ -3441,6 +3446,11 @@ int AeronScene_RenderView(AeronScene3D* s, AeronCommandBuffer* cmd, int view) {
 		if (!pre) {
 			return scene_render_failure(s, cmd, "Scene prepass creation failed");
 		}
+		/* The hidden area first: nothing under it is drawn. Its pipeline
+		 * matches a prepass that only has the normal target. */
+		if (!s->temporal_active && !velocity_write) {
+			AeronSceneHiddenArea_Draw(s, pre, /*color_pass=*/0);
+		}
 		AeronGraphicsPipeline* camera_fill =
 			s->temporal_active ? s->temporal_sky_velocity_pipeline : s->mb_camera_fill_pipeline;
 		if (velocity_write && camera_fill && (s->temporal_active || s->post.mb_camera_blur) &&
@@ -3524,6 +3534,11 @@ int AeronScene_RenderView(AeronScene3D* s, AeronCommandBuffer* cmd, int view) {
 		});
 		if (!pass) {
 			return scene_render_failure(s, cmd, "Scene forward pass creation failed");
+		}
+		/* With MSAA the colour pass has its own depth, so the hidden area is
+		 * written there too. At 1x it is already in the prepass depth. */
+		if (msaa_active) {
+			AeronSceneHiddenArea_Draw(s, pass, /*color_pass=*/1);
 		}
 		if (!scene_draw_sky(s, cmd, pass)) {
 			Aeron_EndRenderPass(pass);
@@ -3623,6 +3638,7 @@ int AeronScene_RenderView(AeronScene3D* s, AeronCommandBuffer* cmd, int view) {
 		if (!pass) {
 			return scene_render_failure(s, cmd, "Scene main pass creation failed");
 		}
+		AeronSceneHiddenArea_Draw(s, pass, /*color_pass=*/1);
 		if (!scene_draw_sky(s, cmd, pass)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene sky recording failed");

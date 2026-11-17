@@ -34,9 +34,21 @@ void Aeron_XrRecenter(void);
  * times the render scale of the startup options. Returns 0 when VR is off. */
 int Aeron_XrViewSize(int* width, int* height);
 
+/* The part of an eye image that the headset's lens never shows: a list of
+ * triangles, two floats for each vertex, X to the right and Y up, on the
+ * plane one unit in front of the eye. `vertex_count` is zero when the
+ * headset gives none. `generation` changes when the mesh changes. */
+typedef struct AeronXrHiddenArea {
+	const float* xy;
+	int          vertex_count;
+	uint32_t     generation;
+} AeronXrHiddenArea;
+
 typedef struct AeronXrFrame {
 	AeronViewRig       rig;
 	AeronRenderTarget* color[AERON_MAX_VIEWS]; /* borrowed until Aeron_Present */
+	/* Borrowed until the next Aeron_XrBeginViews. */
+	AeronXrHiddenArea hidden_area[AERON_MAX_VIEWS];
 } AeronXrFrame;
 
 /* Locates the views and acquires the eye images. Returns 0 when this frame
