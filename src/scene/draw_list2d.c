@@ -503,6 +503,7 @@ struct AeronDrawList2D {
 	uint32_t                 plane_cap;
 	uint32_t                 plane_count;
 	uint32_t                 current_plane;
+	int                      plane_hard_fills;
 	int                      rrect_plane_logged;
 	int                      cap;
 	int                      count;
@@ -611,6 +612,12 @@ void AeronDrawList_Begin(AeronDrawList2D* l, AeronRenderTarget* target, int targ
 	l->has_depth_mask = 0;
 	l->plane_count    = 0;
 	l->current_plane  = 0;
+}
+
+void AeronDrawList_SetPlaneHardFills(AeronDrawList2D* l, int hard) {
+	if (l) {
+		l->plane_hard_fills = hard != 0;
+	}
 }
 
 int AeronDrawList_AddPlane(AeronDrawList2D* l, const float matrix[9], float w) {
@@ -918,7 +925,7 @@ void AeronDrawList_AddFill(AeronDrawList2D* l, float x, float y, float w, float 
 	const int before = l ? l->count : 0;
 	AeronDrawList_AddSprite(l, &s);
 	if (l && l->count > before) {
-		l->records[l->count - 1].u.quad.solid = 1.0f;
+		l->records[l->count - 1].u.quad.solid = l->plane_hard_fills ? 0.0f : 1.0f;
 	}
 }
 

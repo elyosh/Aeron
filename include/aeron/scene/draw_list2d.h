@@ -167,6 +167,12 @@ void AeronDrawList_Begin(AeronDrawList2D* list, AeronRenderTarget* target, int t
 int  AeronDrawList_AddPlane(AeronDrawList2D* list, const float matrix[9], float w);
 void AeronDrawList_UsePlane(AeronDrawList2D* list, int plane);
 
+/* With `hard`, the fills added from now on keep hard edges on planes, as in
+ * a flat draw. Use it when the planes are aligned with the target's pixels,
+ * so the fills cover the same pixels as a flat draw would. The setting stays
+ * until it is changed; a new list antialiases its fills. */
+void AeronDrawList_SetPlaneHardFills(AeronDrawList2D* list, int hard);
+
 void AeronDrawList_AddSprite(AeronDrawList2D* list, const AeronDrawList2DSprite* sprite);
 void AeronDrawList_AddQuad4(AeronDrawList2D* list, const AeronDrawList2DQuad4* quad);
 void AeronDrawList_AddRRect(AeronDrawList2D* list, const AeronDrawList2DRRect* rrect);
@@ -237,7 +243,8 @@ void AeronDrawList_RenderIntoPass(AeronDrawList2D* list, AeronCommandBuffer* cmd
  *   - the depth mask is not applied;
  *   - a free quad with a corner behind the view is not drawn;
  *   - the edges of fills (AddFill, AddFrame) are antialiased, because they
- *     aren't aligned with the target's pixels. */
+ *     aren't aligned with the target's pixels, unless
+ *     AeronDrawList_SetPlaneHardFills turned this off. */
 void AeronDrawList_RenderPlanes(AeronDrawList2D* list, AeronCommandBuffer* cmd, AeronRenderPass* pass,
 								AeronRenderTarget* target, const float view[12], float opacity);
 
