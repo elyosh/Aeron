@@ -218,8 +218,7 @@ AeronScenePresentChain* AeronScenePresentChain_Create(AeronTextureFormat target_
 		return NULL;
 	}
 	c->target_format = target_format;
-	c->vs =
-		AeronSceneInternal_CompileShader("scene_fullscreen_quad.vert", AERON_SHADER_STAGE_VERTEX, 0, 0, 0);
+	c->vs     = AeronSceneInternal_CompileShader("scene_present.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 0);
 	c->ps_sdr = AeronSceneInternal_CompileShader("scene_tonemap.frag", AERON_SHADER_STAGE_FRAGMENT, 4, 1, 0);
 	c->ps_hdr =
 		AeronSceneInternal_CompileShader("scene_tonemap_hdr.frag", AERON_SHADER_STAGE_FRAGMENT, 4, 1, 0);
@@ -265,7 +264,7 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 								 AeronSampler* sampler, AeronTexture* bloom_tex, float bloom_intensity,
 								 float exposure, AeronTexture* exposure_tex, int rt_w, int rt_h,
 								 float bar_y_uv, const float tint[4], int src_coverage,
-								 const AeronSceneFullscreenMesh* mesh) {
+								 const AeronSceneFullscreenMesh* mesh, const float source_uv[4]) {
 	if (!c || !pass || !scene_tex || !sampler) {
 		return;
 	}
@@ -343,5 +342,7 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 		debug->near_depth,
 	};
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, u, sizeof u);
+	static const float whole[4] = { 0.0f, 0.0f, 1.0f, 1.0f };
+	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, source_uv ? source_uv : whole, sizeof whole);
 	AeronSceneFullscreen_Draw(pass, mesh);
 }

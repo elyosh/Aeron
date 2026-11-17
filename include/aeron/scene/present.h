@@ -156,12 +156,17 @@ void AeronScenePresentChain_SetDebug(AeronScenePresentChain* chain, const AeronS
  * own alpha — for PiP targets with a transparent background; pass 0
  * for a full-frame present.
  * `mesh` is what the pass draws (aeron/scene/fullscreen_mesh.h). NULL draws
- * the whole target. */
+ * the whole target.
+ * `source_uv` is the part of `scene_tex` and `bloom_tex` that the draw
+ * shows: its upper left corner (x, y) and its size (w, h), in texture
+ * coordinates. NULL shows the whole textures. Use it for a scene whose
+ * camera has a viewport smaller than the scene. `bar_y_uv` is a coordinate
+ * of the whole texture. */
 void AeronScenePresentChain_Draw(AeronScenePresentChain* chain, AeronRenderPass* pass,
 								 AeronTexture* scene_tex, AeronSampler* sampler, AeronTexture* bloom_tex,
 								 float bloom_intensity, float exposure, AeronTexture* exposure_tex, int rt_w,
 								 int rt_h, float bar_y_uv, const float tint[4], int src_coverage,
-								 const AeronSceneFullscreenMesh* mesh);
+								 const AeronSceneFullscreenMesh* mesh, const float source_uv[4]);
 
 #ifdef __cplusplus
 }

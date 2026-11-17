@@ -391,6 +391,7 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_sky_sun.frag.hlsl
     # aeron_scene bloom chain + the shared fullscreen-quad VS.
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_fullscreen_quad.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_present.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_bloom_brightpass.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_bloom_downsample.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_bloom_upsample.frag.hlsl
