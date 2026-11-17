@@ -495,11 +495,9 @@ static int shadow_ensure_debug_pipeline(struct AeronScene3D* scene) {
 	if (!scene->shadow_debug_vs || !scene->shadow_debug_fs) {
 		return 0;
 	}
-	scene->shadow_debug_pipe = Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+	scene->shadow_debug_pipe = AeronSceneInternal_CreateFullscreenPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader   = scene->shadow_debug_vs,
 		.fragment_shader = scene->shadow_debug_fs,
-		.primitive_type  = AERON_PRIMITIVE_TRIANGLE_STRIP,
-		.cull_mode       = AERON_CULL_NONE,
 		.color_format    = scene->color_format,
 	});
 	return scene->shadow_debug_pipe != NULL;

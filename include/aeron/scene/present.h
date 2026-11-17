@@ -8,6 +8,7 @@
  */
 
 #include "aeron/render.h"
+#include "aeron/scene/fullscreen_mesh.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -153,11 +154,14 @@ void AeronScenePresentChain_SetDebug(AeronScenePresentChain* chain, const AeronS
  * (rt_w, rt_h) are the source dimensions.
  * `src_coverage` != 0 weights the PMA coverage by the scene texel's
  * own alpha — for PiP targets with a transparent background; pass 0
- * for a full-frame present. */
+ * for a full-frame present.
+ * `mesh` is what the pass draws (aeron/scene/fullscreen_mesh.h). NULL draws
+ * the whole target. */
 void AeronScenePresentChain_Draw(AeronScenePresentChain* chain, AeronRenderPass* pass,
 								 AeronTexture* scene_tex, AeronSampler* sampler, AeronTexture* bloom_tex,
 								 float bloom_intensity, float exposure, AeronTexture* exposure_tex, int rt_w,
-								 int rt_h, float bar_y_uv, const float tint[4], int src_coverage);
+								 int rt_h, float bar_y_uv, const float tint[4], int src_coverage,
+								 const AeronSceneFullscreenMesh* mesh);
 
 #ifdef __cplusplus
 }

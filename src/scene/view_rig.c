@@ -18,6 +18,18 @@ void AeronViewFov_ToCamera(const AeronViewFov* fov, float* h_half_rad, float* v_
 	*proj_y_offset = -(tan_up + tan_down) / (tan_up - tan_down);
 }
 
+void AeronView_PlaneToClip(const float* xy, int count, float h_half_rad, float v_half_rad,
+						   float proj_x_offset, float proj_y_offset, float* clip_xy) {
+	/* The same projection as the scene's, for a point at z = 1. The plane's
+	 * Y points up, like NDC y. */
+	const float tan_h = tanf(h_half_rad);
+	const float tan_v = tanf(v_half_rad);
+	for (int i = 0; i < count; i++) {
+		clip_xy[2 * i + 0] = xy[2 * i + 0] / tan_h + proj_x_offset;
+		clip_xy[2 * i + 1] = xy[2 * i + 1] / tan_v + proj_y_offset;
+	}
+}
+
 void AeronViewPose_Rotation(const AeronViewPose* pose, float out[9]) {
 	const float x = pose->orientation[0], y = pose->orientation[1], z = pose->orientation[2];
 	const float w  = pose->orientation[3];

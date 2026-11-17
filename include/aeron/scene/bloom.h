@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "aeron/render.h"
+#include "aeron/scene/fullscreen_mesh.h"
 struct AeronCommandBuffer;
 
 #ifdef __cplusplus
@@ -43,6 +44,10 @@ void AeronSceneBloom_Destroy(AeronSceneBloom* b);
  * bar. Pass a value >= rt_h to disable scissoring (bloom across full
  * RT).
  *
+ * `mesh` is what every level of the chain draws
+ * (aeron/scene/fullscreen_mesh.h). NULL draws the whole target. With a
+ * headset eye's visible-area mesh, the levels stay black outside it.
+ *
  * `extra` may be NULL. Otherwise it is called in the bright pass, after
  * the scene has been filtered into mip0, to add more light before the
  * bloom is spread. mip0 is target_w x target_h pixels and covers the whole
@@ -53,8 +58,8 @@ void AeronSceneBloom_Destroy(AeronSceneBloom* b);
  * when dimensions differ from creation or recording fails. */
 typedef int (*AeronSceneBloomExtraFn)(AeronRenderPass* pass, int target_w, int target_h, void* userdata);
 int AeronSceneBloom_Apply(AeronSceneBloom* b, struct AeronCommandBuffer* cmd, AeronTexture* flight_color_rt,
-						  int rt_w, int rt_h, int scissor_max_y, AeronSceneBloomExtraFn extra,
-						  void* userdata);
+						  int rt_w, int rt_h, int scissor_max_y, const AeronSceneFullscreenMesh* mesh,
+						  AeronSceneBloomExtraFn extra, void* userdata);
 
 /* Borrow the bloom mip0 texture — sampled by the final present pass
  * (scene_tonemap.frag) at fragment slot t1. */

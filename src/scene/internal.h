@@ -6,6 +6,7 @@
 
 #include "aeron/log.h"
 #include "aeron/scene/billboard.h"
+#include "aeron/scene/fullscreen_mesh.h"
 #include "aeron/scene/lens_flare.h"
 #include "aeron/scene/mesh_overlay.h"
 #include "aeron/scene/probe_set.h"
@@ -452,16 +453,24 @@ typedef struct AeronSceneShadowFitHistory {
  * directly: it reads the scene's own camera, view-projection, motion and
  * cluster fields. scene_view_enter copies a view's state into those fields
  * before the view is rendered. */
-/* A view's hidden-area mesh (hidden_area.c). */
-typedef struct AeronSceneHiddenAreaView {
+/* One area mesh of a view (view_area.c). */
+typedef struct AeronSceneViewAreaMesh {
 	const float* xy;
 	uint32_t     count; /* vertices */
 	uint32_t     generation;
-	/* tan of the half angles and the projection offsets the mesh was
-	 * projected with. */
-	float    projection[4];
-	uint32_t first; /* the first vertex in the vertex buffer */
-} AeronSceneHiddenAreaView;
+	uint32_t     first; /* the first vertex in the vertex buffer */
+} AeronSceneViewAreaMesh;
+
+/* A view's hidden-area and visible-area meshes (view_area.c). */
+typedef struct AeronSceneViewArea {
+	AeronSceneViewAreaMesh hidden;
+	AeronSceneViewAreaMesh visible;
+	/* The half angles and the projection offsets the meshes were projected
+	 * with. */
+	float projection[4];
+	/* The visible-area mesh, as the full-screen passes draw it. */
+	AeronSceneFullscreenMesh fullscreen;
+} AeronSceneViewArea;
 
 typedef struct AeronSceneViewState {
 	AeronSceneCamera camera;
@@ -1015,16 +1024,16 @@ struct AeronScene3D {
 	/* Nearest and clamped, for the scene's depth. */
 	AeronSampler* pbr_emission_bloom_depth_sampler;
 
-	/* hidden_area.c */
-	AeronSceneHiddenAreaView hidden_area_views[AERON_MAX_VIEWS];
-	int                      hidden_area_active; /* this frame's views were given meshes */
-	int                      hidden_area_dirty;  /* the vertex buffer must be filled again */
-	AeronBuffer*             hidden_area_vb;
-	uint32_t                 hidden_area_vb_vertices;
-	AeronShader*             hidden_area_vs;
-	AeronShader*             hidden_area_ps;
-	AeronGraphicsPipeline*   hidden_area_prepass_pipeline;
-	AeronGraphicsPipeline*   hidden_area_color_pipeline;
+	/* view_area.c */
+	AeronSceneViewArea     view_areas[AERON_MAX_VIEWS];
+	int                    view_area_active; /* this frame's views were given meshes */
+	int                    view_area_dirty;  /* the vertex buffer must be filled again */
+	AeronBuffer*           view_area_vb;
+	uint32_t               view_area_vb_vertices;
+	AeronShader*           hidden_area_vs;
+	AeronShader*           hidden_area_ps;
+	AeronGraphicsPipeline* hidden_area_prepass_pipeline;
+	AeronGraphicsPipeline* hidden_area_color_pipeline;
 };
 
 /* Shared small helpers (util.c). */
@@ -1085,16 +1094,17 @@ void AeronSceneProbeOcclusion_OccupancyMapping(const struct AeronScene3D* s, flo
 void AeronScenePlanarReflection_Render(struct AeronScene3D* s, AeronCommandBuffer* cmd);
 void AeronScenePlanarReflection_Release(struct AeronScene3D* s);
 
-/* The hidden-area mesh of a headset's eyes (hidden_area.c). Reset says that
- * the frame has no mesh, and SetView gives one view's mesh. Prepare fills
- * the vertex buffer when a mesh changed. Draw writes the current view's mesh
- * at the near depth; `color_pass` picks the pipeline of the colour pass or
- * of the depth prepass. */
-void AeronSceneHiddenArea_Reset(struct AeronScene3D* s);
-void AeronSceneHiddenArea_SetView(struct AeronScene3D* s, int view, const AeronSceneViewDesc* desc);
-int  AeronSceneHiddenArea_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
-void AeronSceneHiddenArea_Draw(struct AeronScene3D* s, AeronRenderPass* pass, int color_pass);
-void AeronSceneHiddenArea_Release(struct AeronScene3D* s);
+/* The area meshes of a headset's eyes (view_area.c). Reset says that the
+ * frame has no mesh, and SetView gives one view's meshes. Prepare fills the
+ * vertex buffer when a mesh changed. DrawHidden writes the current view's
+ * hidden-area mesh at the near depth; `color_pass` picks the pipeline of the
+ * colour pass or of the depth prepass. The full-screen passes get the
+ * visible-area mesh from AeronScene_FullscreenMesh. */
+void AeronSceneViewArea_Reset(struct AeronScene3D* s);
+void AeronSceneViewArea_SetView(struct AeronScene3D* s, int view, const AeronSceneViewDesc* desc);
+int  AeronSceneViewArea_Prepare(struct AeronScene3D* s, AeronCommandBuffer* cmd);
+void AeronSceneViewArea_DrawHidden(struct AeronScene3D* s, AeronRenderPass* pass, int color_pass);
+void AeronSceneViewArea_Release(struct AeronScene3D* s);
 /* The reflection the floor reads (a placeholder while inactive), and the
  * lighting block's floor fields for probe set `set` drawing an instance
  * that is (`receiver`) or is not its owner. */
@@ -1245,8 +1255,21 @@ void AeronSceneTemporal_Release(struct AeronScene3D* s);
 int  AeronSceneTemporal_Dispatch(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 								 int update_retained_motion_vectors);
 int  AeronSceneTemporal_EnsureMutableOutput(struct AeronScene3D* s, AeronCommandBuffer* cmd);
-/* Shared fullscreen helper (own pass on `dst`, binds pairs, pushes FS
- * cbuffer 0, draws the 4-vertex strip). */
+/* Creates a pipeline for a full-screen pass (fullscreen_mesh.c). It fills
+ * the primitive type and the vertex input of `desc`, which must use the
+ * scene_fullscreen_quad.vert vertex shader. Its draws go through
+ * AeronSceneFullscreen_Draw. */
+AeronGraphicsPipeline* AeronSceneInternal_CreateFullscreenPipeline(const AeronGraphicsPipelineDesc* desc);
+/* Shared fullscreen helper: its own pass on `dst`, binds the pairs, pushes
+ * the fragment uniform 0 and draws the mesh. NULL draws the whole target.
+ * A mesh that doesn't cover the whole target leaves pixels out: they are
+ * cleared to `clear_rgba`, or keep their contents when it is NULL. */
+int AeronScenePost_FullscreenMesh(AeronCommandBuffer* cmd, AeronGraphicsPipeline* pipe,
+								  AeronRenderTarget* dst, AeronTexture* const* textures,
+								  AeronSampler* const* samplers, uint32_t num_binds, const void* uniform,
+								  uint32_t uniform_size, const AeronSceneFullscreenMesh* mesh,
+								  const float clear_rgba[4], const char* debug_label);
+/* The same, on the whole target. */
 int AeronScenePost_Fullscreen(AeronCommandBuffer* cmd, AeronGraphicsPipeline* pipe, AeronRenderTarget* dst,
 							  AeronTexture* const* textures, AeronSampler* const* samplers,
 							  uint32_t num_binds, const void* uniform, uint32_t uniform_size,

@@ -83,6 +83,14 @@ typedef struct AeronSurroundDesc {
 void AeronViewFov_ToCamera(const AeronViewFov* fov, float* h_half_rad, float* v_half_rad,
 						   float* proj_x_offset, float* proj_y_offset);
 
+/* Projects points on the plane one unit in front of the eye, with X to the
+ * right and Y up, to clip space, for a camera with these half angles and
+ * projection offsets. A headset gives the hidden and visible areas of an eye
+ * image as meshes on that plane. `xy` and `clip_xy` have two floats for each
+ * point. */
+void AeronView_PlaneToClip(const float* xy, int count, float h_half_rad, float v_half_rad,
+						   float proj_x_offset, float proj_y_offset, float* clip_xy);
+
 /* Converts the pose's orientation to a row-major 3x3 matrix. The matrix
  * rotates from the view's axes to the rig's axes. */
 void AeronViewPose_Rotation(const AeronViewPose* pose, float out[9]);

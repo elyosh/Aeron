@@ -72,11 +72,9 @@ static AeronGraphicsPipeline* create_pipeline(AeronShader* vs, AeronShader* ps, 
 	} else {
 		bs = AeronSceneInternal_BlendOpaque();
 	}
-	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+	return AeronSceneInternal_CreateFullscreenPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader   = vs,
 		.fragment_shader = ps,
-		.primitive_type  = AERON_PRIMITIVE_TRIANGLE_STRIP,
-		.cull_mode       = AERON_CULL_NONE,
 		.color_format    = fmt,
 		.blend           = bs,
 	});
@@ -220,14 +218,14 @@ void AeronSceneBloom_Destroy(AeronSceneBloom* b) {
 /* ===== Apply ======================================================== */
 
 /* Internal helper: open one pass on (tex, w, h), set viewport+scissor,
- * draw one fullscreen quad sampling `src` with the bound pipeline +
- * a single `uniforms` cbuffer at slot 0. Then `extra`, if not NULL, draws
+ * draw `mesh` (NULL: the whole target) sampling `src` with the bound
+ * pipeline + a single `uniforms` cbuffer at slot 0. Then `extra`, if not NULL, draws
  * in the same pass. */
 static int bloom_pass(AeronCommandBuffer* cmd, AeronRenderTarget* dst, int dst_w, int dst_h,
 					  AeronGraphicsPipeline* pipe, AeronTexture* src, AeronSampler* sampler,
 					  const void* uniforms, size_t uniform_size, bool clear,
-					  const AeronRectI* scissor /*NULL → full RT*/, const char* label,
-					  AeronSceneBloomExtraFn extra, void* userdata) {
+					  const AeronRectI* scissor /*NULL → full RT*/, const AeronSceneFullscreenMesh* mesh,
+					  const char* label, AeronSceneBloomExtraFn extra, void* userdata) {
 	AeronRenderPass* pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
 		.color_target     = dst,
 		.viewport         = { 0, 0, dst_w, dst_h },
@@ -243,7 +241,7 @@ static int bloom_pass(AeronCommandBuffer* cmd, AeronRenderTarget* dst, int dst_w
 	Aeron_BindGraphicsPipeline(pass, pipe);
 	Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 0, src, sampler);
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, uniforms, (uint32_t)uniform_size);
-	Aeron_Draw(pass, 4, 0);
+	AeronSceneFullscreen_Draw(pass, mesh);
 	const int extra_ok = !extra || extra(pass, dst_w, dst_h, userdata);
 
 	Aeron_EndRenderPass(pass);
@@ -251,8 +249,8 @@ static int bloom_pass(AeronCommandBuffer* cmd, AeronRenderTarget* dst, int dst_w
 }
 
 int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronTexture* flight_color_rt,
-						  int rt_w, int rt_h, int scissor_max_y, AeronSceneBloomExtraFn extra,
-						  void* userdata) {
+						  int rt_w, int rt_h, int scissor_max_y, const AeronSceneFullscreenMesh* mesh,
+						  AeronSceneBloomExtraFn extra, void* userdata) {
 	if (!b || !b->ready || !cmd || !flight_color_rt)
 		return 0;
 	if (rt_w != b->rt_w || rt_h != b->rt_h)
@@ -285,7 +283,7 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 
 		if (!bloom_pass(cmd, b->levels[0].tex, b->levels[0].w, b->levels[0].h, b->brightpass_pipeline,
 						flight_color_rt, b->sampler, &u, sizeof u,
-						/*clear=*/true, has_scissor ? &bright_scissor : NULL, "Bloom brightpass", extra,
+						/*clear=*/true, has_scissor ? &bright_scissor : NULL, mesh, "Bloom brightpass", extra,
 						userdata)) {
 			Aeron_GpuDebugPop(cmd);
 			return 0;
@@ -305,7 +303,7 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 		snprintf(label, sizeof label, "Bloom down %d->%d", i - 1, i);
 		if (!bloom_pass(cmd, dst->tex, dst->w, dst->h, b->downsample_pipeline,
 						Aeron_RenderTargetGetTexture(src->tex), b->sampler, &u, sizeof u,
-						/*clear=*/true, NULL, label, NULL, NULL)) {
+						/*clear=*/true, NULL, mesh, label, NULL, NULL)) {
 			Aeron_GpuDebugPop(cmd);
 			return 0;
 		}
@@ -328,7 +326,7 @@ int AeronSceneBloom_Apply(AeronSceneBloom* b, AeronCommandBuffer* cmd, AeronText
 		if (!bloom_pass(cmd, dst->tex, dst->w, dst->h, b->upsample_pipeline,
 						Aeron_RenderTargetGetTexture(src->tex), b->sampler, &u, sizeof u,
 						/*clear=*/false, /* additive onto existing downsample result */
-						NULL, label, NULL, NULL)) {
+						NULL, mesh, label, NULL, NULL)) {
 			Aeron_GpuDebugPop(cmd);
 			return 0;
 		}

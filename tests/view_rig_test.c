@@ -99,6 +99,30 @@ static void test_fov(void) {
 	project(&left_eye, 0.0f, 0.0f, 1.0f, &x, &y);
 	check(x > 0.0f && y > 0.0f, "the view axis of a left eye is right of and above the image centre");
 
+	/* A headset's area meshes are on the plane one unit in front of the
+	 * eye, with Y up. The corners of the eye image are the corners of clip
+	 * space. */
+	AeronViewFov_ToCamera(&left_eye, &h_half, &v_half, &x_offset, &y_offset);
+	const float plane[8] = { tanf(left_eye.angle_left),
+							 tanf(left_eye.angle_down),
+							 tanf(left_eye.angle_right),
+							 tanf(left_eye.angle_up),
+							 0.0f,
+							 0.0f,
+							 tanf(left_eye.angle_right),
+							 tanf(left_eye.angle_down) };
+	float       clip[8];
+	AeronView_PlaneToClip(plane, 4, h_half, v_half, x_offset, y_offset, clip);
+	check(close_to(clip[0], -1.0f) && close_to(clip[1], -1.0f),
+		  "the lower left corner of the eye image is at clip (-1, -1)");
+	check(close_to(clip[2], 1.0f) && close_to(clip[3], 1.0f),
+		  "the upper right corner of the eye image is at clip (+1, +1)");
+	check(close_to(clip[6], 1.0f) && close_to(clip[7], -1.0f),
+		  "the lower right corner of the eye image is at clip (+1, -1)");
+	project(&left_eye, 0.0f, 0.0f, 1.0f, &x, &y);
+	check(close_to(clip[4], x) && close_to(clip[5], y),
+		  "the view axis is at the same place for a mesh and for the scene");
+
 	const AeronViewFov right_eye = { -left_eye.angle_right, -left_eye.angle_left, left_eye.angle_up,
 									 left_eye.angle_down };
 	float              mirrored_x, mirrored_y;

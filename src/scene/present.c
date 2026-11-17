@@ -204,11 +204,9 @@ static AeronGraphicsPipeline* present_pipeline(AeronShader* vs, AeronShader* ps,
 	pma.src_alpha           = AERON_BLEND_ONE;
 	pma.dst_alpha           = AERON_BLEND_ONE_MINUS_SRC_ALPHA;
 	pma.alpha_op            = AERON_BLEND_OP_ADD;
-	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+	return AeronSceneInternal_CreateFullscreenPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader   = vs,
 		.fragment_shader = ps,
-		.primitive_type  = AERON_PRIMITIVE_TRIANGLE_STRIP,
-		.cull_mode       = AERON_CULL_NONE,
 		.color_format    = fmt,
 		.blend           = pma,
 	});
@@ -266,7 +264,8 @@ void AeronScenePresentChain_SetDebug(AeronScenePresentChain* c, const AeronScene
 void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pass, AeronTexture* scene_tex,
 								 AeronSampler* sampler, AeronTexture* bloom_tex, float bloom_intensity,
 								 float exposure, AeronTexture* exposure_tex, int rt_w, int rt_h,
-								 float bar_y_uv, const float tint[4], int src_coverage) {
+								 float bar_y_uv, const float tint[4], int src_coverage,
+								 const AeronSceneFullscreenMesh* mesh) {
 	if (!c || !pass || !scene_tex || !sampler) {
 		return;
 	}
@@ -344,5 +343,5 @@ void AeronScenePresentChain_Draw(AeronScenePresentChain* c, AeronRenderPass* pas
 		debug->near_depth,
 	};
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, u, sizeof u);
-	Aeron_Draw(pass, 4, 0);
+	AeronSceneFullscreen_Draw(pass, mesh);
 }

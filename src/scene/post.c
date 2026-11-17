@@ -98,18 +98,26 @@ typedef struct MbTileUniforms {
 
 /* ---- shared fullscreen pass ---- */
 
-int AeronScenePost_Fullscreen(AeronCommandBuffer* cmd, AeronGraphicsPipeline* pipe, AeronRenderTarget* dst,
-							  AeronTexture* const* textures, AeronSampler* const* samplers,
-							  uint32_t num_binds, const void* uniform, uint32_t uniform_size,
-							  const char* debug_label) {
+int AeronScenePost_FullscreenMesh(AeronCommandBuffer* cmd, AeronGraphicsPipeline* pipe,
+								  AeronRenderTarget* dst, AeronTexture* const* textures,
+								  AeronSampler* const* samplers, uint32_t num_binds, const void* uniform,
+								  uint32_t uniform_size, const AeronSceneFullscreenMesh* mesh,
+								  const float clear_rgba[4], const char* debug_label) {
 	if (!cmd || !pipe || !dst) {
 		return 0;
 	}
-	AeronRenderPass* rp = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
-		.color_target   = dst,
-		.discard_color  = 1,
-		.command_buffer = cmd,
-		.debug_label    = debug_label,
+	/* A mesh that covers the whole target writes every pixel, so the old
+	 * contents can be dropped. Another mesh leaves pixels out, and the
+	 * passes that read this target later must not find old data there. */
+	const int        whole = AeronSceneFullscreen_IsWhole(mesh);
+	AeronRenderPass* rp    = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
+		.color_target     = dst,
+		.discard_color    = whole,
+		.clear_color      = !whole && clear_rgba,
+		.clear_color_rgba = { clear_rgba ? clear_rgba[0] : 0.0f, clear_rgba ? clear_rgba[1] : 0.0f,
+							  clear_rgba ? clear_rgba[2] : 0.0f, clear_rgba ? clear_rgba[3] : 0.0f },
+		.command_buffer   = cmd,
+		.debug_label      = debug_label,
 	});
 	if (!rp) {
 		return 0;
@@ -121,12 +129,20 @@ int AeronScenePost_Fullscreen(AeronCommandBuffer* cmd, AeronGraphicsPipeline* pi
 	if (uniform_size) {
 		Aeron_BindUniformData(rp, AERON_SHADER_STAGE_FRAGMENT, 0, uniform, uniform_size);
 	}
-	Aeron_Draw(rp, 4, 0);
+	AeronSceneFullscreen_Draw(rp, mesh);
 	Aeron_EndRenderPass(rp);
 	return 1;
 }
 
-/* ---- fullscreen pipeline factory (no vertex input) ---- */
+int AeronScenePost_Fullscreen(AeronCommandBuffer* cmd, AeronGraphicsPipeline* pipe, AeronRenderTarget* dst,
+							  AeronTexture* const* textures, AeronSampler* const* samplers,
+							  uint32_t num_binds, const void* uniform, uint32_t uniform_size,
+							  const char* debug_label) {
+	return AeronScenePost_FullscreenMesh(cmd, pipe, dst, textures, samplers, num_binds, uniform, uniform_size,
+										 NULL, NULL, debug_label);
+}
+
+/* ---- fullscreen pipeline factory ---- */
 
 typedef struct PostTarget {
 	AeronTextureFormat format;
@@ -142,11 +158,9 @@ static AeronGraphicsPipeline* post_pipeline_samples(AeronShader* vs, AeronShader
 		cts[i].blend.color_write_mask_enable = 1;
 		cts[i].blend.color_write_mask        = targets[i].write_mask;
 	}
-	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+	return AeronSceneInternal_CreateFullscreenPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader      = vs,
 		.fragment_shader    = ps,
-		.primitive_type     = AERON_PRIMITIVE_TRIANGLE_STRIP,
-		.cull_mode          = AERON_CULL_NONE,
 		.depth_format       = has_depth ? AERON_TEXTURE_FORMAT_D32_FLOAT : AERON_TEXTURE_FORMAT_UNKNOWN,
 		.color_target_count = num_targets,
 		.color_targets      = cts,
@@ -528,6 +542,14 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 	AeronTexture* depth_tex  = Aeron_DepthTargetGetTexture(s->depth_rt);
 	AeronTexture* normal_tex = Aeron_RenderTargetGetTexture(s->normal_rt);
 
+	/* The passes draw the view's visible area. In a headset that leaves the
+	 * hidden corners out, and the blurs read across their edge, so the
+	 * targets are cleared there: no occlusion, fully lit, and the sky's
+	 * depth. */
+	const AeronSceneFullscreenMesh* area            = AeronScene_FullscreenMesh(s);
+	const int                       area_whole      = AeronSceneFullscreen_IsWhole(area);
+	static const float              k_ao_outside[4] = { 1.0f, 1.0f, 1.0f, 0.0f };
+
 	{
 		AeronTexture* texs[2] = { depth_tex, normal_tex };
 		AeronSampler* smps[2] = { s->post_point_sampler, s->post_point_sampler };
@@ -568,10 +590,12 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 			su.view_rot[row][2] = view_rot[row * 3 + 2];
 		}
 		AeronRenderPass* pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
-			.color_target   = s->ao_rt,
-			.discard_color  = 1,
-			.command_buffer = cmd,
-			.debug_label    = "AO and directional shadow evaluate",
+			.color_target     = s->ao_rt,
+			.discard_color    = area_whole,
+			.clear_color      = !area_whole,
+			.clear_color_rgba = { k_ao_outside[0], k_ao_outside[1], k_ao_outside[2], k_ao_outside[3] },
+			.command_buffer   = cmd,
+			.debug_label      = "AO and directional shadow evaluate",
 		});
 		if (!pass) {
 			return 0;
@@ -584,7 +608,7 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 		Aeron_BindTextureSampler(pass, AERON_SHADER_STAGE_FRAGMENT, 4, AeronSceneProbeOcclusion_Occupancy(s),
 								 AeronSceneProbeOcclusion_Sampler(s));
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 0, &su, sizeof su);
-		Aeron_Draw(pass, 4, 0);
+		AeronSceneFullscreen_Draw(pass, area);
 		Aeron_EndRenderPass(pass);
 
 		/* Receiver-local pixels (the cockpit) take their shadow from their
@@ -604,7 +628,7 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 			}
 			AeronSceneDirectionalShadow_BindScreenReceiverLocal(s, local);
 			Aeron_BindUniformData(local, AERON_SHADER_STAGE_FRAGMENT, 0, &su, sizeof su);
-			Aeron_Draw(local, 4, 0);
+			AeronSceneFullscreen_Draw(local, area);
 			Aeron_EndRenderPass(local);
 		}
 	}
@@ -632,9 +656,9 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 			bu.near_z                     = near_z;
 			bu.view_texel_scale[0]        = view_texel_scale[0];
 			bu.view_texel_scale[1]        = view_texel_scale[1];
-			if (!AeronScenePost_Fullscreen(cmd, s->ssao_blur_lq_pipeline, dst, texs, smps, 2, &bu, sizeof bu,
-										   horizontal ? "SSAO low blur horizontal"
-													  : "SSAO low blur vertical")) {
+			if (!AeronScenePost_FullscreenMesh(
+					cmd, s->ssao_blur_lq_pipeline, dst, texs, smps, 2, &bu, sizeof bu, area, k_ao_outside,
+					horizontal ? "SSAO low blur horizontal" : "SSAO low blur vertical")) {
 				return 0;
 			}
 		}
@@ -654,8 +678,9 @@ int AeronScenePost_RunSsao(struct AeronScene3D* s, AeronCommandBuffer* cmd, int 
 		bu.near_z                     = near_z;
 		bu.view_texel_scale[0]        = view_texel_scale[0];
 		bu.view_texel_scale[1]        = view_texel_scale[1];
-		if (!AeronScenePost_Fullscreen(cmd, s->ssao_blur_pipeline, dst, texs, smps, 2, &bu, sizeof bu,
-									   horizontal ? "SSAO blur horizontal" : "SSAO blur vertical")) {
+		if (!AeronScenePost_FullscreenMesh(cmd, s->ssao_blur_pipeline, dst, texs, smps, 2, &bu, sizeof bu,
+										   area, k_ao_outside,
+										   horizontal ? "SSAO blur horizontal" : "SSAO blur vertical")) {
 			return 0;
 		}
 	}

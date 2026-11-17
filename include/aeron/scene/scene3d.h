@@ -18,6 +18,7 @@
 #include <stdint.h>
 
 #include "aeron/render.h"
+#include "aeron/scene/fullscreen_mesh.h"
 #include "aeron/scene/mesh.h"
 #include "aeron/scene/view_rig.h"
 #include "aeron/temporal.h"
@@ -370,6 +371,14 @@ typedef struct AeronSceneViewDesc {
 	const float* hidden_area_xy;
 	int          hidden_area_vertex_count;
 	uint32_t     hidden_area_generation;
+	/* Optional: the visible-area mesh of a headset's eye, the part of the
+	 * image that the lens shows, in the same form and with the same rules.
+	 * The scene's full-screen passes draw it in place of the whole target
+	 * (AeronScene_FullscreenMesh). Together, the two meshes must cover the
+	 * image. */
+	const float* visible_area_xy;
+	int          visible_area_vertex_count;
+	uint32_t     visible_area_generation;
 } AeronSceneViewDesc;
 
 /* Sets the views that the frame is rendered into, for AeronScene_RenderView.
@@ -726,6 +735,13 @@ void AeronScene_SetAutoExposure(AeronScene3D* scene, const AeronSceneAutoExposur
 
 /* The next metered frame takes its target at once: a camera cut, a load. */
 void AeronScene_SnapExposure(AeronScene3D* scene);
+
+/* The mesh that a full-screen pass of the current view draws
+ * (aeron/scene/fullscreen_mesh.h): the view's visible-area mesh, or the
+ * whole target when the view has none. Pass it to AeronSceneBloom_Apply and
+ * AeronScenePresentChain_Draw when they work on the view's image. It is
+ * valid from AeronScene_RenderView to the next one. */
+const AeronSceneFullscreenMesh* AeronScene_FullscreenMesh(AeronScene3D* scene);
 
 /* The 1x1 R32G32_FLOAT texture with the scene's exposure in R and its
  * EV100 in G, written by each Render: by the meter, or from

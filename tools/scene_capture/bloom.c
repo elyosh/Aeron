@@ -57,7 +57,7 @@ int CaptureBloom_Record(CaptureBloom* b, const CaptureConfig* c, AeronRenderTarg
 	AeronTexture* scene = Aeron_RenderTargetGetTexture(source);
 	AeronTexture* bloom = NULL;
 	if (b->bloom) {
-		if (!AeronSceneBloom_Apply(b->bloom, cmd, scene, c->width, c->height, c->height, NULL, NULL))
+		if (!AeronSceneBloom_Apply(b->bloom, cmd, scene, c->width, c->height, c->height, NULL, NULL, NULL))
 			return 0;
 		bloom = Aeron_RenderTargetGetTexture(AeronSceneBloom_ColorRt(b->bloom));
 	}
@@ -87,7 +87,7 @@ int CaptureBloom_Record(CaptureBloom* b, const CaptureConfig* c, AeronRenderTarg
 		return 0;
 	AeronScenePresentChain_Draw(b->present, pass, scene, b->sampler, bloom, c->bloom_intensity,
 								AeronScenePresent_ExposureFromEv100(c->exposure_ev100), NULL, c->width,
-								c->height, 1, NULL, 0);
+								c->height, 1, NULL, 0, NULL);
 	Aeron_EndRenderPass(pass);
 	return 1;
 }

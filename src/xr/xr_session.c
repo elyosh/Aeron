@@ -190,7 +190,7 @@ int AeronXr_DeviceCreated(SDL_GPUDevice* device, char* error, size_t error_size)
 	if (!xr_read_view_configuration(error, error_size) || !xr_pick_color_format(device, error, error_size) ||
 		!AeronXr_CreateSwapchains(device, error, error_size))
 		return 0;
-	AeronXr_InitHiddenAreas();
+	AeronXr_InitAreaMeshes();
 	xr_log_runtime();
 	return 1;
 }
@@ -205,7 +205,7 @@ void AeronXr_DestroySession(SDL_GPUDevice* device) {
 	if (g_xr.machine.session && !g_xr.failed)
 		AeronXr_EndFrame();
 	AeronXr_DestroySwapchains(device);
-	AeronXr_FreeHiddenAreas();
+	AeronXr_FreeAreaMeshes();
 	if (g_xr.machine.session && !g_xr.failed) {
 		const XrSpace spaces[] = { g_xr.rig_space, g_xr.view_space, g_xr.local_space };
 		for (size_t i = 0; i < SDL_arraysize(spaces); i++) {
@@ -251,7 +251,7 @@ void AeronXr_PollEvents(void) {
 			const XrEventDataVisibilityMaskChangedKHR* changed =
 				(const XrEventDataVisibilityMaskChangedKHR*)&event;
 			if (changed->session == g_xr.machine.session)
-				AeronXr_HiddenAreaChanged(changed->viewIndex);
+				AeronXr_AreaMeshChanged(changed->viewIndex);
 		}
 		if (!AeronXrSession_HandleEvent(&g_xr.machine, &g_xr.fn, &event, error, sizeof error)) {
 			AeronXr_Fail(error);

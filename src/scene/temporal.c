@@ -14,11 +14,9 @@ static AeronGraphicsPipeline* temporal_sky_velocity_pipeline(AeronScene3D* s) {
 	targets[2].format                        = AERON_TEXTURE_FORMAT_R32_FLOAT;
 	targets[2].blend.color_write_mask_enable = 1;
 	targets[2].blend.color_write_mask        = 0;
-	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+	return AeronSceneInternal_CreateFullscreenPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader      = s->fullscreen_vs,
 		.fragment_shader    = s->temporal_sky_velocity_ps,
-		.primitive_type     = AERON_PRIMITIVE_TRIANGLE_STRIP,
-		.cull_mode          = AERON_CULL_NONE,
 		.depth_format       = AERON_TEXTURE_FORMAT_D32_FLOAT,
 		.color_target_count = 3,
 		.color_targets      = targets,
@@ -27,11 +25,9 @@ static AeronGraphicsPipeline* temporal_sky_velocity_pipeline(AeronScene3D* s) {
 
 static AeronGraphicsPipeline* temporal_copy_pipeline(AeronScene3D* s) {
 	const AeronColorTargetStateDesc target = { .format = s->color_format };
-	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+	return AeronSceneInternal_CreateFullscreenPipeline(&(AeronGraphicsPipelineDesc) {
 		.vertex_shader      = s->fullscreen_vs,
 		.fragment_shader    = s->temporal_copy_ps,
-		.primitive_type     = AERON_PRIMITIVE_TRIANGLE_STRIP,
-		.cull_mode          = AERON_CULL_NONE,
 		.color_target_count = 1,
 		.color_targets      = &target,
 	});

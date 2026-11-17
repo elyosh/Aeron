@@ -1091,7 +1091,8 @@ add_library(aeron_scene STATIC
     src/scene/clustered_lights.c
     src/scene/probe_occlusion.c
     src/scene/planar_reflection.c
-    src/scene/hidden_area.c
+    src/scene/view_area.c
+    src/scene/fullscreen_mesh.c
     src/scene/world.c
     src/scene/view_rig.c
     src/scene/settings.c

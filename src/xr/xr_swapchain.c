@@ -192,7 +192,7 @@ int Aeron_XrBeginViews(AeronXrFrame* out) {
 	rig->tracked        = 1;
 	rig->shared_sprites = 1;
 	rig->generation     = g_xr.machine.generation;
-	AeronXr_GetHiddenAreas(out);
+	AeronXr_GetAreaMeshes(out);
 	return 1;
 }
 
