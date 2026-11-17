@@ -1406,7 +1406,6 @@ endif()
 option(AERON_BUILD_EXAMPLES "Build Aeron example apps" OFF)
 if(AERON_BUILD_EXAMPLES)
     add_subdirectory(examples/ui_demo)
-    add_subdirectory(examples/planes_demo)
     add_subdirectory(examples/xr_demo)
 endif()
 
