@@ -223,6 +223,9 @@ class AeronAnimation:
     # The `screen` of the material's AERON_flight_model object, as JSON. The
     # add-on does not edit screens, so it keeps it as imported.
     screen: StringProperty(options={'HIDDEN'})
+    # The `buttons` of the material's AERON_flight_model object, as JSON. The
+    # add-on does not edit buttons either.
+    buttons: StringProperty(options={'HIDDEN'})
 
 
 # ---- conversions ---------------------------------------------------------------
@@ -389,10 +392,12 @@ def shortest(value):
 
 def extension(material):
     """The AERON_flight_model object of `material`, with its animation, its
-    kept screen and its tags. None when it has none of them."""
+    kept screen and buttons, and its tags. None when it has none of them."""
     result = shortest(entry(material) or {})
     if material.aeron_flight.screen:
         result["screen"] = json.loads(material.aeron_flight.screen)
+    if material.aeron_flight.buttons:
+        result["buttons"] = json.loads(material.aeron_flight.buttons)
     tags = common.parse_tags(material.aeron_flight.tags)
     if tags:
         result["tags"] = tags

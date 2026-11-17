@@ -1455,6 +1455,7 @@ static bool build_memory(const opt_file_t* opt, const char* basename, const OptG
 		.materials = o->material.source == OPT_GLTF_MATERIALS_GIVEN ? o->material.given : NULL,
 		.variants  = o->material.source == OPT_GLTF_MATERIALS_GIVEN ? o->material.variants : NULL,
 		.screens   = o->material.screens,
+		.buttons   = o->material.buttons,
 		.smooth_angle =
 			o->geometry.normals == OPT_GLTF_NORMALS_SMOOTHED ? o->geometry.smooth_angle_degrees : -1.0f,
 		.repair_normals      = o->geometry.normals == OPT_GLTF_NORMALS_CLASSIC,

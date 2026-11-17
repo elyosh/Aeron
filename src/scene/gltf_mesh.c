@@ -665,6 +665,67 @@ static bool read_screen(const cJSON* screen, AeronGltfModel* model, uint32_t* re
 	return true;
 }
 
+/* Reads a material's `buttons` into `out` and the model's button array. A
+ * malformed list is reported and dropped. Returns false only when memory
+ * runs out. */
+static bool read_buttons(const cJSON* buttons, AeronGltfModel* model, AeronGltfMaterial* out,
+						 const char* source_label, uint32_t material_index) {
+	out->button_first = out->button_count = 0;
+	if (!buttons)
+		return true;
+	const int count = cJSON_IsArray(buttons) ? cJSON_GetArraySize(buttons) : -1;
+	if (count < 0 || count > (int)AERON_GLTF_BUTTON_MAX_PER_MATERIAL) {
+		SDL_Log("[flight_gltf] '%s' material %u: malformed buttons ignored", source_label, material_index);
+		return true;
+	}
+	if (model->button_count + (uint32_t)count > (uint32_t)AERON_GLTF_BUTTON_MAX_PER_MODEL) {
+		SDL_Log("[flight_gltf] '%s' material %u: a model has at most %d buttons, so this material's are "
+				"ignored",
+				source_label, material_index, (int)AERON_GLTF_BUTTON_MAX_PER_MODEL);
+		return true;
+	}
+	if (count == 0)
+		return true;
+	AeronGltfButton* grown = (AeronGltfButton*)realloc(model->buttons, (model->button_count + (size_t)count) *
+																		   sizeof *model->buttons);
+	if (!grown)
+		return false;
+	model->buttons       = grown;
+	const uint32_t first = model->button_count;
+	for (int i = 0; i < count; i++) {
+		const cJSON*     json   = cJSON_GetArrayItem(buttons, i);
+		const cJSON*     action = cJSON_GetObjectItemCaseSensitive(json, "action");
+		const cJSON*     label  = cJSON_GetObjectItemCaseSensitive(json, "label");
+		AeronGltfButton* button = &model->buttons[first + (uint32_t)i];
+		memset(button, 0, sizeof *button);
+		if (!json_floats(cJSON_GetObjectItemCaseSensitive(json, "rect"), button->rect, 4) ||
+			!cJSON_IsString(action) || !Aeron_FlightTagValid(action->valuestring) ||
+			strlen(action->valuestring) >= sizeof button->action ||
+			(label && (!cJSON_IsString(label) || strlen(label->valuestring) >= sizeof button->label))) {
+			SDL_Log("[flight_gltf] '%s' material %u: malformed button %d, so this material's buttons are "
+					"ignored",
+					source_label, material_index, i);
+			return true;
+		}
+		/* The corners can be given in any order. */
+		for (int axis = 0; axis < 2; axis++) {
+			if (button->rect[axis] > button->rect[axis + 2]) {
+				const float low        = button->rect[axis + 2];
+				button->rect[axis + 2] = button->rect[axis];
+				button->rect[axis]     = low;
+			}
+		}
+		button->material = material_index;
+		strcpy(button->action, action->valuestring);
+		if (label)
+			strcpy(button->label, label->valuestring);
+	}
+	model->button_count += (uint32_t)count;
+	out->button_first = first;
+	out->button_count = (uint32_t)count;
+	return true;
+}
+
 /* ===== Material animation =========================================== */
 
 /* Flipbook state names, indexed by AERON_ANIM_STATE_*. */
@@ -1277,6 +1338,8 @@ bool Aeron_GltfMeshBuildData(const cgltf_data* data, const char* source_label, A
 				Aeron_FlightTagGroupsMask(&out->tag_groups, cJSON_GetObjectItemCaseSensitive(object, "tags"));
 			const bool read = read_screen(cJSON_GetObjectItemCaseSensitive(object, "screen"), out,
 										  &screen_rect_capacity, &out->materials[i], source_label, i) &&
+							  read_buttons(cJSON_GetObjectItemCaseSensitive(object, "buttons"), out,
+										   &out->materials[i], source_label, i) &&
 							  read_animation(cJSON_GetObjectItemCaseSensitive(object, "flipbooks"), out,
 											 &flipbook_capacity, &out->materials[i], source_label, i) &&
 							  read_damage(cJSON_GetObjectItemCaseSensitive(object, "damage"), out,
@@ -1530,6 +1593,7 @@ void Aeron_GltfMeshFree(AeronGltfModel* m) {
 	free(m->materials);
 	free(m->prim_variant_material);
 	free(m->screen_rects);
+	free(m->buttons);
 	for (uint32_t g = 0; g < m->damage_group_count; g++)
 		free(m->damage_groups[g]);
 	free(m->damage_groups);

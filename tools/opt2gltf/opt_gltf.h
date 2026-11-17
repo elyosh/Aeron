@@ -401,6 +401,9 @@ typedef struct OptGltfMaterialOptions {
 	/* Optional screen surfaces, with one entry per OPT texture
 	 * (opt->texture_count). Entries with `present` false are ordinary. */
 	const OptGltfScreen*               screens;
+	/* Optional buttons, with one entry per OPT texture: the JSON text of
+	 * the `buttons` list of the texture's material, or NULL. */
+	const char* const*                 buttons;
 	const struct OptGltfAlphaOverride* alpha_overrides;
 	size_t                             alpha_override_count;
 	/* The radiance in W/m^2/sr of an emission strength of 1. Every emission

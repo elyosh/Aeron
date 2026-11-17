@@ -173,6 +173,7 @@ cgltf_material* opt_gltf_promoted_material(GltfBuild* build, cgltf_material* bas
 	if (build->material_anim) {
 		build->material_anim[copy - build->materials]   = build->material_anim[index];
 		build->material_screen[copy - build->materials] = build->material_screen[index];
+		build->material_buttons[copy - build->materials] = build->material_buttons[index];
 		build->material_given[copy - build->materials]  = build->material_given[index];
 	}
 	*slot = copy;
@@ -492,6 +493,9 @@ bool opt_gltf_material_extensions(OptGltfDocument* document, unsigned* common_en
 		const char* screen = gb->material_screen ? gb->material_screen[m] : NULL;
 		if (ok && screen)
 			ok = OptJson_Add(entry, "screen", cJSON_Parse(screen));
+		const char* buttons = gb->material_buttons ? gb->material_buttons[m] : NULL;
+		if (ok && buttons)
+			ok = OptJson_Add(entry, "buttons", cJSON_Parse(buttons));
 		const OptGltfMaterial* given = gb->material_given ? gb->material_given[m] : NULL;
 		if (ok && given && given->skin_count)
 			ok = skins_json(document, entry, given, &gb->materials[m]);
@@ -659,13 +663,14 @@ bool opt_gltf_prepare_textures(Build* b) {
 	gb->materials       = (cgltf_material*)calloc(materials, sizeof *gb->materials);
 	gb->material_anim   = (const char**)calloc(materials, sizeof *gb->material_anim);
 	gb->material_screen = (const char**)calloc(materials, sizeof *gb->material_screen);
+	gb->material_buttons = (const char**)calloc(materials, sizeof *gb->material_buttons);
 	gb->material_given  = (const OptGltfMaterial**)calloc(materials, sizeof *gb->material_given);
 	b->document->image_pixels =
 		(OptGltfOwnedImage*)calloc(images ? images : 1, sizeof *b->document->image_pixels);
 	b->document->image_pixels_count = images;
 	b->image_count                  = images;
 	if (!gb->images || !gb->textures || !gb->materials || !gb->material_anim || !gb->material_screen ||
-		!gb->material_given || !b->document->image_pixels)
+		!gb->material_buttons || !gb->material_given || !b->document->image_pixels)
 		return opt_gltf_build_fail(b, "out of memory (textures)");
 	b->image_slot = (size_t)opt->texture_count;
 	return true;
@@ -929,6 +934,8 @@ static bool texture_material(Build* b, int32_t i) {
 		stock_emissive(b, i, mat);
 	if (given && rgba)
 		given_material(b, mat, given);
+	if (b->buttons && b->buttons[i])
+		gb->material_buttons[mat - gb->materials] = b->buttons[i];
 	return !(b->screens && b->screens[i].present) || screen_material(b, i, mat);
 }
 

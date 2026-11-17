@@ -75,6 +75,16 @@ typedef struct AeronSceneMeshCpuVertex {
 	float component;
 } AeronSceneMeshCpuVertex;
 
+/* What the picking reads of a material. */
+typedef struct AeronSceneMeshPickMaterial {
+	uint32_t button_first; /* in AeronSceneMesh.buttons */
+	uint32_t button_count;
+	uint32_t tag_groups;
+	/* The material blends and has no buttons, such as glass or a hologram:
+	 * a ray goes through it. */
+	uint8_t see_through;
+} AeronSceneMeshPickMaterial;
+
 /* The variant indices whose lights a mesh tells apart. */
 #define AERON_SCENE_MESH_LIGHT_VARIANT_INDICES 256u
 #define AERON_SCENE_MESH_LIGHT_VARIANT_WORDS (AERON_SCENE_MESH_LIGHT_VARIANT_INDICES / 32u)
@@ -106,6 +116,20 @@ typedef struct AeronSceneMesh {
 	/* Box-only BVH over cpu_vertices/cpu_indices triangles, copied from the
 	 * flight model; NULL for meshes built from stock OPTs. */
 	AeronFaceBvh* render_bvh;
+	/* What AeronSceneMesh_Pick needs, kept only for a model that has
+	 * buttons (button_count > 0), NULL otherwise:
+	 * - cpu_uvs and cpu_prims: each vertex's texture coordinates and
+	 *   primitive;
+	 * - cpu_prim_materials: each primitive's material for each variant
+	 *   index, at [index * total_prim_count + primitive];
+	 * - cpu_materials: what the picking reads of each material;
+	 * - buttons: the model's buttons. */
+	float (*cpu_uvs)[2];
+	uint32_t*                          cpu_prims;
+	uint32_t*                          cpu_prim_materials;
+	struct AeronSceneMeshPickMaterial* cpu_materials;
+	AeronGltfButton*                   buttons;
+	uint32_t                           button_count;
 
 	/* Channel atlases (base_color / normal / metallic_rough / emissive).
 	 * Factor-only models have no atlases; textured models carry all four. */
@@ -260,6 +284,33 @@ AeronSceneMesh* AeronScene_MeshCreateEx(AeronCommandBuffer* cmd, const AeronScen
 										AeronSceneMeshCreateStatus* status);
 
 void AeronScene_MeshDestroy(AeronSceneMesh* mesh);
+
+/* Where a ray first meets a mesh. */
+typedef struct AeronSceneMeshPick {
+	float    distance; /* from the ray's origin, in units of the direction's length */
+	float    point[3]; /* in the model's frame, the one the instance's transform takes to the scene */
+	float    uv[2];    /* the material's texture coordinates, wrapped to 0..1 */
+	uint32_t material;
+	/* Whether the material has buttons, and the button at the point: an
+	 * index in AeronSceneMesh.buttons, or -1. */
+	int has_buttons;
+	int button;
+} AeronSceneMeshPick;
+
+struct AeronSceneMeshTable;
+
+/* Finds the nearest triangle of the mesh's most detailed level that the ray
+ * from `origin` along `direction` meets, up to `max_distance` times the
+ * direction's length. The ray is in the model's frame. The triangles are
+ * posed as they are drawn: each is moved by its row of `table` (NULL: at
+ * rest), and the triangles of a hidden row, of a material tagged with one of
+ * `hidden_tag_groups`, or of a see-through material are left out. `variant`
+ * is the instance's variant index. Both faces of a triangle count. Returns 0
+ * when nothing is met, or when the mesh has no buttons: only such meshes
+ * keep what this needs. */
+int AeronSceneMesh_Pick(const AeronSceneMesh* mesh, const struct AeronSceneMeshTable* table, uint32_t variant,
+						uint32_t hidden_tag_groups, const float origin[3], const float direction[3],
+						float max_distance, AeronSceneMeshPick* out);
 
 #ifdef __cplusplus
 }

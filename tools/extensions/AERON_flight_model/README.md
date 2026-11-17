@@ -397,6 +397,7 @@ beyond its glTF definition. It may hold:
   `jamming` (`[]` for none). The model root's `energy` is the default of
   every material without its own; without either, a material shows none;
 - `screen`: displays the game draws live on it (cockpit screens);
+- `buttons`: rectangles that the player can press (see Buttons);
 - `skins`: its skin layers (see Skins);
 - `tags`: game-defined names (see Tags).
 
@@ -514,6 +515,17 @@ The flags are booleans, false when absent. A rectangle has:
 - `layers`: what the rectangle shows, a list of `graphics`, `text` and
   `bar`. `bar` is a fill bar without a texture;
 - `bar`: the linear RGB of the fill bar, required with the `bar` layer.
+
+**Buttons.** `buttons` is a list of up to 80 rectangles of the material that
+the player can press, such as the buttons of a cockpit panel. A model has at
+most 256. Each one has:
+
+- `rect`: `[u0, v0, u1, v1]` in the material's texture coordinates. The
+  corners can be given in any order;
+- `action`: a game-defined name, with the syntax of a tag. The game does
+  the action when the button is pressed;
+- `label`: optional, a text of 1 to 63 bytes that the game shows for the
+  button.
 
 ## Cooked files
 

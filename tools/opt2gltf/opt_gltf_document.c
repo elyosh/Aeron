@@ -200,6 +200,7 @@ bool opt_gltf_prune_unused(OptGltfDocument* document) {
 		gb->materials[kept]       = gb->materials[m];
 		gb->material_anim[kept]   = gb->material_anim[m];
 		gb->material_screen[kept] = gb->material_screen[m];
+		gb->material_buttons[kept] = gb->material_buttons[m];
 		if (gb->material_given)
 			gb->material_given[kept] = gb->material_given[m];
 		to[m] = kept++;
@@ -330,6 +331,7 @@ void OptGltf_Free(OptGltfDocument* document) {
 	free(gb->materials);
 	free(gb->material_anim);
 	free(gb->material_screen);
+	free(gb->material_buttons);
 	free(gb->material_given);
 	free(gb->meshes);
 	free(gb->primitives);

@@ -26,6 +26,36 @@
       "items": { "enum": ["shields", "tractor", "jamming"] }
     },
     "screen": { "$ref": "#/$defs/screen" },
+    "buttons": {
+      "title": "Buttons",
+      "description": "Rectangles of the material that the player can press. A model has at most 256.",
+      "type": "array",
+      "maxItems": 80,
+      "items": {
+        "type": "object",
+        "properties": {
+          "rect": {
+            "description": "u0, v0, u1, v1 in the material's texture coordinates. The corners can be given in any order.",
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 4,
+            "maxItems": 4
+          },
+          "action": {
+            "description": "A game-defined name: what the game does when the button is pressed.",
+            "$ref": "#/$defs/tag"
+          },
+          "label": {
+            "description": "The text that the game shows for the button.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63
+          }
+        },
+        "required": ["rect", "action"],
+        "additionalProperties": false
+      }
+    },
     "skins": {
       "title": "Skins",
       "description": "The material's skin layers, keyed by skin name. The model root's skinVariants combine them; the cooker composites each combination. A viewer without this extension shows the material as defined.",

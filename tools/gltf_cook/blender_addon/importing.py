@@ -255,6 +255,8 @@ class glTF2ImportUserExtension:
             animation.set_entry(blender_material, extension)
             screen = extension.get("screen")
             blender_material.aeron_flight.screen = json.dumps(screen) if screen is not None else ""
+            buttons = extension.get("buttons")
+            blender_material.aeron_flight.buttons = json.dumps(buttons) if buttons is not None else ""
             blender_material.aeron_flight.tags = ", ".join(extension.get("tags", []))
             skins.restore_material(blender_material, extension, gltf)
         except Exception as error:  # the importer would only log it

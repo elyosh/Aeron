@@ -76,6 +76,11 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	AeronProbeSet_Destroy(m->probes);
 	free(m->cpu_vertices);
 	free(m->cpu_indices);
+	free(m->cpu_uvs);
+	free(m->cpu_prims);
+	free(m->cpu_prim_materials);
+	free(m->cpu_materials);
+	free(m->buttons);
 	AeronFaceBvh_Free(m->render_bvh);
 	free(m);
 }
@@ -98,6 +103,46 @@ static uint32_t variant_column(const AeronGltfModel* model, const AeronSceneMesh
 							   uint32_t index) {
 	(void)model;
 	return set && set->variants[index] != AERON_GLTF_NO_VARIANT ? set->variants[index] + 1u : 0u;
+}
+
+/* Keeps what AeronSceneMesh_Pick needs of a model that has buttons. */
+static bool retain_pick_data(AeronSceneMesh* s, const AeronGltfModel* model,
+							 const AeronSceneMeshVariants* set) {
+	const uint32_t rows       = variant_index_count(model, set);
+	const uint32_t primitives = model->total_prim_count;
+	s->cpu_uvs                = (float (*)[2])malloc((size_t)model->vertex_count * sizeof *s->cpu_uvs);
+	s->cpu_prims              = (uint32_t*)malloc((size_t)model->vertex_count * sizeof *s->cpu_prims);
+	s->cpu_prim_materials =
+		(uint32_t*)malloc((size_t)rows * (primitives ? primitives : 1u) * sizeof *s->cpu_prim_materials);
+	s->cpu_materials = (AeronSceneMeshPickMaterial*)calloc(model->material_count ? model->material_count : 1u,
+														   sizeof *s->cpu_materials);
+	s->buttons       = (AeronGltfButton*)malloc((size_t)model->button_count * sizeof *s->buttons);
+	if (!s->cpu_uvs || !s->cpu_prims || !s->cpu_prim_materials || !s->cpu_materials || !s->buttons)
+		return false;
+	for (uint32_t v = 0; v < model->vertex_count; v++) {
+		memcpy(s->cpu_uvs[v], model->vertices[v].uv, sizeof s->cpu_uvs[v]);
+		s->cpu_prims[v] = model->vertices[v].prim_id;
+	}
+	for (uint32_t row = 0; row < rows; row++) {
+		const uint32_t column = variant_column(model, set, row);
+		for (uint32_t primitive = 0; primitive < primitives; primitive++)
+			s->cpu_prim_materials[(size_t)row * primitives + primitive] =
+				model->prim_variant_material && column < model->variant_columns
+					? model->prim_variant_material[(size_t)primitive * model->variant_columns + column]
+					: AERON_GLTF_NO_MATERIAL;
+	}
+	for (uint32_t m = 0; m < model->material_count; m++) {
+		const AeronGltfMaterial* material = &model->materials[m];
+		s->cpu_materials[m]               = (AeronSceneMeshPickMaterial) {
+			.button_first = material->button_first,
+			.button_count = material->button_count,
+			.tag_groups   = material->tag_groups,
+			.see_through  = material->alpha_mode == AERON_GLTF_ALPHA_BLEND && material->button_count == 0,
+		};
+	}
+	memcpy(s->buttons, model->buttons, (size_t)model->button_count * sizeof *s->buttons);
+	s->button_count = model->button_count;
+	return true;
 }
 
 static bool group_loaded(const AeronGltfModel* model, const AeronSceneMeshVariants* set, uint32_t group) {
@@ -1035,6 +1080,12 @@ static AeronSceneMesh* mesh_create(AeronCommandBuffer* cmd, const AeronFlightMod
 			retained_vertex->component = source_vertex->component;
 		}
 		memcpy(s->cpu_indices, model->indices, (size_t)model->index_count * sizeof *s->cpu_indices);
+		if (model->button_count > 0 && !retain_pick_data(s, model, set)) {
+			Aeron_LogError("aeron.scene", "%s: retained button data allocation failed", name);
+			close_channel_payloads(channel_payloads);
+			AeronScene_MeshDestroy(s);
+			return NULL;
+		}
 		if (flight_model->render_bvh) {
 			s->render_bvh = AeronFaceBvh_Clone(flight_model->render_bvh);
 			if (!s->render_bvh) {

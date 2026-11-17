@@ -16,6 +16,13 @@ int XwauNames_Find(const XwauNameList* list, const char* name) {
 	return -1;
 }
 
+const char* XwauNames_KeyAction(const XwauNames* names, const char* key) {
+	for (int i = 0; names && key && i < names->key_action_count; ++i)
+		if (strcmp(names->key_actions[i].key, key) == 0)
+			return names->key_actions[i].action;
+	return NULL;
+}
+
 bool XwauNames_IsRenamed(const XwauNames* names, int object_type) {
 	return object_type >= 0 && object_type < names->object_types.count && names->object_type_renames &&
 		   names->object_type_renames[object_type];

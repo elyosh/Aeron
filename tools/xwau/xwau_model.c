@@ -614,6 +614,10 @@ bool XwauModel_Read(const char* game, const XwauMissions* missions, const char* 
 		return false;
 	if (!Xwau_FindFile(game, rel, out->dynamic_cockpit, sizeof out->dynamic_cockpit))
 		out->dynamic_cockpit[0] = 0;
+	if (!PathFormat(rel, sizeof rel, "DynamicCockpit/%s.ac", model))
+		return false;
+	if (!Xwau_FindFile(game, rel, out->active_cockpit, sizeof out->active_cockpit))
+		out->active_cockpit[0] = 0;
 	return read_profiles(game, model, out, label) && read_collisions(game, model, out, label) &&
 		   read_targetable(game, model, out, label) && read_rotations(game, missions, model, out, label);
 }

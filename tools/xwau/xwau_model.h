@@ -107,6 +107,7 @@ typedef struct XwauModel {
 	OptGltfArticulationSetting   settings[XWAU_MODEL_MAX_SETTINGS];
 	size_t                       setting_count;
 	char                         dynamic_cockpit[1024]; /* "" without one */
+	char                         active_cockpit[1024];  /* the .ac file, "" without one */
 	bool                         has_pilot_lines;       /* the Pilot section has lines */
 } XwauModel;
 

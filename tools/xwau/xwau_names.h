@@ -20,6 +20,14 @@ typedef struct XwauNameList {
 	int                count;
 } XwauNameList;
 
+/* A key of the game's default keyboard bindings and the input action it
+   does. The key is spelled as in XWAU's Active Cockpit files, in capitals,
+   with its modifiers first and in this order: "CTRL+SHIFT+ALT+F9". */
+typedef struct XwauKeyAction {
+	const char* key;
+	const char* action;
+} XwauKeyAction;
+
 typedef struct XwauNames {
 	/* The stock object type names, and the mod's new names.
 	   `object_type_renames` has `object_types.count` entries. An entry is
@@ -42,6 +50,8 @@ typedef struct XwauNames {
 	XwauNameList sound_weapon_groups;
 	XwauNameList screen_sources;
 	XwauNameList hud_areas; /* indexed by bit */
+	const XwauKeyAction* key_actions;
+	int                  key_action_count;
 } XwauNames;
 
 /* Returns the name of `value` in `list`, or NULL when it has no name. */
@@ -56,5 +66,8 @@ const char* XwauNames_ObjectType(const XwauNames* names, int object_type);
 /* Returns the name of `weapon_type` in the mod, like
    XwauNames_ObjectType. */
 const char* XwauNames_WeaponType(const XwauNames* names, int weapon_type);
+
+/* Returns the input action that `key` does by default, or NULL. */
+const char* XwauNames_KeyAction(const XwauNames* names, const char* key);
 
 #endif /* AERON_XWAU_NAMES_H */

@@ -658,7 +658,7 @@ class EXPORT_OT_aeron_flight_model_project(Operator, ExportHelper):
         # its file.
         libraries.update_model(sources.project_effects(out_gltf), os.path.basename(model_dir), out_gltf)
         animated = sum(1 for extension in sources.material_extensions(document).values()
-                       if set(extension) - {"screen"})
+                       if set(extension) - {"screen", "buttons"})
         self.report({'INFO'}, "Wrote {}: {} texture(s) added, {} animated material(s){}".format(
             out_gltf, len(copies), animated, _warnings(self.warnings)))
         return {'FINISHED'}

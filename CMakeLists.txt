@@ -1108,6 +1108,7 @@ add_library(aeron_scene STATIC
     src/scene/billboards3d.c
     src/scene/lens_flare.c
     src/scene/mesh.c
+    src/scene/mesh_pick.c
     src/scene/effect_atlas.c
     src/scene/mesh_overlay.c
     src/scene/directional_shadow.c
@@ -1299,6 +1300,7 @@ if(AERON_BUILD_TOOLS)
         tools/opt2gltf/model_conversion.c
         tools/opt2gltf/opt_gltf_write.c
         tools/opt2gltf/xwau_anim.c
+        tools/opt2gltf/xwau_active_cockpit.c
         tools/opt2gltf/xwau_dynamic_cockpit.c
         tools/opt2gltf/xwau_effect_bake.c
         tools/opt2gltf/xwau_gltf_material.c

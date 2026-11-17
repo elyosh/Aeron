@@ -15,6 +15,7 @@
 #include "opt_gltf.h"
 #include "opt_gltf_write.h"
 #include "util.h"
+#include "xwau_active_cockpit.h"
 #include "xwau_anim.h"
 #include "xwau_dat.h"
 #include "xwau_dynamic_cockpit.h"
@@ -328,6 +329,7 @@ typedef struct Conversion {
 	XwauModel*         model;
 	XwauSkins          skins;
 	XwauDynamicCockpit dc;
+	XwauActiveCockpit  ac;
 	/* Textures shaded as lit surfaces even though their material makes them
 	 * Shadeless. The names point into lit_text. */
 	char        lit_text[1024];
@@ -465,6 +467,28 @@ static bool load_dynamic_cockpit(Conversion* c, const ModelConversion* mc, opt_f
 		Report(label, "cannot apply %s", dynamic);
 		return false;
 	}
+	return true;
+}
+
+/* Loads the Active Cockpit buttons of the model, if it has a .ac file. They
+ * are converted whether XWAU has the feature turned on or not. */
+static bool load_active_cockpit(Conversion* c, const ModelConversion* mc, const opt_file_t* opt,
+								const char* basename, const char* label) {
+	const char* active = c->model && c->model->active_cockpit[0] ? c->model->active_cockpit : NULL;
+	if (!active)
+		return true;
+	if (!mc->names || !mc->names->key_action_count) {
+		Report(label,
+			   "%s: converting cockpit buttons needs the game's key bindings, which only the mod importer "
+			   "has. The buttons are left out",
+			   active);
+		return true;
+	}
+	if (!XwauActiveCockpit_Load(active, opt, basename, mc->names, &c->ac, label)) {
+		Report(label, "cannot apply %s", active);
+		return false;
+	}
+	ReportDetail(label, "%s: %d buttons, %d left out", active, c->ac.converted, c->ac.skipped);
 	return true;
 }
 
@@ -957,6 +981,7 @@ static bool bake_xwau(Conversion* c, const ModelConversion* mc, const opt_file_t
 	m->untextured             = &c->baked.untextured;
 	m->variants = c->baked.variants.count || c->baked.variants.skin_variant_count ? &c->baked.variants : NULL;
 	m->screens  = screens;
+	m->buttons  = (const char* const*)c->ac.buttons;
 	/* XWAU's renderer uses the stored normal of each corner, without
 	 * remapping or repairing it. */
 	c->options.geometry.normals = OPT_GLTF_NORMALS_STORED;
@@ -1000,6 +1025,7 @@ static void conversion_free(Conversion* c, const opt_file_t* opt) {
 	XwauAnim_End(c->anim);
 	XwauMat_Free(c->mat);
 	XwauDynamicCockpit_Free(&c->dc);
+	XwauActiveCockpit_Free(&c->ac);
 	XwauSkins_Free(&c->skins);
 	stock_tags_free(&c->stock);
 	free(c->model);
@@ -1043,7 +1069,7 @@ bool ModelConversion_Build(const ModelConversion* mc, const char* opt_path, cons
 	if (ok && mc->xwau)
 		ok = prepare_xwau(c, mc, opt, basename, opt_path) && place_cockpit(c, opt, opt_path) &&
 			 load_dynamic_cockpit(c, mc, opt, basename, opt_path) &&
-			 bake_xwau(c, mc, opt, basename, opt_path);
+			 load_active_cockpit(c, mc, opt, basename, opt_path) && bake_xwau(c, mc, opt, basename, opt_path);
 	else if (ok)
 		ok = prepare_stock(c, mc, basename, opt_path) && place_cockpit(c, opt, opt_path);
 	c->options.model.seen_close = seen_close(basename);

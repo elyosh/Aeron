@@ -81,6 +81,7 @@ typedef struct {
 	 * its screen (a JSON object), or NULL. Copies of a material share them. */
 	const char** material_anim;
 	const char** material_screen;
+	const char** material_buttons;
 	/* For each material, the given material whose skin layers it writes
 	 * (OptGltfMaterial.skins), or NULL. Copies of a material share it. */
 	const OptGltfMaterial** material_given;
@@ -209,6 +210,7 @@ typedef struct Build {
 	const OptGltfMaterial*     materials; /* the given materials, or NULL */
 	const OptGltfVariants*     variants;
 	const OptGltfScreen*       screens;
+	const char* const*         buttons;
 	float                      smooth_angle; /* negative to keep the OPT's own normals */
 	bool                       repair_normals;
 	bool                       emissive;

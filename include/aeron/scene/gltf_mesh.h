@@ -171,6 +171,10 @@ typedef struct AeronGltfMaterial {
 	uint32_t screen_first;
 	uint32_t screen_count;
 	uint32_t screen_flags;
+	/* The material's buttons: [button_first, button_first + button_count)
+	 * of the model's buttons. */
+	uint32_t button_first;
+	uint32_t button_count;
 	/* Animation (`flipbooks`, "Material animation" below): the
 	 * material's flipbooks [flipbook_first, flipbook_first +
 	 * flipbook_count) of the model's. */
@@ -323,6 +327,22 @@ typedef struct AeronGltfScreenRect {
 	char     source_name[AERON_GLTF_SCREEN_NAME_MAX];
 } AeronGltfScreenRect;
 
+/* A button: a rectangle of a material that the player can press (the
+ * material's AERON_flight_model `buttons`). The game gives the action names
+ * their meaning. */
+enum {
+	AERON_GLTF_BUTTON_MAX_PER_MATERIAL = 80,
+	AERON_GLTF_BUTTON_MAX_PER_MODEL    = 256,
+	AERON_GLTF_BUTTON_NAME_MAX         = 64,
+};
+
+typedef struct AeronGltfButton {
+	float    rect[4]; /* u0, v0, u1, v1 in the material's texture coordinates, with u0 <= u1 and v0 <= v1 */
+	uint32_t material;
+	char     action[AERON_GLTF_BUTTON_NAME_MAX];
+	char     label[AERON_GLTF_BUTTON_NAME_MAX]; /* empty: the game names the action */
+} AeronGltfButton;
+
 /* The most levels of detail a model has after level 0. */
 #define AERON_GLTF_MAX_LODS 3
 
@@ -414,6 +434,10 @@ typedef struct AeronGltfModel {
 	uint32_t             screen_hide_name_count;
 	char                 screen_hide_names[AERON_GLTF_SCREEN_MAX_HIDE_NAMES][AERON_GLTF_SCREEN_NAME_MAX];
 	uint32_t             screen_hide_mask;
+
+	/* The buttons of all materials. */
+	uint32_t         button_count;
+	AeronGltfButton* buttons;
 
 	/* The damage `choice` and `placement` names, without duplicates, at most
 	 * 4096. A material's damage_choice and damage_placement are indexes in

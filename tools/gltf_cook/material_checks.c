@@ -390,6 +390,25 @@ static bool check_screen(Check* c, const cJSON* in) {
 				   "[r, g, b] with the bar layer } }");
 }
 
+/* `buttons`: rectangles of the material that the player can press. The
+   cooker doesn't know the game's action names; the game checks them. */
+static bool check_buttons(Check* c, const cJSON* in) {
+	static const char* const fields[] = { "rect", "action", "label" };
+	bool                     ok       = cJSON_IsArray(in) && cJSON_GetArraySize(in) <= 80;
+	const cJSON*             button;
+	const cJSON*             button_list = ok ? in : NULL;
+	cJSON_ArrayForEach(button, button_list) {
+		const cJSON* action = cJSON_GetObjectItemCaseSensitive(button, "action");
+		const cJSON* label  = cJSON_GetObjectItemCaseSensitive(button, "label");
+		ok = ok && cJSON_IsObject(button) && only_members(c, "button", button, fields, COUNT(fields)) &&
+			 numbers(cJSON_GetObjectItemCaseSensitive(button, "rect"), 4) && cJSON_IsString(action) &&
+			 Aeron_FlightTagValid(action->valuestring) &&
+			 (!label || (cJSON_IsString(label) && label->valuestring[0] && strlen(label->valuestring) < 64));
+	}
+	return ok || fail(c, "buttons is a list of up to 80 { rect: [u0, v0, u1, v1], action: a name, label: a "
+						 "text of 1 to 63 bytes (optional) }");
+}
+
 /* `tags`: game-defined names. */
 static bool check_tags(Check* c, const cJSON* in) {
 	bool         ok = cJSON_IsArray(in);
@@ -404,8 +423,8 @@ static bool check_tags(Check* c, const cJSON* in) {
 /* A material's AERON_flight_model object. */
 static bool check_material(Check* c, const char* json) {
 	/* The cook checks `skins` when it expands them (skin_layers.h). */
-	static const char* const fields[] = { "flipbooks", "damage", "details", "energy",
-										  "screen",    "skins",  "tags" };
+	static const char* const fields[] = { "buttons", "flipbooks", "damage", "details",
+										  "energy",  "screen",    "skins",  "tags" };
 	cJSON*                   object   = cJSON_Parse(json);
 	const cJSON*             books    = cJSON_GetObjectItemCaseSensitive(object, "flipbooks");
 	const cJSON*             damage   = cJSON_GetObjectItemCaseSensitive(object, "damage");
@@ -413,6 +432,7 @@ static bool check_material(Check* c, const char* json) {
 	const cJSON*             energy   = cJSON_GetObjectItemCaseSensitive(object, "energy");
 	const cJSON*             screen   = cJSON_GetObjectItemCaseSensitive(object, "screen");
 	const cJSON*             tags     = cJSON_GetObjectItemCaseSensitive(object, "tags");
+	const cJSON*             buttons  = cJSON_GetObjectItemCaseSensitive(object, "buttons");
 	bool ok = cJSON_IsObject(object) ? only_members(c, "AERON_flight_model", object, fields, COUNT(fields))
 									 : fail(c, "AERON_flight_model is an object");
 	if (ok && books && !cJSON_IsArray(books))
@@ -422,7 +442,7 @@ static bool check_material(Check* c, const char* json) {
 	cJSON_ArrayForEach(book, book_list) { ok = ok && check_flipbook(c, book); }
 	ok = ok && (!damage || check_damage(c, damage)) && (!details || check_details(c, details)) &&
 		 (!energy || check_energy(c, energy)) && (!screen || check_screen(c, screen)) &&
-		 (!tags || check_tags(c, tags));
+		 (!tags || check_tags(c, tags)) && (!buttons || check_buttons(c, buttons));
 	cJSON_Delete(object);
 	return ok;
 }
