@@ -290,8 +290,10 @@ typedef struct AeronRuntime {
 	int quit_requested;
 	int fatal_error_requested;
 	/* From the application's startup options. */
-	AeronXrMode                 xr_mode;
-	AeronStartupOptions         xr_options;
+	AeronXrMode         xr_mode;
+	AeronStartupOptions xr_options;
+	/* Why VR did not start, or empty. */
+	char                        xr_start_error[512];
 	SDL_Window*                 window;
 	SDL_GPUDevice*              gpu_device;
 	SDL_GPUShader*              fullscreen_vertex_shader;

@@ -1593,23 +1593,18 @@ static void Aeron_DestroyGPUDevice(void) {
 	AeronXr_DestroyInstance();
 }
 
-/* Creates the device for the startup VR mode. In the auto mode, a device
- * without VR is created when VR can't start. */
+/* Creates the device for the startup VR mode. When VR can't start, a device
+ * without VR is created, and the reason is kept for Aeron_XrStartError. */
 static SDL_GPUDevice* Aeron_CreateGPUDeviceForXrMode(SDL_GPUShaderFormat shader_formats) {
+	g_aeron.xr_start_error[0] = '\0';
 	if (g_aeron.xr_mode != AERON_XR_OFF) {
-		char           reason[512];
-		SDL_GPUDevice* device = Aeron_CreateXrGPUDevice(shader_formats, reason, sizeof reason);
+		SDL_GPUDevice* device =
+			Aeron_CreateXrGPUDevice(shader_formats, g_aeron.xr_start_error, sizeof g_aeron.xr_start_error);
 		if (device) {
+			g_aeron.xr_start_error[0] = '\0';
 			return device;
 		}
-		if (g_aeron.xr_mode == AERON_XR_REQUIRED) {
-			char message[640];
-			SDL_snprintf(message, sizeof message, "VR was requested, but it could not start: %s.", reason);
-			Aeron_LogError("aeron.xr", "%s", message);
-			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, g_aeron.app_name, message, g_aeron.window);
-			return NULL;
-		}
-		Aeron_LogInfo("aeron.xr", "VR is off: %s", reason);
+		Aeron_LogWarn("aeron.xr", "VR could not start: %s", g_aeron.xr_start_error);
 	}
 	SDL_GPUDevice* device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats, 0);
 	if (!device) {

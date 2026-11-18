@@ -458,11 +458,12 @@ static void demo_startup_options(AeronVfs* vfs, void* userdata, AeronStartupOpti
 int main(int argc, char* argv[]) {
 	long        frame_limit  = 0;
 	const char* capture_path = NULL;
-	AeronXrMode xr_mode      = AERON_XR_AUTO;
+	AeronXrMode xr_mode      = AERON_XR_ON;
+	int         require_vr   = 0;
 	DemoScreen  screen       = DEMO_SCREEN_PANEL;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--vr") == 0) {
-			xr_mode = AERON_XR_REQUIRED;
+			require_vr = 1;
 		} else if (strcmp(argv[i], "--no-vr") == 0) {
 			xr_mode = AERON_XR_OFF;
 		} else if (strcmp(argv[i], "--screen") == 0 && i + 1 < argc && strcmp(argv[i + 1], "panel") == 0) {
@@ -500,6 +501,12 @@ int main(int argc, char* argv[]) {
 	config.startup_userdata  = &xr_mode;
 	if (!Aeron_Init(&config)) {
 		fprintf(stderr, "xr_demo: Aeron_Init failed\n");
+		return 1;
+	}
+	if (require_vr && !Aeron_XrEnabled()) {
+		const char* reason = Aeron_XrStartError();
+		fprintf(stderr, "xr_demo: VR could not start: %s\n", reason ? reason : "unknown reason");
+		Aeron_Shutdown();
 		return 1;
 	}
 

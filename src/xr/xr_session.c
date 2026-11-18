@@ -483,3 +483,5 @@ int Aeron_XrViewSize(int* width, int* height) {
 #endif /* AERON_XR */
 
 int Aeron_XrSupported(void) { return AERON_XR != 0; }
+
+const char* Aeron_XrStartError(void) { return g_aeron.xr_start_error[0] ? g_aeron.xr_start_error : NULL; }

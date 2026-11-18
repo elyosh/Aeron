@@ -15,13 +15,17 @@ extern "C" {
  * when the device has no session, they report that VR is off. */
 
 typedef enum AeronXrMode {
-	AERON_XR_OFF,      /* never load OpenXR */
-	AERON_XR_AUTO,     /* use a headset when one is found */
-	AERON_XR_REQUIRED, /* fail at startup when there is no headset */
+	AERON_XR_OFF, /* never load OpenXR */
+	/* Start with VR. When VR can't start, Aeron starts without it and
+	 * Aeron_XrStartError gives the reason. */
+	AERON_XR_ON,
 } AeronXrMode;
 
 /* Nonzero when this build has VR support. It is zero on macOS. */
 int Aeron_XrSupported(void);
+/* Why VR did not start, when the startup options asked for it and Aeron
+ * started without it. NULL when VR started or was not asked for. */
+const char* Aeron_XrStartError(void);
 /* Nonzero when the GPU device has an OpenXR session. */
 int Aeron_XrEnabled(void);
 /* Nonzero while the session runs. OpenXR then paces the frame. */
