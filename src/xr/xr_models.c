@@ -207,7 +207,7 @@ static void xr_model_read(XrRenderModelIdEXT id) {
 	/* The states are given for every moving node, in this order, so a model
 	 * with more of them than Aeron keeps can't be animated. */
 	if (properties.animatableNodeCount > AERON_XR_MODEL_NODE_MAX) {
-		Aeron_LogWarn("aeron.xr", "controller model: %u moving nodes are too many; the model stays still",
+		Aeron_LogWarn("aeron.xr", "controller model: too many moving nodes (%u); the model stays still",
 					  (unsigned)properties.animatableNodeCount);
 	} else if (node_count > 0) {
 		result = g_xr.model_fn.xrGetRenderModelAssetPropertiesEXT(asset, &nodes_info, &asset_properties);

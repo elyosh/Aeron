@@ -147,8 +147,10 @@ bool XwauActiveCockpit_Load(const char* ac_path, const opt_file_t* opt, const ch
 			const int               result =
 				XwauActiveCockpit_ParseAction(value, width, height, false, names, &button, key);
 			if (result == 0) {
-				Report(label, "%s: the key %s does no action in the game, so its button is left out", ac_path,
-					   key);
+				Report(label,
+					   "%s: the key %s has no action in the game's default key bindings, so its button is "
+					   "left out",
+					   ac_path, key);
 				out->skipped++;
 			} else if (result > 0 && counts[texture] < XWAU_ACTIVE_COCKPIT_MAX_BUTTONS) {
 				buttons[(size_t)texture * XWAU_ACTIVE_COCKPIT_MAX_BUTTONS + (size_t)counts[texture]++] =

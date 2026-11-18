@@ -70,7 +70,7 @@ static void xr_apply_haptic(int hand, float amplitude, uint64_t duration_us);
 
 const char* Aeron_VrHandAxisName(int hand, int axis) {
 	static const char* const names[AERON_VR_HAND_AXIS_COUNT] = {
-		"Trigger", "Squeeze", "Thumbstick X", "Thumbstick Y", "Trackpad X", "Trackpad Y",
+		"Trigger", "Grip", "Thumbstick X", "Thumbstick Y", "Trackpad X", "Trackpad Y",
 	};
 	(void)hand;
 	return axis >= 0 && axis < AERON_VR_HAND_AXIS_COUNT ? names[axis] : NULL;
@@ -78,7 +78,7 @@ const char* Aeron_VrHandAxisName(int hand, int axis) {
 
 const char* Aeron_VrHandButtonName(int hand, int button) {
 	static const char* const names[AERON_VR_HAND_BUTTON_COUNT] = {
-		"Trigger Click", "Squeeze Click", NULL, NULL, "Thumbstick Click", "Trackpad Click", "Menu",
+		"Trigger Click", "Grip Click", NULL, NULL, "Thumbstick Click", "Trackpad Click", "Menu",
 	};
 	if (button < 0 || button >= AERON_VR_HAND_BUTTON_COUNT)
 		return NULL;
@@ -621,11 +621,11 @@ typedef struct AeronXrActionDesc {
 
 static const AeronXrActionDesc g_xrActions[AERON_XR_ACTION_COUNT] = {
 	[AERON_XR_ACTION_TRIGGER]          = { "trigger", "Trigger", XR_ACTION_TYPE_FLOAT_INPUT },
-	[AERON_XR_ACTION_SQUEEZE]          = { "squeeze", "Squeeze", XR_ACTION_TYPE_FLOAT_INPUT },
+	[AERON_XR_ACTION_SQUEEZE]          = { "squeeze", "Grip", XR_ACTION_TYPE_FLOAT_INPUT },
 	[AERON_XR_ACTION_THUMBSTICK]       = { "thumbstick", "Thumbstick", XR_ACTION_TYPE_VECTOR2F_INPUT },
 	[AERON_XR_ACTION_TRACKPAD]         = { "trackpad", "Trackpad", XR_ACTION_TYPE_VECTOR2F_INPUT },
 	[AERON_XR_ACTION_TRIGGER_CLICK]    = { "trigger_click", "Trigger Click", XR_ACTION_TYPE_BOOLEAN_INPUT },
-	[AERON_XR_ACTION_SQUEEZE_CLICK]    = { "squeeze_click", "Squeeze Click", XR_ACTION_TYPE_BOOLEAN_INPUT },
+	[AERON_XR_ACTION_SQUEEZE_CLICK]    = { "squeeze_click", "Grip Click", XR_ACTION_TYPE_BOOLEAN_INPUT },
 	[AERON_XR_ACTION_PRIMARY]          = { "primary", "Primary Button", XR_ACTION_TYPE_BOOLEAN_INPUT },
 	[AERON_XR_ACTION_SECONDARY]        = { "secondary", "Secondary Button", XR_ACTION_TYPE_BOOLEAN_INPUT },
 	[AERON_XR_ACTION_THUMBSTICK_CLICK] = { "thumbstick_click", "Thumbstick Click",
