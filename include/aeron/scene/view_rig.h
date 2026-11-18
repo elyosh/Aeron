@@ -95,6 +95,12 @@ void AeronView_PlaneToClip(const float* xy, int count, float h_half_rad, float v
  * rotates from the view's axes to the rig's axes. */
 void AeronViewPose_Rotation(const AeronViewPose* pose, float out[9]);
 
+/* Builds the orientation of a head or a hand from its yaw, pitch and roll, in
+ * radians: a positive yaw turns right, a positive pitch turns up, and a
+ * positive roll turns clockwise as seen from behind. The turns are applied
+ * in that order, each around the axes that the earlier turns gave. */
+void AeronViewPose_FromAngles(float yaw_rad, float pitch_rad, float roll_rad, float out_orientation[4]);
+
 /* Computes the camera of a view from the camera at the rig's origin, called
  * the seat camera. `seat_rows` are the seat camera's world-to-eye rows, in
  * the scene's eye space, and `seat_pos` is its position in scene units.

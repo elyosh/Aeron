@@ -149,6 +149,8 @@ void Aeron_Shutdown(void) {
 	Aeron_AudioShutdown();
 	SDL_StopTextInput(g_aeron.window);
 	Aeron_ControllersShutdown();
+	/* While the window exists: the TrackIR interface unregisters it. */
+	AeronHeadTracker_Shutdown();
 	Aeron_RenderBackendShutdown();
 	Aeron_RelaunchBeforeWindowClose();
 	Aeron_WindowShutdown();

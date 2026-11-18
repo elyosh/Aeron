@@ -161,6 +161,7 @@ int32_t Aeron_BeginFrame(void) {
 	Aeron_ApplyPendingOutputHdr();
 	Aeron_UpdateControllers(&g_aeron.input);
 	AeronXr_UpdateHands(&g_aeron.input);
+	AeronHeadTracker_Update();
 	Aeron_UpdatePresentationPixelSize();
 	SDL_GetWindowSize(g_aeron.window, &g_aeron.input.window_width, &g_aeron.input.window_height);
 	Aeron_ComputePresentationRect(g_aeron.input.window_width, g_aeron.input.window_height, &content_rect);

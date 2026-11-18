@@ -524,6 +524,9 @@ set(AERON_SOURCES
     src/dialog.c
     src/events.c
     src/gamepad.c
+    src/head_tracker.c
+    src/head_tracker_math.c
+    src/head_tracker_udp.c
     src/image.c
     src/image_read.c
     src/image_write.c
@@ -535,6 +538,9 @@ set(AERON_SOURCES
     src/random.c
     src/relaunch.c
     src/render_backend.c
+    # Math only. It is here and not in aeron_scene because the head tracker
+    # uses it.
+    src/scene/view_rig.c
     src/surface.c
     src/sync.c
     src/system_info.c
@@ -636,8 +642,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if(WIN32)
-    target_sources(aeron PRIVATE src/crash_handler_win32.c)
-    target_link_libraries(aeron PRIVATE advapi32 bcrypt shell32)
+    target_sources(aeron PRIVATE src/crash_handler_win32.c src/head_tracker_trackir_win32.c)
+    # ws2_32 is for the head tracker's UDP socket.
+    target_link_libraries(aeron PRIVATE advapi32 bcrypt shell32 ws2_32)
 endif()
 
 if(AERON_ENABLE_DPLAY AND NOT AERON_ENABLE_COMPAT)
@@ -1101,7 +1108,6 @@ add_library(aeron_scene STATIC
     src/scene/view_area.c
     src/scene/fullscreen_mesh.c
     src/scene/world.c
-    src/scene/view_rig.c
     src/scene/settings.c
     src/scene/environment.c
     src/scene/probe_set.c
@@ -1385,6 +1391,32 @@ if(AERON_BUILD_TOOLS)
     else()
         target_compile_options(aeron_view_rig_test PRIVATE -Wall -Wextra -Wpedantic -ffp-contract=off)
         target_link_libraries(aeron_view_rig_test PRIVATE m)
+    endif()
+
+    # Tests the head tracker's math and its UDP reader. It needs no window
+    # and no tracker: it sends itself datagrams on the loopback address.
+    add_executable(aeron_head_tracker_test
+        tests/head_tracker_test.c
+        src/head_tracker_math.c
+        src/head_tracker_udp.c
+        src/scene/view_rig.c)
+    target_include_directories(aeron_head_tracker_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    set_target_properties(aeron_head_tracker_test PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    if(MSVC)
+        target_compile_options(aeron_head_tracker_test PRIVATE /W4 /fp:precise)
+    else()
+        target_compile_options(aeron_head_tracker_test PRIVATE -Wall -Wextra -Wpedantic -ffp-contract=off)
+    endif()
+    if(WIN32)
+        target_link_libraries(aeron_head_tracker_test PRIVATE ws2_32)
+    elseif(NOT MSVC)
+        target_link_libraries(aeron_head_tracker_test PRIVATE m)
     endif()
 
     # Tests the audio mixer and the DirectSound shim without an audio device:

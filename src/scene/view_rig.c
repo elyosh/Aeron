@@ -47,6 +47,26 @@ void AeronViewPose_Rotation(const AeronViewPose* pose, float out[9]) {
 	out[8] = 1.0f - 2.0f * (xx + yy);
 }
 
+/* out = a * b, for quaternions stored as (x, y, z, w). */
+static void rig_quat_multiply(const float a[4], const float b[4], float out[4]) {
+	out[0] = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+	out[1] = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+	out[2] = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+	out[3] = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+}
+
+void AeronViewPose_FromAngles(float yaw_rad, float pitch_rad, float roll_rad, float out_orientation[4]) {
+	/* The rig's axes are X right, Y up and -Z forward. So turning right is a
+	 * negative turn around Y, turning up a positive turn around X, and a
+	 * clockwise roll a negative turn around Z. */
+	const float qy[4] = { 0.0f, sinf(-0.5f * yaw_rad), 0.0f, cosf(-0.5f * yaw_rad) };
+	const float qx[4] = { sinf(0.5f * pitch_rad), 0.0f, 0.0f, cosf(0.5f * pitch_rad) };
+	const float qz[4] = { 0.0f, 0.0f, sinf(-0.5f * roll_rad), cosf(-0.5f * roll_rad) };
+	float       qyx[4];
+	rig_quat_multiply(qy, qx, qyx);
+	rig_quat_multiply(qyx, qz, out_orientation);
+}
+
 void AeronViewPose_ComposeCamera(const AeronViewPose* pose, const float seat_rows[9], const float seat_pos[3],
 								 float units_per_meter, float out_rows[9], float out_pos[3]) {
 	/* Eye space is rig space with Y and Z negated. */

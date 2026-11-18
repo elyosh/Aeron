@@ -588,6 +588,11 @@ void Aeron_UpdateControllers(AeronInputSnapshot* input);
  * session, and fills their two entries of the input snapshot. It runs once
  * in each frame, after AeronXr_BeginFrame. */
 void AeronXr_UpdateHands(AeronInputSnapshot* input);
+/* Reads the head tracker (head_tracker.c). It runs once in each frame, after
+ * AeronXr_BeginFrame, and gives no pose while a VR session runs. */
+void AeronHeadTracker_Update(void);
+/* Stops reading the head tracker and chooses none. */
+void AeronHeadTracker_Shutdown(void);
 /* The hand that has this instance ID: 0 for the left one, 1 for the right
  * one, or -1 when the ID belongs to no hand. */
 int AeronXr_HandFromInstance(uint32_t instance_id);

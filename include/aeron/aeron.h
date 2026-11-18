@@ -8,6 +8,7 @@
 #include "aeron/config_file.h"
 #include "aeron/debug.h"
 #include "aeron/dialog.h"
+#include "aeron/head_tracker.h"
 #include "aeron/input.h"
 #include "aeron/log.h"
 #include "aeron/numeric.h"
