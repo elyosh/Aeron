@@ -288,6 +288,18 @@ typedef struct AeronXrState {
 	AeronXrSwapchain panel;
 	AeronXrPanelDesc panel_desc;
 	int              panel_begun;
+	/* The application draws the panel into an image that Aeron owns. At the
+	 * end of the frame it is copied into the panel's swapchain image, or
+	 * drawn into the eye images (below). */
+	SDL_GPUTexture* panel_texture;
+	/* Some runtimes draw flat layers over the eye images whatever the order
+	 * of the layers (SteamVR does). On those, while the eye images go over
+	 * the virtual screen, Aeron draws the screen and the panel into the eye
+	 * images itself, under what the application drew, and gives the runtime
+	 * no flat layer. `composite` says the runtime needs this, and
+	 * `composited` that this frame's eye images hold the screen. */
+	int composite;
+	int composited;
 	/* This frame: Aeron_XrBeginViews located the views and acquired the
 	 * eye images, and Aeron_XrSubmitViews said that they are complete. */
 	int    views_begun;

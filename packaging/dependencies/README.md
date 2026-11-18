@@ -58,6 +58,7 @@ vendored headers. A Linux package uses the system's loader.
 | `sdl/01-gpu-d3d12-hdr.patch` | Lets the D3D12 SDL_GPU backend report and enable HDR swapchain compositions. |
 | `sdl/02-gpu-d3d12-descriptor-heaps.patch` | Stops the D3D12 SDL_GPU backend from writing past a full descriptor heap, and from leaving bound tables in the old heap after a switch. Both make shaders read the wrong descriptors: blinking textures and GPU hangs under many draws (libsdl-org/SDL#16653). |
 | `sdl/03-gpu-vulkan-xr-swapchain-levels.patch` | Sets the level and layer counts of the Vulkan textures that wrap OpenXR swapchain images. Without them, the layout change that SDL records when it creates the swapchain covers zero levels and layers, which is not valid. |
+| `sdl/04-gpu-d3d12-xr-swapchain-destroy.patch` | Makes the D3D12 SDL_GPU backend destroy the images of an OpenXR swapchain as the texture containers they are. It treated each container as a texture, so destroying a swapchain read wrong memory, and the application crashed when it closed a VR session. |
 | `shadercross/01-fsr3.patch` | FSR3 shader generation support. |
 | `shadercross/02-msl-bindings.patch` | Numbers Metal storage buffers after the resources a graphics shader declares, not after the textures it uses, so a shader that leaves a texture unused reads its storage buffers from the right slots. aeron's split screen PBR shaders rely on it. |
 

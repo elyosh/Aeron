@@ -22,11 +22,13 @@ typedef struct XrHandModel {
 	uint8_t*         glb;
 	size_t           glb_size;
 	uint32_t         node_count;
-	char             node_names[AERON_XR_MODEL_NODE_MAX][XR_MAX_RENDER_MODEL_ASSET_NODE_NAME_SIZE_EXT];
+	/* Changes when the hand's file changes. */
+	uint32_t generation;
+	char     node_names[AERON_XR_MODEL_NODE_MAX][XR_MAX_RENDER_MODEL_ASSET_NODE_NAME_SIZE_EXT];
 } XrHandModel;
 
 static XrHandModel g_hand_models[2];
-/* Changes each time the models are read again. */
+/* The last generation given to a hand's model. */
 static uint32_t g_model_generation;
 
 static void xr_models_release(void) {
@@ -39,7 +41,6 @@ static void xr_models_release(void) {
 		SDL_free(slot->glb);
 		SDL_zerop(slot);
 	}
-	g_model_generation++;
 }
 
 void AeronXrModels_Shutdown(void) {
@@ -244,6 +245,18 @@ void AeronXrModels_Update(void) {
 	if (!g_xr.models_available || !g_xr.models_stale || !g_xr.input.ready)
 		return;
 	g_xr.models_stale = 0;
+	/* The runtime lists the models again at each change of focus, and most
+	 * often they are the same files. A hand whose file didn't change keeps
+	 * its generation, so that the application doesn't build its model again. */
+	uint8_t* old_glb[2];
+	size_t   old_size[2];
+	uint32_t old_generation[2];
+	for (int hand = 0; hand < 2; hand++) {
+		old_glb[hand]           = g_hand_models[hand].glb;
+		old_size[hand]          = g_hand_models[hand].glb_size;
+		old_generation[hand]    = g_hand_models[hand].generation;
+		g_hand_models[hand].glb = NULL;
+	}
 	xr_models_release();
 
 	const XrInteractionRenderModelIdsEnumerateInfoEXT info = {
@@ -255,11 +268,22 @@ void AeronXrModels_Update(void) {
 																				  XR_MODEL_MAX, &count, ids);
 	if (XR_FAILED(result)) {
 		xr_model_warn("could not list the models", result);
+		SDL_free(old_glb[0]);
+		SDL_free(old_glb[1]);
 		return;
 	}
 	Aeron_LogInfo("aeron.xr", "the runtime lists %u controller models", (unsigned)count);
 	for (uint32_t i = 0; i < count && i < XR_MODEL_MAX; i++)
 		xr_model_read(ids[i]);
+	for (int hand = 0; hand < 2; hand++) {
+		XrHandModel* slot = &g_hand_models[hand];
+		if (slot->model) {
+			const int same   = old_glb[hand] && old_size[hand] == slot->glb_size &&
+							   SDL_memcmp(old_glb[hand], slot->glb, slot->glb_size) == 0;
+			slot->generation = same ? old_generation[hand] : ++g_model_generation;
+		}
+		SDL_free(old_glb[hand]);
+	}
 }
 
 int Aeron_XrControllerModel(int hand, AeronXrControllerModel* out) {
@@ -267,7 +291,7 @@ int Aeron_XrControllerModel(int hand, AeronXrControllerModel* out) {
 		return 0;
 	const XrHandModel* slot = &g_hand_models[hand];
 	SDL_zerop(out);
-	out->generation = g_model_generation;
+	out->generation = slot->generation;
 	out->glb        = slot->glb;
 	out->glb_size   = slot->glb_size;
 	out->node_count = (int)slot->node_count;
@@ -318,7 +342,9 @@ int Aeron_XrControllerModelState(int hand, AeronXrControllerModelState* out) {
 		out->nodes[i].orientation[1] = states[i].nodePose.orientation.y;
 		out->nodes[i].orientation[2] = states[i].nodePose.orientation.z;
 		out->nodes[i].orientation[3] = states[i].nodePose.orientation.w;
-		out->node_visible[i]         = states[i].isVisible == XR_TRUE;
+		/* Any value but false counts: SteamVR writes 2 here, the bit of its
+		 * own "visible" flag, and not XR_TRUE. */
+		out->node_visible[i] = (uint8_t)SDL_min(states[i].isVisible, 255u);
 	}
 	return 1;
 }

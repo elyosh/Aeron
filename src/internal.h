@@ -480,6 +480,39 @@ SDL_GPUTexture* AeronXr_AcquireScreenImage(SDL_GPUTextureFormat* format, int* wi
 /* Says whether the headset shows the virtual screen this frame, and
  * whether the eye images show through its empty parts. */
 void AeronXr_SetScreenLayer(int visible, int transparent);
+
+/* On a runtime that draws flat layers over the eye images whatever their
+ * order, the virtual screen and the panel are drawn into the eye images
+ * (xr_internal.h, `composite`). Whether this frame needs it: */
+int AeronXr_CompositeWanted(void);
+/* The size and format of the headset's image of the virtual screen. */
+int AeronXr_ScreenImageInfo(SDL_GPUTextureFormat* format, int* width, int* height);
+
+/* One eye's image and where the eye is: its pose in the rig's space and the
+ * tangents of its field of view's four edges. Returns 0 when the eye has no
+ * image in this frame. */
+typedef struct AeronXrCompositeView {
+	SDL_GPUTexture*      texture;
+	SDL_GPUTextureFormat format;
+	int                  width, height;
+	float                position[3];
+	float                orientation[4];
+	float                tan_left, tan_right, tan_up, tan_down;
+} AeronXrCompositeView;
+
+int AeronXr_CompositeView(int eye, AeronXrCompositeView* out);
+/* A flat surface to draw into the eye images: its centre in the rig's
+ * space, and the vectors from the centre to its right edge and to its top
+ * edge. `which` is 0 for the panel and 1 for the virtual screen. `texture`
+ * gets the panel's picture; the screen's is the caller's. Returns 0 when
+ * the surface isn't shown in this frame. */
+int AeronXr_CompositeSurface(int which, float center[3], float right[3], float up[3],
+							 SDL_GPUTexture** texture);
+/* The eye images of this frame hold the screen and the panel. */
+void AeronXr_SetComposited(void);
+/* Copies the panel's picture into its swapchain image, for a runtime that
+ * shows it as a layer. Call it once in each frame, outside any pass. */
+void AeronXr_PresentPanel(SDL_GPUCommandBuffer* command_buffer);
 /* After SDL_DestroyGPUDevice. Also unloads the OpenXR loader. */
 void AeronXr_DestroyInstance(void);
 int  Aeron_WaitForPresentationSlot(void);

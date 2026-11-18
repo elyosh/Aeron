@@ -104,6 +104,8 @@ static Uint8* Aeron_LoadShaderFile(const char* shader_name, const char* extensio
 	return (Uint8*)SDL_LoadFile(path_out, out_size);
 }
 
+static void Aeron_ReleaseXrComposite(void);
+
 static const AeronShaderFormatInfo* Aeron_SelectShaderFormat(void) {
 	SDL_GPUShaderFormat supported_formats;
 	size_t              i;
@@ -1932,6 +1934,7 @@ void Aeron_RenderBackendShutdown(void) {
 			SDL_ReleaseGPUTexture(g_aeron.gpu_device, g_aeron.xr_screen_texture);
 			g_aeron.xr_screen_texture = NULL;
 		}
+		Aeron_ReleaseXrComposite();
 		if (g_aeron.xr_pointer_texture) {
 			SDL_ReleaseGPUTexture(g_aeron.gpu_device, g_aeron.xr_pointer_texture);
 			g_aeron.xr_pointer_texture = NULL;
@@ -2189,6 +2192,199 @@ static int Aeron_DrawXrScreen(AeronComposePass* pass, const SDL_Rect* rect) {
 							 NULL, NULL, NULL);
 }
 
+/* ---- The screen and the panel drawn into the eye images -------------
+ *
+ * On a runtime that draws flat layers over the eye images whatever their
+ * order (AeronXr_CompositeWanted), the headset's picture of the virtual
+ * screen is drawn into a texture of Aeron's own and not into the screen's
+ * swapchain image. That texture and the panel's are then drawn into each
+ * eye image as rectangles in 3D, under what the application drew there: the
+ * blend adds the new colour where the image is still transparent. */
+
+static SDL_GPUShader*           s_xr_quad_vertex_shader;
+static SDL_GPUShader*           s_xr_quad_fragment_shader;
+static SDL_GPUGraphicsPipeline* s_xr_quad_pipeline;
+static SDL_GPUTextureFormat     s_xr_quad_format;
+static SDL_GPUTexture*          s_xr_composite_screen;
+static SDL_GPUTextureFormat     s_xr_composite_format;
+static int                      s_xr_composite_width, s_xr_composite_height;
+
+static void Aeron_ReleaseXrComposite(void) {
+	if (s_xr_quad_pipeline)
+		SDL_ReleaseGPUGraphicsPipeline(g_aeron.gpu_device, s_xr_quad_pipeline);
+	if (s_xr_quad_vertex_shader)
+		SDL_ReleaseGPUShader(g_aeron.gpu_device, s_xr_quad_vertex_shader);
+	if (s_xr_quad_fragment_shader)
+		SDL_ReleaseGPUShader(g_aeron.gpu_device, s_xr_quad_fragment_shader);
+	if (s_xr_composite_screen)
+		SDL_ReleaseGPUTexture(g_aeron.gpu_device, s_xr_composite_screen);
+	s_xr_quad_pipeline        = NULL;
+	s_xr_quad_vertex_shader   = NULL;
+	s_xr_quad_fragment_shader = NULL;
+	s_xr_composite_screen     = NULL;
+}
+
+/* The texture that stands for the screen's swapchain image, with its size
+ * and format. NULL when it can't be created. */
+static SDL_GPUTexture* Aeron_XrCompositeScreen(SDL_GPUTextureFormat* format, int* width, int* height) {
+	if (!AeronXr_ScreenImageInfo(format, width, height))
+		return NULL;
+	if (s_xr_composite_screen && (s_xr_composite_format != *format || s_xr_composite_width != *width ||
+								  s_xr_composite_height != *height)) {
+		SDL_ReleaseGPUTexture(g_aeron.gpu_device, s_xr_composite_screen);
+		s_xr_composite_screen = NULL;
+	}
+	if (!s_xr_composite_screen) {
+		SDL_GPUTextureCreateInfo info;
+		SDL_zero(info);
+		info.type                 = SDL_GPU_TEXTURETYPE_2D;
+		info.format               = *format;
+		info.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+		info.width                = (Uint32)*width;
+		info.height               = (Uint32)*height;
+		info.layer_count_or_depth = 1;
+		info.num_levels           = 1;
+		s_xr_composite_screen     = SDL_CreateGPUTexture(g_aeron.gpu_device, &info);
+		if (!s_xr_composite_screen) {
+			Aeron_SetRenderError("SDL_CreateGPUTexture failed for the headset's screen picture: %s",
+								 SDL_GetError());
+			return NULL;
+		}
+		SDL_SetGPUTextureName(g_aeron.gpu_device, s_xr_composite_screen, "xr screen for the eye images");
+		s_xr_composite_format = *format;
+		s_xr_composite_width  = *width;
+		s_xr_composite_height = *height;
+	}
+	return s_xr_composite_screen;
+}
+
+static SDL_GPUGraphicsPipeline* Aeron_XrQuadPipeline(SDL_GPUTextureFormat format) {
+	if (s_xr_quad_pipeline && s_xr_quad_format == format)
+		return s_xr_quad_pipeline;
+	if (s_xr_quad_pipeline) {
+		SDL_ReleaseGPUGraphicsPipeline(g_aeron.gpu_device, s_xr_quad_pipeline);
+		s_xr_quad_pipeline = NULL;
+	}
+	const AeronShaderFormatInfo* format_info = Aeron_SelectShaderFormat();
+	if (!s_xr_quad_vertex_shader)
+		s_xr_quad_vertex_shader =
+			Aeron_LoadShader("xr_quad.vert", SDL_GPU_SHADERSTAGE_VERTEX, format_info, 0, 1, 0);
+	if (!s_xr_quad_fragment_shader)
+		s_xr_quad_fragment_shader =
+			Aeron_LoadShader("xr_quad.frag", SDL_GPU_SHADERSTAGE_FRAGMENT, format_info, 1, 0, 0);
+	if (!s_xr_quad_vertex_shader || !s_xr_quad_fragment_shader)
+		return NULL;
+
+	SDL_GPUColorTargetDescription     color_target;
+	SDL_GPUGraphicsPipelineCreateInfo pipeline_info;
+	SDL_zero(color_target);
+	color_target.format = format;
+	/* "Under": what is already in the image stays in front. Both colours
+	 * are premultiplied by alpha. */
+	color_target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_DST_ALPHA;
+	color_target.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+	color_target.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+	color_target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_DST_ALPHA;
+	color_target.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+	color_target.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+	color_target.blend_state.enable_blend          = true;
+	SDL_zero(pipeline_info);
+	pipeline_info.vertex_shader                         = s_xr_quad_vertex_shader;
+	pipeline_info.fragment_shader                       = s_xr_quad_fragment_shader;
+	pipeline_info.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLESTRIP;
+	pipeline_info.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+	pipeline_info.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+	pipeline_info.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+	pipeline_info.rasterizer_state.enable_depth_clip    = true;
+	pipeline_info.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+	pipeline_info.target_info.color_target_descriptions = &color_target;
+	pipeline_info.target_info.num_color_targets         = 1;
+	s_xr_quad_pipeline = SDL_CreateGPUGraphicsPipeline(g_aeron.gpu_device, &pipeline_info);
+	if (!s_xr_quad_pipeline) {
+		Aeron_SetRenderError("SDL_CreateGPUGraphicsPipeline failed for the eye image rectangles: %s",
+							 SDL_GetError());
+		return NULL;
+	}
+	s_xr_quad_format = format;
+	return s_xr_quad_pipeline;
+}
+
+/* A point of the rig's space in an eye's clip space. */
+static void Aeron_XrClipPoint(const AeronXrCompositeView* view, const float point[3], float out[4]) {
+	const float d[3] = { point[0] - view->position[0], point[1] - view->position[1],
+						 point[2] - view->position[2] };
+	/* Into the eye's space: the inverse of its rotation. */
+	const float q[4] = { -view->orientation[0], -view->orientation[1], -view->orientation[2],
+						 view->orientation[3] };
+	const float tx   = q[1] * d[2] - q[2] * d[1] + q[3] * d[0];
+	const float ty   = q[2] * d[0] - q[0] * d[2] + q[3] * d[1];
+	const float tz   = q[0] * d[1] - q[1] * d[0] + q[3] * d[2];
+	const float ex   = d[0] + 2.0f * (q[1] * tz - q[2] * ty);
+	const float ey   = d[1] + 2.0f * (q[2] * tx - q[0] * tz);
+	const float ez   = d[2] + 2.0f * (q[0] * ty - q[1] * tx);
+	/* The eye looks along -Z. */
+	const float w = -ez;
+	out[0]        = (2.0f * ex - (view->tan_right + view->tan_left) * w) / (view->tan_right - view->tan_left);
+	out[1]        = (2.0f * ey - (view->tan_up + view->tan_down) * w) / (view->tan_up - view->tan_down);
+	out[2]        = 0.5f * w;
+	out[3]        = w;
+}
+
+/* Draws the panel, then the screen, into both eye images, under what they
+ * hold. `screen` is the screen's picture, or NULL when it isn't shown. */
+static int Aeron_XrCompositeUnder(SDL_GPUCommandBuffer* command_buffer, SDL_GPUTexture* screen) {
+	for (int eye = 0; eye < 2; eye++) {
+		AeronXrCompositeView view;
+		if (!AeronXr_CompositeView(eye, &view))
+			return 0;
+		SDL_GPUGraphicsPipeline* pipeline = Aeron_XrQuadPipeline(view.format);
+		if (!pipeline)
+			return 0;
+		SDL_GPUColorTargetInfo color_target;
+		SDL_zero(color_target);
+		color_target.texture  = view.texture;
+		color_target.load_op  = SDL_GPU_LOADOP_LOAD;
+		color_target.store_op = SDL_GPU_STOREOP_STORE;
+		AeronGpuDebug_Push(command_buffer, "Screen and panel in an eye image");
+		SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(command_buffer, &color_target, 1, NULL);
+		if (!pass) {
+			Aeron_SetRenderError("SDL_BeginGPURenderPass failed for an eye image: %s", SDL_GetError());
+			AeronGpuDebug_Pop(command_buffer);
+			return 0;
+		}
+		SDL_BindGPUGraphicsPipeline(pass, pipeline);
+		/* The nearest surface first: the panel is in front of the screen. */
+		for (int which = 0; which < 2; which++) {
+			float           center[3], right[3], up[3], corners[4][4];
+			SDL_GPUTexture* texture = NULL;
+			if (!AeronXr_CompositeSurface(which, center, right, up, &texture))
+				continue;
+			if (which == 1)
+				texture = screen;
+			if (!texture)
+				continue;
+			/* Top left, top right, bottom left, bottom right. */
+			for (int corner = 0; corner < 4; corner++) {
+				const float sx       = (corner & 1) ? 1.0f : -1.0f;
+				const float sy       = (corner & 2) ? -1.0f : 1.0f;
+				const float point[3] = { center[0] + sx * right[0] + sy * up[0],
+										 center[1] + sx * right[1] + sy * up[1],
+										 center[2] + sx * right[2] + sy * up[2] };
+				Aeron_XrClipPoint(&view, point, corners[corner]);
+			}
+			SDL_GPUTextureSamplerBinding binding;
+			binding.texture = texture;
+			binding.sampler = g_aeron.pixel_frame_sampler;
+			SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+			SDL_PushGPUVertexUniformData(command_buffer, 0, corners, sizeof corners);
+			SDL_DrawGPUPrimitives(pass, 4, 1, 0, 0);
+		}
+		SDL_EndGPURenderPass(pass);
+		AeronGpuDebug_Pop(command_buffer);
+	}
+	return 1;
+}
+
 /* Draws the pointer on the headset's image of the virtual screen. The
  * window shows the system's pointer, which the headset doesn't show. */
 static void Aeron_DrawXrPointer(AeronComposePass* pass) {
@@ -2340,10 +2536,17 @@ static int Aeron_PresentFrame(void) {
 	}
 
 	/* The headset's copy of the virtual screen, with the pointer. */
+	const int       xr_composite        = xr_running && AeronXr_CompositeWanted();
+	SDL_GPUTexture* xr_composite_screen = NULL;
 	if (present_ok && draw_headset_screen) {
 		SDL_zero(target);
-		target.texture = AeronXr_AcquireScreenImage(&target.format, &target.width, &target.height);
+		/* With the screen drawn into the eye images, its picture goes into a
+		 * texture of Aeron's and not into the screen's own layer. */
+		target.texture = xr_composite
+							 ? Aeron_XrCompositeScreen(&target.format, &target.width, &target.height)
+							 : AeronXr_AcquireScreenImage(&target.format, &target.width, &target.height);
 		if (target.texture) {
+			xr_composite_screen     = xr_composite ? target.texture : NULL;
 			image_acquired          = 1;
 			target.content_rect     = (SDL_Rect) { 0, 0, target.width, target.height };
 			target.output_rgb_scale = 1.0f;
@@ -2358,6 +2561,13 @@ static int Aeron_PresentFrame(void) {
 				Aeron_EndComposePass(&pass);
 			}
 		}
+	}
+
+	if (present_ok && xr_composite) {
+		if (Aeron_XrCompositeUnder(command_buffer, xr_composite_screen))
+			AeronXr_SetComposited();
+	} else if (present_ok && xr_running) {
+		AeronXr_PresentPanel(command_buffer);
 	}
 
 	if (present_ok && draw_window) {

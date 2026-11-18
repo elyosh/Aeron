@@ -381,7 +381,27 @@ static int Aeron_OpenControllerInSlot(int slot, SDL_JoystickID instance_id) {
 	return 1;
 }
 
+/* Whether this device is a VR controller that the system also lists as a
+ * plain joystick. The PSVR2 Sense controllers are Bluetooth devices, so
+ * Windows shows each of them as a joystick with 6 axes and 20 buttons. In a
+ * VR session the hands already stand for them, and the joystick only adds a
+ * second entry to the list of controllers that the player can't use. */
+static int Aeron_ControllerIsVrHandDevice(SDL_JoystickID instance_id) {
+	const Uint16 vendor  = SDL_GetJoystickVendorForID(instance_id);
+	const Uint16 product = SDL_GetJoystickProductForID(instance_id);
+	const char*  name    = SDL_GetJoystickNameForID(instance_id);
+	if (vendor == 0x054C && (product == 0x0E45 || product == 0x0E46))
+		return 1;
+	return name && SDL_strstr(name, "VR2 Sense") != NULL;
+}
+
 static void Aeron_OpenController(SDL_JoystickID instance_id) {
+	if (Aeron_XrEnabled() && Aeron_ControllerIsVrHandDevice(instance_id)) {
+		const char* name = SDL_GetJoystickNameForID(instance_id);
+		Aeron_LogInfo("aeron.input", "'%s' is not listed as a joystick: it is a VR controller",
+					  name ? name : "?");
+		return;
+	}
 	int slot;
 
 	if (Aeron_FindControllerSlot(instance_id) >= 0) {

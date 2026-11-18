@@ -140,8 +140,9 @@ typedef struct AeronXrControllerModelState {
 	AeronViewPose pose;
 	/* For each moving node, in the order of the model's node_names: its pose
 	 * in the space of its parent node, in place of the pose that the file
-	 * gives it, and whether it is shown. A node that isn't shown hides its
-	 * descendants. node_count is 0 when the runtime gave no states: the
+	 * gives it, and whether it is shown: 0 when it isn't, and otherwise the
+	 * runtime's own value, which isn't always 1. A node that isn't shown
+	 * hides its descendants. node_count is 0 when the runtime gave no states: the
 	 * model is then at rest. */
 	int           node_count;
 	AeronViewPose nodes[AERON_XR_MODEL_NODE_MAX];

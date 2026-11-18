@@ -19,7 +19,9 @@
  * Limits: the file must be a GLB with one buffer and embedded PNG or JPEG
  * images, no required glTF extension, and no node with a mesh under a scale
  * that isn't uniform and positive. Skins, animations, morph targets and
- * material extensions are dropped.
+ * material extensions are dropped. A material that gives no metallic value
+ * and no metallic texture is taken as not metal, against the glTF default:
+ * files converted from formats without such a value leave it out.
  */
 
 #include <stdbool.h>

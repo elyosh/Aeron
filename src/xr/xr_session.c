@@ -163,6 +163,17 @@ static void xr_log_runtime(void) {
 				  (unsigned)XR_VERSION_MAJOR(instance.runtimeVersion),
 				  (unsigned)XR_VERSION_MINOR(instance.runtimeVersion),
 				  (unsigned)XR_VERSION_PATCH(instance.runtimeVersion), system.systemName);
+	/* SteamVR draws flat layers over the eye images whatever the order of
+	 * the layers. AERON_XR_COMPOSITE_SCREEN=1 or 0 in the environment forces
+	 * the way around it on or off, to test it. */
+	const char* composite_override = SDL_getenv("AERON_XR_COMPOSITE_SCREEN");
+	g_xr.composite                 = composite_override && composite_override[0]
+										 ? composite_override[0] != '0'
+										 : SDL_strncasecmp(instance.runtimeName, "SteamVR", 7) == 0;
+	if (g_xr.composite)
+		Aeron_LogInfo("aeron.xr",
+					  "the virtual screen is drawn into the eye images while a hand is shown: this "
+					  "runtime draws flat layers over the eye images");
 	Aeron_LogInfo("aeron.xr", "eye images %dx%d (at most %dx%d), %s, visibility mask %s", g_xr.view_width,
 				  g_xr.view_height, g_xr.view_max_width, g_xr.view_max_height,
 				  g_xr.color_format == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB ? "RGBA8 sRGB"
@@ -291,6 +302,7 @@ void AeronXr_PollEvents(void) {
 			g_xr.views_submitted = 0;
 			g_xr.views_over      = 0;
 			g_xr.panel_begun     = 0;
+			g_xr.composited      = 0;
 			g_xr.screen_visible  = 0;
 			AeronXr_ReleaseImages();
 		} else {
@@ -395,6 +407,35 @@ int Aeron_XrBeginViews(AeronXrFrame* out) {
 void Aeron_XrSubmitViews(void) {}
 
 void Aeron_XrSubmitViewsOver(void) {}
+
+int AeronXr_CompositeWanted(void) { return 0; }
+
+int AeronXr_ScreenImageInfo(SDL_GPUTextureFormat* format, int* width, int* height) {
+	(void)format;
+	(void)width;
+	(void)height;
+	return 0;
+}
+
+int AeronXr_CompositeView(int eye, AeronXrCompositeView* out) {
+	(void)eye;
+	(void)out;
+	return 0;
+}
+
+int AeronXr_CompositeSurface(int which, float center[3], float right[3], float up[3],
+							 SDL_GPUTexture** texture) {
+	(void)which;
+	(void)center;
+	(void)right;
+	(void)up;
+	(void)texture;
+	return 0;
+}
+
+void AeronXr_SetComposited(void) {}
+
+void AeronXr_PresentPanel(SDL_GPUCommandBuffer* command_buffer) { (void)command_buffer; }
 
 int Aeron_XrControllerModel(int hand, AeronXrControllerModel* out) {
 	(void)hand;

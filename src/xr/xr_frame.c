@@ -159,6 +159,46 @@ int Aeron_XrScreenQuad(AeronViewPose* pose, float* width_m, float* height_m) {
 	return 1;
 }
 
+/* Rotates `v` by the pose's orientation. */
+static void xr_rotate(const float q[4], const float v[3], float out[3]) {
+	const float tx = q[1] * v[2] - q[2] * v[1] + q[3] * v[0];
+	const float ty = q[2] * v[0] - q[0] * v[2] + q[3] * v[1];
+	const float tz = q[0] * v[1] - q[1] * v[0] + q[3] * v[2];
+	out[0]         = v[0] + 2.0f * (q[1] * tz - q[2] * ty);
+	out[1]         = v[1] + 2.0f * (q[2] * tx - q[0] * tz);
+	out[2]         = v[2] + 2.0f * (q[0] * ty - q[1] * tx);
+}
+
+int AeronXr_CompositeSurface(int which, float center[3], float right[3], float up[3],
+							 SDL_GPUTexture** texture) {
+	if (which == 0) {
+		const AeronXrPanelDesc* desc = &g_xr.panel_desc;
+		if (!g_xr.panel_begun || !g_xr.panel_texture || desc->width_px <= 0)
+			return 0;
+		const float half_width  = 0.5f * desc->width_m;
+		const float half_height = half_width * (float)desc->height_px / (float)desc->width_px;
+		const float x[3] = { half_width, 0.0f, 0.0f }, y[3] = { 0.0f, half_height, 0.0f };
+		xr_rotate(desc->pose.orientation, x, right);
+		xr_rotate(desc->pose.orientation, y, up);
+		SDL_memcpy(center, desc->pose.position_m, 3 * sizeof(float));
+		*texture = g_xr.panel_texture;
+		return 1;
+	}
+	if (!g_xr.screen_visible || g_xr.screen.width <= 0)
+		return 0;
+	float distance, width, height;
+	xr_screen_rect(&distance, &width, &height);
+	center[0] = 0.0f;
+	center[1] = 0.0f;
+	center[2] = -distance;
+	right[0]  = 0.5f * width;
+	right[1] = right[2] = 0.0f;
+	up[1]               = 0.5f * height;
+	up[0] = up[2] = 0.0f;
+	*texture      = NULL;
+	return 1;
+}
+
 int AeronXr_EndFrame(void) {
 	if (!g_xr.frame_open || g_xr.failed)
 		return 1;
@@ -169,13 +209,17 @@ int AeronXr_EndFrame(void) {
 	const int show_views  = g_xr.views_submitted;
 	const int show_screen = g_xr.screen_visible && g_xr.screen.tracker.released_once;
 	const int views_over  = g_xr.views_over;
-	const int show_panel  = g_xr.panel_begun && g_xr.panel.tracker.released_once;
+	const int screen_drawn = g_xr.screen_visible;
+	/* The eye images already hold the screen and the panel. */
+	const int composited  = g_xr.composited;
+	const int show_panel  = g_xr.panel_begun && g_xr.panel.tracker.released_once && !composited;
 	g_xr.panel_begun      = 0;
+	g_xr.composited       = 0;
 	g_xr.views_begun      = 0;
 	g_xr.views_submitted  = 0;
 	g_xr.views_over       = 0;
 	g_xr.screen_visible   = 0;
-	g_xr.screen_shown     = g_xr.frame_should_render && show_screen;
+	g_xr.screen_shown     = g_xr.frame_should_render && (show_screen || (composited && screen_drawn));
 	if (g_xr.failed)
 		return 0;
 
@@ -191,7 +235,7 @@ int AeronXr_EndFrame(void) {
 		xr_fill_projection(&projection, projection_views, 0);
 		layers[layer_count++] = (const XrCompositionLayerBaseHeader*)&projection;
 	}
-	if (g_xr.frame_should_render && show_screen) {
+	if (g_xr.frame_should_render && show_screen && !composited) {
 		xr_fill_screen(&screen);
 		layers[layer_count++] = (const XrCompositionLayerBaseHeader*)&screen;
 	}
@@ -200,7 +244,8 @@ int AeronXr_EndFrame(void) {
 		layers[layer_count++] = (const XrCompositionLayerBaseHeader*)&panel;
 	}
 	if (g_xr.frame_should_render && show_views && views_over) {
-		xr_fill_projection(&projection, projection_views, 1);
+		/* Eye images that hold the screen too are the whole picture. */
+		xr_fill_projection(&projection, projection_views, !composited);
 		layers[layer_count++] = (const XrCompositionLayerBaseHeader*)&projection;
 	}
 

@@ -361,6 +361,22 @@ bool Aeron_FlightModelBuildPlainGlb(const uint8_t* glb, size_t size, const char*
 	cJSON_ArrayForEach(material, cJSON_GetObjectItemCaseSensitive(root, "materials")) {
 		strip_extensions(material);
 		cJSON_DeleteItemFromObjectCaseSensitive(material, "occlusionTexture");
+		/* glTF says a material without a metallic value is fully metallic.
+		 * A file converted from a format that has no such value, as
+		 * SteamVR's controller models are, leaves it out without meaning
+		 * it, and a metal with nothing to reflect is black. So without a
+		 * metallic and roughness texture, a missing value means a material
+		 * that isn't metal, and a missing roughness means a fairly rough
+		 * one. */
+		cJSON* pbr = cJSON_GetObjectItemCaseSensitive(material, "pbrMetallicRoughness");
+		if (!pbr)
+			pbr = cJSON_AddObjectToObject(material, "pbrMetallicRoughness");
+		if (pbr && !cJSON_GetObjectItemCaseSensitive(pbr, "metallicRoughnessTexture")) {
+			if (!cJSON_GetObjectItemCaseSensitive(pbr, "metallicFactor"))
+				cJSON_AddNumberToObject(pbr, "metallicFactor", 0.0);
+			if (!cJSON_GetObjectItemCaseSensitive(pbr, "roughnessFactor"))
+				cJSON_AddNumberToObject(pbr, "roughnessFactor", 0.6);
+		}
 	}
 	cJSON* mesh;
 	cJSON_ArrayForEach(mesh, cJSON_GetObjectItemCaseSensitive(root, "meshes")) {
