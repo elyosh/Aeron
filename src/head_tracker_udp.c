@@ -1,7 +1,7 @@
 /* Receives OpenTrack's "UDP over network" output. A datagram is 48 bytes:
  * six doubles in the sender's byte order, with no header. They are X, Y and
- * Z in centimetres, then yaw, pitch and roll in degrees. This file uses no
- * SDL, so tests/head_tracker_test.c can build it alone. */
+ * Z in centimetres, then yaw, pitch and roll in degrees. This file doesn't
+ * use SDL, so tests/head_tracker_test.c can build it on its own. */
 
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200112L
@@ -30,7 +30,7 @@ typedef int HeadSocket;
 #define HEAD_SOCKET_INVALID (-1)
 #endif
 
-/* The most datagrams read in one call, so that a flood can't hold a frame.
+/* The most datagrams read in one call, so that a flood can't hold up a frame.
  * OpenTrack sends a few hundred per second at most. */
 #define HEAD_UDP_MAX_READS 64
 
@@ -133,8 +133,8 @@ int AeronHeadUdp_Read(AeronHeadUdp* udp, double values[6]) {
 	if (!udp->open)
 		return 0;
 	for (int i = 0; i < HEAD_UDP_MAX_READS; ++i) {
-		/* One byte more than a pose, so that a longer datagram doesn't
-		 * read as one. */
+		/* One byte more than a pose, so that a longer datagram isn't read
+		 * as one. */
 		char buffer[AERON_HEAD_UDP_DATAGRAM_SIZE + 1];
 #ifdef _WIN32
 		const int size = recv((HeadSocket)udp->socket, buffer, (int)sizeof buffer, 0);

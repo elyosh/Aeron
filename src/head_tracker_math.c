@@ -1,14 +1,14 @@
 /* Converts what a head tracker sends to a pose in the space of a view rig:
- * X right, Y up, -Z forward, in metres. This file uses no SDL, so
- * tests/head_tracker_test.c can build it alone. */
+ * X right, Y up, -Z forward, in metres. This file doesn't use SDL, so
+ * tests/head_tracker_test.c can build it on its own. */
 
 #include "head_tracker_internal.h"
 
 #define HEAD_PI 3.14159265358979323846f
 #define HEAD_RADIANS_PER_DEGREE (HEAD_PI / 180.0f)
 
-/* The largest pose that is taken as it comes. Past it the values are
- * clamped, as a guard against bad data: no head turns or moves this far. */
+/* The largest pose that is accepted unchanged. Larger values are clamped.
+ * This guards against bad data: no head turns or moves this far. */
 #define HEAD_MAX_YAW_DEG 180.0f
 #define HEAD_MAX_PITCH_DEG 90.0f
 #define HEAD_MAX_ROLL_DEG 90.0f
@@ -76,8 +76,8 @@ void AeronHeadTracker_FromTrackIR(const float values[6], AeronViewPose* out) {
 		.back_m    = values[5] * move,
 	};
 	head_clamp_angles(&head);
-	/* TrackIR's angles are applied roll first, then yaw, then pitch, each
-	 * around the axes that the earlier turns gave. */
+	/* TrackIR's angles are applied roll first, then yaw, then pitch. Each
+	 * turn is around the head's own axes, as the earlier turns left them. */
 	float roll[4], yaw[4], pitch[4], roll_yaw[4];
 	AeronViewPose_FromAngles(0.0f, 0.0f, head.roll_deg * HEAD_RADIANS_PER_DEGREE, roll);
 	AeronViewPose_FromAngles(head.yaw_deg * HEAD_RADIANS_PER_DEGREE, 0.0f, 0.0f, yaw);

@@ -1,8 +1,8 @@
 /* Reads the head's pose through the TrackIR interface: NPClient64.dll, which
  * the TrackIR software installs. OpenTrack's "freetrack 2.0 Enhanced" output
  * installs a DLL with the same name and functions, so it is read here too.
- * The registry says where the DLL is. Nothing of either product is linked or
- * shipped. */
+ * The registry says where the DLL is. Neither product is linked or shipped
+ * with Aeron. */
 
 #include "head_tracker_internal.h"
 
@@ -17,9 +17,9 @@
 #include <windows.h>
 
 /* The ID that the program gives the tracker's software, which lists the
- * games it knows. Aeron has no ID of its own. This is the one that FreePIE
- * uses, and other free programs after it. OpenTrack lists it as a game
- * whose data isn't encrypted. */
+ * games it knows. Aeron has no ID of its own. FreePIE and other free
+ * programs use this one. OpenTrack lists it as a game whose data isn't
+ * encrypted. */
 #define TRACKIR_PROGRAM_ID 13302
 /* What NP_RequestData asks for: roll 1, pitch 2, yaw 4, X 16, Y 32, Z 64. */
 #define TRACKIR_DATA_FIELDS 0x77
@@ -54,7 +54,7 @@ static struct {
 	TrackIRCall           start_data;
 	TrackIRCall           stop_data;
 	TrackIRGetData        get_data;
-	/* The DLL may lack these two. */
+	/* The DLL may not have these two. */
 	TrackIRCall stop_cursor;
 	TrackIRCall start_cursor;
 	int         registered;
@@ -62,7 +62,7 @@ static struct {
 	uint64_t    next_attempt_us;
 	int         has_signature;
 	uint16_t    signature;
-	/* The reason of the last failed connection, so that it is logged once
+	/* The reason for the last failed connection, so that it is logged once
 	 * and not at every retry. */
 	const char* logged_problem;
 } g_trackir;
@@ -118,7 +118,7 @@ static const char* trackir_load(void) {
  * reason when a call fails. */
 static const char* trackir_register(HWND window) {
 	if (g_trackir.register_window(window) != 0)
-		return "the tracker's software refused the window: it may not run";
+		return "the tracker's software refused the window: it may not be running";
 	if (g_trackir.register_program(TRACKIR_PROGRAM_ID) != 0) {
 		g_trackir.unregister_window();
 		return "the tracker's software refused the program ID";
@@ -127,8 +127,8 @@ static const char* trackir_register(HWND window) {
 		g_trackir.unregister_window();
 		return "the tracker's software refused the data request";
 	}
-	/* The tracker's software can move the mouse with the head. It must
-	 * not while the application uses the head itself. */
+	/* The tracker's software can move the mouse with the head. It must not
+	 * do that while the application uses the head pose. */
 	if (g_trackir.stop_cursor)
 		g_trackir.stop_cursor();
 	if (g_trackir.start_data() != 0) {
@@ -149,7 +149,7 @@ static int trackir_connect(HWND window, uint64_t now_us) {
 	if (!problem)
 		problem = trackir_register(window);
 	if (problem) {
-		/* Each reason is a string literal, so the pointers compare. */
+		/* Each reason is a string literal, so the pointers can be compared. */
 		if (problem != g_trackir.logged_problem)
 			Aeron_LogInfo("aeron.head", "TrackIR: %s", problem);
 		g_trackir.logged_problem = problem;

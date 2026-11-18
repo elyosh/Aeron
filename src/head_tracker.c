@@ -109,8 +109,8 @@ void AeronHeadTracker_Update(void) {
 	const uint64_t now_us = Aeron_NowUs();
 	if (Aeron_XrSessionRunning()) {
 		/* A headset has its own head pose. The datagrams that arrive
-		 * meanwhile are read and dropped, so that they aren't taken for
-		 * new ones when the session ends. */
+		 * during the session are read and dropped, so that they aren't
+		 * mistaken for new ones when it ends. */
 		double dropped[6];
 		AeronHeadUdp_Read(&g_head.udp, dropped);
 		g_head.has_pose = 0;
@@ -125,7 +125,7 @@ void AeronHeadTracker_Update(void) {
 	const int tracking = g_head.has_pose && now_us - g_head.pose_time_us < HEAD_TIMEOUT_US;
 	if (tracking != (g_head.status == AERON_HEAD_TRACKER_TRACKING)) {
 		Aeron_LogInfo("aeron.head", "%s",
-					  tracking ? "the tracker sends the head's pose" : "the tracker stopped sending");
+					  tracking ? "the tracker started sending" : "the tracker stopped sending");
 	}
 	g_head.status = tracking ? AERON_HEAD_TRACKER_TRACKING : AERON_HEAD_TRACKER_WAITING;
 }

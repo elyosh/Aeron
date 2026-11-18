@@ -17,8 +17,8 @@ extern "C" {
 typedef enum AeronHeadTrackerKind {
 	AERON_HEAD_TRACKER_NONE,
 	/* The TrackIR interface: the NPClient64.dll that the TrackIR software
-	 * installs, or the one of OpenTrack's "freetrack 2.0 Enhanced" output.
-	 * Windows only. */
+	 * installs, or the one that OpenTrack's "freetrack 2.0 Enhanced" output
+	 * installs. Windows only. */
 	AERON_HEAD_TRACKER_TRACKIR,
 	/* OpenTrack's "UDP over network" output, and the phone apps that send
 	 * the same datagrams. */
@@ -27,8 +27,8 @@ typedef enum AeronHeadTrackerKind {
 
 typedef enum AeronHeadTrackerStatus {
 	AERON_HEAD_TRACKER_OFF,
-	/* The tracker is chosen and gives no head pose: its software doesn't run
-	 * yet, or it stopped sending. */
+	/* The tracker is chosen and gives no head pose: its software isn't
+	 * running yet, or it has stopped sending. */
 	AERON_HEAD_TRACKER_WAITING,
 	AERON_HEAD_TRACKER_TRACKING,
 	/* The tracker can't be read. Aeron_HeadTrackerError gives the reason. */
@@ -39,15 +39,15 @@ typedef enum AeronHeadTrackerStatus {
 int Aeron_HeadTrackerAvailable(AeronHeadTrackerKind kind);
 /* Chooses the tracker, and stops reading the one chosen before. It can be
  * called at any time. `udp_port` is the port that OpenTrack sends to; the
- * other kinds don't use it. A kind that isn't available is read as none. */
+ * other kinds don't use it. A kind that isn't available is treated as none. */
 void                   Aeron_SetHeadTracker(AeronHeadTrackerKind kind, int udp_port);
 AeronHeadTrackerStatus Aeron_HeadTrackerStatus(void);
 /* Why the tracker can't be read, as a sentence to show the user. NULL when
  * the status isn't AERON_HEAD_TRACKER_FAILED. */
 const char* Aeron_HeadTrackerError(void);
 /* Gives the head's pose as of this frame, in the space of a view rig: X
- * right, Y up, -Z forward, in metres, from the centre. Returns 0 when the
- * status isn't AERON_HEAD_TRACKER_TRACKING. */
+ * right, Y up, -Z forward, in metres, relative to the centre. Returns 0 when
+ * the status isn't AERON_HEAD_TRACKER_TRACKING. */
 int Aeron_HeadTrackerPose(AeronViewPose* out);
 /* Makes the current pose the centre. It does nothing while the tracker gives
  * no pose. */

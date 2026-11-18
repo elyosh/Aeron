@@ -6,9 +6,9 @@
 
 #include "aeron/scene/view_rig.h"
 
-/* The parts of the head tracker (aeron/head_tracker.h). They use no SDL and
- * nothing of Aeron's state, so tests/head_tracker_test.c can build the math
- * and the UDP reader alone. */
+/* The parts of the head tracker (aeron/head_tracker.h). They don't use SDL
+ * or Aeron's state, so tests/head_tracker_test.c can build the math and the
+ * UDP reader on their own. */
 
 /* --- The math (head_tracker_math.c) --- */
 

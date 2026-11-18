@@ -97,8 +97,9 @@ void AeronViewPose_Rotation(const AeronViewPose* pose, float out[9]);
 
 /* Builds the orientation of a head or a hand from its yaw, pitch and roll, in
  * radians: a positive yaw turns right, a positive pitch turns up, and a
- * positive roll turns clockwise as seen from behind. The turns are applied
- * in that order, each around the axes that the earlier turns gave. */
+ * positive roll turns clockwise as seen from behind. The yaw is applied
+ * first, then the pitch, then the roll. Each turn is around the head's own
+ * axes, as the earlier turns left them. */
 void AeronViewPose_FromAngles(float yaw_rad, float pitch_rad, float roll_rad, float out_orientation[4]);
 
 /* Computes the camera of a view from the camera at the rig's origin, called
