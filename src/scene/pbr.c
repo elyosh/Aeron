@@ -537,6 +537,111 @@ static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind
 	return pbr_anim_pipeline_ibl(s, kind, cull, details, s->pbr_environment_set);
 }
 
+/* The `_list` shaders are versions of the colour shaders for instances that
+ * have a light list (light_list.h). They are separate shaders because
+ * adding the list code to the normal shaders made those slower, even for
+ * instances without a list.
+ *
+ * Each family below has its own `_list` shaders: plain, with image-based
+ * lighting, with animation, with detail layers, and the probe variants at
+ * each animation level. */
+enum {
+	PBR_LIST_PLAIN,
+	PBR_LIST_IBL,
+	PBR_LIST_ANIM,
+	PBR_LIST_IBL_ANIM,
+	PBR_LIST_DETAILS,
+	PBR_LIST_IBL_DETAILS,
+	PBR_LIST_PROBES,
+	PBR_LIST_PROBES_ANIM,
+	PBR_LIST_PROBES_DETAILS,
+};
+
+/* Returns the `_list` family that matches the pipeline pbr_bind_draw would
+ * use. `anim` is the instance's animation level. `probe` is nonzero when
+ * the instance draws with a probe variant. */
+static int pbr_list_family(const struct AeronScene3D* s, int anim, int probe) {
+	if (probe) {
+		return PBR_LIST_PROBES + anim;
+	}
+	const int ibl = s->pbr_environment_set != 0;
+	if (anim && s->effect_atlas) {
+		return (anim == 2 ? PBR_LIST_DETAILS : PBR_LIST_ANIM) + ibl;
+	}
+	return ibl ? PBR_LIST_IBL : PBR_LIST_PLAIN;
+}
+
+/* Returns the `_list` pipeline for a colour kind in a family. Returns NULL
+ * when there is none: the probe variants have no screen shaders, and
+ * shaders can fail to load. The caller then draws the instance with its
+ * normal pipeline and the clusters. Each family's shaders are loaded on
+ * first use. */
+static AeronGraphicsPipeline* pbr_list_pipeline(struct AeronScene3D* s, int family, int kind,
+												AeronCullMode cull) {
+	static const char* const names[AERON_PBR_LIST_FAMILY_COUNT][5] = {
+		{ "scene_pbr_mesh_list.frag", "scene_pbr_mesh_mask_list.frag", "scene_pbr_mesh_blend_list.frag",
+		  "scene_pbr_mesh_screen_list.frag", "scene_pbr_mesh_mask_screen_list.frag" },
+		{ "scene_pbr_mesh_ibl_list.frag", "scene_pbr_mesh_mask_ibl_list.frag",
+		  "scene_pbr_mesh_blend_ibl_list.frag", "scene_pbr_mesh_screen_ibl_list.frag",
+		  "scene_pbr_mesh_mask_screen_ibl_list.frag" },
+		{ "scene_pbr_mesh_anim_list.frag", "scene_pbr_mesh_mask_anim_list.frag",
+		  "scene_pbr_mesh_blend_anim_list.frag", "scene_pbr_mesh_screen_anim_list.frag",
+		  "scene_pbr_mesh_mask_screen_anim_list.frag" },
+		{ "scene_pbr_mesh_ibl_anim_list.frag", "scene_pbr_mesh_mask_ibl_anim_list.frag",
+		  "scene_pbr_mesh_blend_ibl_anim_list.frag", "scene_pbr_mesh_screen_ibl_anim_list.frag",
+		  "scene_pbr_mesh_mask_screen_ibl_anim_list.frag" },
+		{ "scene_pbr_mesh_details_list.frag", "scene_pbr_mesh_mask_details_list.frag",
+		  "scene_pbr_mesh_blend_details_list.frag", "scene_pbr_mesh_screen_details_list.frag",
+		  "scene_pbr_mesh_mask_screen_details_list.frag" },
+		{ "scene_pbr_mesh_ibl_details_list.frag", "scene_pbr_mesh_mask_ibl_details_list.frag",
+		  "scene_pbr_mesh_blend_ibl_details_list.frag", "scene_pbr_mesh_screen_ibl_details_list.frag",
+		  "scene_pbr_mesh_mask_screen_ibl_details_list.frag" },
+		{ "scene_pbr_mesh_probes_list.frag", "scene_pbr_mesh_mask_probes_list.frag",
+		  "scene_pbr_mesh_blend_probes_list.frag", NULL, NULL },
+		{ "scene_pbr_mesh_probes_anim_list.frag", "scene_pbr_mesh_mask_probes_anim_list.frag",
+		  "scene_pbr_mesh_blend_probes_anim_list.frag", NULL, NULL },
+		{ "scene_pbr_mesh_probes_details_list.frag", "scene_pbr_mesh_mask_probes_details_list.frag",
+		  "scene_pbr_mesh_blend_probes_details_list.frag", NULL, NULL },
+	};
+	/* The samplers, uniform blocks and storage buffers that each family's
+	 * shaders declare. They are the same as for the normal shaders. */
+	static const uint8_t resources[AERON_PBR_LIST_FAMILY_COUNT][3] = {
+		{ 12, 3, 7 }, { 12, 3, 7 }, { 14, 4, 8 }, { 14, 4, 8 }, { 14, 4, 8 },
+		{ 14, 4, 8 }, { 14, 3, 7 }, { 16, 4, 8 }, { 16, 4, 8 },
+	};
+	if (family < 0 || family >= AERON_PBR_LIST_FAMILY_COUNT || !pbr_color_kind(kind)) {
+		return NULL;
+	}
+	const int variant = pbr_color_variant(kind);
+	if (!names[family][variant]) {
+		return NULL;
+	}
+	const int animated = family != PBR_LIST_PLAIN && family != PBR_LIST_IBL && family != PBR_LIST_PROBES;
+	if (!s->pbr_list_tried[family]) {
+		s->pbr_list_tried[family] = 1;
+		if (animated && !s->pbr_anim_vs)
+			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+		for (int v = 0; v < 5; ++v) {
+			if (names[family][v])
+				s->pbr_list_fs[family][v] =
+					pbr_shader(names[family][v], AERON_SHADER_STAGE_FRAGMENT, resources[family][0],
+							   resources[family][1], resources[family][2]);
+		}
+	}
+	AeronShader* vs     = animated ? s->pbr_anim_vs : s->pbr_vs;
+	AeronShader* shader = s->pbr_list_fs[family][variant];
+	if (!vs || !shader) {
+		return NULL;
+	}
+	AeronGraphicsPipeline** pipe = &s->pbr_list_pipes[family][kind][cull];
+	if (!*pipe) {
+		*pipe = pbr_pipeline_create(s, pbr_state_kind(kind), cull, vs, shader);
+		if (!*pipe && cull != AERON_CULL_NONE)
+			return pbr_list_pipeline(s, family, kind, AERON_CULL_NONE);
+	}
+	return *pipe;
+}
+
 /* The pipeline a colour kind draws with at animation level `anim` (0 to 2),
  * for image-based lighting or not, falling back as pbr_draw_pipeline does;
  * NULL when none can be created. */
@@ -574,6 +679,18 @@ int AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh
 						ok &= pbr_level_pipeline(s, kind, cull, level, ibl) != NULL;
 					if (screens[range])
 						ok &= pbr_level_pipeline(s, pbr_screen_kind(kind), cull, level, ibl) != NULL;
+					/* Create the `_list` pipelines too. Otherwise the first
+					 * frame where an instance gets a light list would have
+					 * to compile one. */
+					if (s->cluster_desc.light_lists) {
+						const int family = level == 2   ? PBR_LIST_DETAILS + ibl
+										   : level == 1 ? PBR_LIST_ANIM + ibl
+														: PBR_LIST_PLAIN + ibl;
+						if (plain[range])
+							(void)pbr_list_pipeline(s, family, kind, cull);
+						if (screens[range])
+							(void)pbr_list_pipeline(s, family, pbr_screen_kind(kind), cull);
+					}
 				}
 			}
 		}
@@ -1009,6 +1126,21 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 			s->pbr_probe_fs[anim][v] = NULL;
 		}
 	}
+	for (int family = 0; family < AERON_PBR_LIST_FAMILY_COUNT; ++family) {
+		for (int kind = 0; kind < AERON_PBR_PIPE_KIND_COUNT; kind++) {
+			for (int cull = 0; cull < 3; cull++) {
+				if (s->pbr_list_pipes[family][kind][cull])
+					Aeron_DestroyGraphicsPipeline(s->pbr_list_pipes[family][kind][cull]);
+				s->pbr_list_pipes[family][kind][cull] = NULL;
+			}
+		}
+		for (int v = 0; v < 5; ++v) {
+			if (s->pbr_list_fs[family][v])
+				Aeron_DestroyShader(s->pbr_list_fs[family][v]);
+			s->pbr_list_fs[family][v] = NULL;
+		}
+		s->pbr_list_tried[family] = 0;
+	}
 	for (int ibl = 0; ibl < 2; ++ibl) {
 		for (int kind = 0; kind < AERON_PBR_PIPE_KIND_COUNT; kind++) {
 			for (int cull = 0; cull < 3; cull++) {
@@ -1092,6 +1224,39 @@ const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void) {
 	return &t;
 }
 
+/* Puts the light list of the instance about to draw in the lighting block
+ * (light_list.h). Pass NULL for `prepared` to clear the list. The block is
+ * only sent again when the list changes, and most instances have no list.
+ * The floor's mirrored view never uses a list: the lists are built for the
+ * main camera, and its shaders have no point lights. */
+static void pbr_set_light_list(struct AeronScene3D* s, AeronRenderPass* pass,
+							   const AeronScenePreparedInstance* prepared) {
+	uint32_t list[4]    = { 0u, 0u, 0u, 0u };
+	uint32_t indices[4] = { 0u, 0u, 0u, 0u };
+	if (!s->cluster_ready) {
+		return;
+	}
+	if (prepared && prepared->light_list_set && !s->planar_reflection.drawing) {
+		list[0] = 1u;
+		list[3] = prepared->light_list_count;
+		for (uint32_t k = 0; k < prepared->light_list_count; ++k) {
+			indices[k] = prepared->light_list[k];
+			/* Lights are sorted by kind: spheres, then spot lights, then
+			 * tubes. */
+			list[1] += indices[k] < s->point_spot_start;
+			list[2] += indices[k] < s->point_tube_start;
+		}
+	}
+	AeronSceneLightingUniformGPU* bound = &s->lighting_bound;
+	if (memcmp(bound->light_list, list, sizeof list) == 0 &&
+		memcmp(bound->light_list_indices, indices, sizeof indices) == 0) {
+		return;
+	}
+	memcpy(bound->light_list, list, sizeof list);
+	memcpy(bound->light_list_indices, indices, sizeof indices);
+	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, bound, sizeof *bound);
+}
+
 /* Per-instance uniform pushes shared by the opaque walk and blend sweep. */
 static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* pass,
 									   const AeronSceneMeshInstance* in, const AeronSceneMesh* m,
@@ -1130,6 +1295,9 @@ static void pbr_push_instance_uniforms(struct AeronScene3D* s, AeronRenderPass* 
 	vsb.hidden_tag_groups     = in->hidden_tag_groups;
 	vsb.dark_tag_groups       = in->dark_tag_groups;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &vsb, sizeof vsb);
+	if (!depth_only) {
+		pbr_set_light_list(s, pass, prepared);
+	}
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 1, m->tag_group_buffer);
 
 	/* The animation block of the `_anim` colour shaders: the instance's
@@ -1328,6 +1496,21 @@ static int pbr_bind_pipeline(struct AeronScene3D* s, AeronRenderPass* pass, int 
 	return 1;
 }
 
+/* Returns nonzero when instance `i` draws with the `_list` shaders: it has
+ * a light list for the view being rendered (light_list.h). The floor's
+ * mirrored view and the debug views don't use lists. */
+static int pbr_instance_listed(struct AeronScene3D* s, int i) {
+	if (!s->prepared_instances[i].light_list_set || s->planar_reflection.drawing) {
+		return 0;
+	}
+#ifdef AERON_DEBUG_UI
+	if (pbr_debug_active(s)) {
+		return 0;
+	}
+#endif
+	return 1;
+}
+
 /* The probe-set key of instance `i`'s colour draws (pbr_bind_draw): -1
  * without a set, else the set times 2, plus 1 when the instance is the
  * owner of the first set and takes the floor's reflection. */
@@ -1346,10 +1529,12 @@ static int pbr_set_key(const struct AeronScene3D* s, int i) {
  * of the screen textures (t10, t11), its buffer at storage slot 4 and the
  * lighting block with its fields; `bound_set` tracks the key bound, -1 for
  * the screen textures, which screen draws get back. Debug views draw
- * without probes. */
+ * without probes. With `listed`, the instance has a light list
+ * (pbr_instance_listed) and draws with the `_list` version of that
+ * pipeline when one exists. */
 static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind, AeronCullMode cull,
-						 const AeronSceneMeshInstance* in, int set_key, AeronGraphicsPipeline** bound,
-						 int* bound_set) {
+						 const AeronSceneMeshInstance* in, int set_key, int listed,
+						 AeronGraphicsPipeline** bound, int* bound_set) {
 	AeronGraphicsPipeline* probe = NULL;
 	const int              anim  = pbr_instance_anim_level(s, in);
 	const int              set   = set_key >= 0 ? set_key >> 1 : -1;
@@ -1367,7 +1552,24 @@ static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind
 		if (anim && s->pbr_occlusion_in_effect_slot) {
 			pbr_bind_effect_textures(s, pass);
 		}
-		return pbr_bind_pipeline(s, pass, kind, cull, anim, bound);
+		AeronGraphicsPipeline* list =
+			listed ? pbr_list_pipeline(s, pbr_list_family(s, anim, 0), kind, cull) : NULL;
+		if (!list) {
+			return pbr_bind_pipeline(s, pass, kind, cull, anim, bound);
+		}
+		if (list != *bound) {
+			Aeron_BindGraphicsPipeline(pass, list);
+			*bound = list;
+		}
+		return 1;
+	}
+	if (listed) {
+		/* The `_list` pipeline needs the same bindings as the probe
+		 * variant. */
+		AeronGraphicsPipeline* list = pbr_list_pipeline(s, pbr_list_family(s, anim, 1), kind, cull);
+		if (list) {
+			probe = list;
+		}
 	}
 	if (probe != *bound) {
 		Aeron_BindGraphicsPipeline(pass, probe);
@@ -1401,6 +1603,12 @@ static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind
 		AeronScenePlanarReflection_LightingFields(s, set, set_key & 1, lighting.planar_rect,
 												  lighting.planar_params, lighting.planar_eye,
 												  lighting.planar_screen);
+		/* Keep the light list that is already in the block
+		 * (pbr_set_light_list). */
+		memcpy(lighting.light_list, s->lighting_bound.light_list, sizeof lighting.light_list);
+		memcpy(lighting.light_list_indices, s->lighting_bound.light_list_indices,
+			   sizeof lighting.light_list_indices);
+		s->lighting_bound = lighting;
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &lighting, sizeof lighting);
 		*bound_set = set_key;
 	}
@@ -1476,7 +1684,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		/* Per-instance cull variant. */
 		const AeronCullMode cull = (AeronCullMode)in->cull_mode;
 		const int           set  = depth_only ? -1 : pbr_set_key(s, i);
-		if (!pbr_bind_draw(s, pass, pipe_kind, cull, in, set, &bound, &bound_set)) {
+		const int           listed = !depth_only && pbr_instance_listed(s, i);
+		if (!pbr_bind_draw(s, pass, pipe_kind, cull, in, set, listed, &bound, &bound_set)) {
 			return 0;
 		}
 
@@ -1503,7 +1712,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			Aeron_DrawIndexed(pass, plain_count, 0, 0);
 		}
 		if (screen_count != 0) {
-			if (!pbr_bind_draw(s, pass, screen_kind, cull, in, -1, &bound, &bound_set)) {
+			if (!pbr_bind_draw(s, pass, screen_kind, cull, in, -1, listed, &bound, &bound_set)) {
 				return 0;
 			}
 			Aeron_DrawIndexed(pass, screen_count, plain_count, 0);
@@ -1536,8 +1745,9 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			const uint32_t      screen_count = mask_screen_kind >= 0 ? m->mask_screen_index_count : 0u;
 			const uint32_t      plain_count  = m->mask_index_count - screen_count;
 			const int           set          = depth_only ? -1 : pbr_set_key(s, i);
+			const int           listed       = !depth_only && pbr_instance_listed(s, i);
 			if (!pbr_bind_draw(s, pass, plain_count != 0 ? mask_kind : mask_screen_kind, cull, in, set,
-							   &bound, &bound_set)) {
+							   listed, &bound, &bound_set)) {
 				return 0;
 			}
 			if (m != bound_mesh) {
@@ -1552,7 +1762,7 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 				Aeron_DrawIndexed(pass, plain_count, m->mask_index_offset, 0);
 			}
 			if (screen_count != 0) {
-				if (!pbr_bind_draw(s, pass, mask_screen_kind, cull, in, -1, &bound, &bound_set)) {
+				if (!pbr_bind_draw(s, pass, mask_screen_kind, cull, in, -1, listed, &bound, &bound_set)) {
 					return 0;
 				}
 				Aeron_DrawIndexed(pass, screen_count, m->mask_index_offset + plain_count, 0);
@@ -1857,12 +2067,15 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 				}
 				batch->drawn = 1;
 				pbr_push_batch_uniforms(s, pass, batch, /*velocity=*/0);
+				/* Instances in a batch always use the clusters. */
+				pbr_set_light_list(s, pass, NULL);
 				Aeron_DrawIndexedInstanced(pass, m->blend_index_count, batch->count, m->blend_index_offset,
 										   0);
 				continue;
 			}
 		}
-		if (!pbr_bind_draw(s, pass, blend_kind, cull, in, pbr_set_key(s, i), &bound, &bound_set)) {
+		const int listed = pbr_instance_listed(s, i);
+		if (!pbr_bind_draw(s, pass, blend_kind, cull, in, pbr_set_key(s, i), listed, &bound, &bound_set)) {
 			return 0;
 		}
 		if (m != bound_mesh) {
@@ -1880,7 +2093,8 @@ int AeronScenePbr_DrawTransparentInstances(struct AeronScene3D* s, AeronRenderPa
 			Aeron_DrawIndexed(pass, plain_count, m->blend_index_offset, 0);
 		}
 		if (m->blend_screen_index_count != 0 && layer == layered) {
-			if (!pbr_bind_draw(s, pass, pbr_screen_kind(blend_kind), cull, in, -1, &bound, &bound_set)) {
+			if (!pbr_bind_draw(s, pass, pbr_screen_kind(blend_kind), cull, in, -1, listed, &bound,
+							   &bound_set)) {
 				return 0;
 			}
 			Aeron_DrawIndexed(pass, m->blend_screen_index_count, m->blend_index_offset + plain_count, 0);

@@ -93,6 +93,12 @@ typedef struct AeronSceneClusteredLightDesc {
 	 * one light in the screen tiles far from them. In the tiles near them,
 	 * they stay separate. */
 	int merge_spot_lights;
+	/* Gives large instances that only a few lights can reach a short list
+	 * of those lights. Their fragments loop over the list and skip the
+	 * cluster lookup, which is faster. The picture doesn't change, with one
+	 * exception: on a far instance, a group of merged spot lights
+	 * (merge_spot_lights) is always shaded as its merged light. */
+	int light_lists;
 } AeronSceneClusteredLightDesc;
 
 typedef struct AeronSceneClusteredLightStats {
@@ -616,6 +622,9 @@ typedef struct AeronSceneFrameStats {
 	uint32_t visible_instances[AERON_MAX_VIEWS];
 	/* Draw calls for each view, without the shadow maps. */
 	uint32_t view_draws[AERON_MAX_VIEWS];
+	/* How many mesh instances used a light list instead of the light
+	 * clusters, in each view. */
+	uint32_t light_lists[AERON_MAX_VIEWS];
 } AeronSceneFrameStats;
 
 void AeronScene_GetFrameStats(const AeronScene3D* scene, AeronSceneFrameStats* out);

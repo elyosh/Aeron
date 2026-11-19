@@ -228,6 +228,7 @@ static void bind_lighting(AeronScene3D* scene, AeronRenderPass* render_pass, Aer
 	AeronSceneInternal_BindFrameUniforms(scene, render_pass);
 	Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, 2, &scene->lighting_uniform,
 						  sizeof scene->lighting_uniform);
+	scene->lighting_bound = scene->lighting_uniform;
 	Aeron_BindTextureSampler(render_pass, AERON_SHADER_STAGE_FRAGMENT, 1,
 							 visibility ? visibility : AeronSceneInternal_WhiteTexture(),
 							 visibility ? scene->post_linear_sampler : scene->pbr_sampler);

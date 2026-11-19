@@ -58,9 +58,12 @@
  * buffer at storage slot 4. AERON_PBR_MIRROR 1 (with the probes) shades the
  * floor's mirrored view (planar_reflection.c), which the floor blurs: no
  * visibility pass, floor reflection or point lights, and the probe light
- * the surface takes in place of the probes' reflection. All keep this
- * shader's cost for ordinary materials down: code chosen by a uniform costs
- * time even where it does not run. */
+ * the surface takes in place of the probes' reflection. AERON_PBR_LIGHT_LIST
+ * 1 (the `_list` shaders) is for an instance that has a light list: the
+ * shader loops over the list and doesn't look up the fragment's clusters
+ * (accumulate_listed_lights). All keep this shader's cost for ordinary
+ * materials down: code chosen by a uniform costs time even where it does
+ * not run. */
 #ifndef AERON_PBR_SCREENS
 #define AERON_PBR_SCREENS 1
 #endif
@@ -81,6 +84,9 @@
 #endif
 #ifndef AERON_PBR_MIRROR
 #define AERON_PBR_MIRROR 0
+#endif
+#ifndef AERON_PBR_LIGHT_LIST
+#define AERON_PBR_LIGHT_LIST 0
 #endif
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0
@@ -1234,8 +1240,12 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
      * and per-light specular. Untouched by AO. */
 #if !AERON_PBR_MIRROR
     if (fs_cluster_point_count > 0u) {
+#if AERON_PBR_LIGHT_LIST
+        float3 point_diff = accumulate_listed_lights(N, N_spec, V, i.world_pos, mp, spec_rgb);
+#else
         float3 point_diff = accumulate_point_lights(N, N_spec, V, i.world_pos,
                                                     i.position.xy, mp, spec_rgb);
+#endif
         base_rgb += albedo * (1.0f - metallic) * inv_pi * point_diff;
     }
 #endif

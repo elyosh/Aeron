@@ -224,6 +224,9 @@ void AeronSceneClusteredLights_Bind(AeronScene3D* s, AeronRenderPass* pass) {
 	lighting.render_size[2] = 1.0f / (float)s->render_w;
 	lighting.render_size[3] = 1.0f / (float)s->render_h;
 	s->lighting_uniform     = lighting;
+	/* This block has no probe set and no light list. A draw that needs one
+	 * sends the block again with its own. */
+	s->lighting_bound = lighting;
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &lighting, sizeof lighting);
 }
 

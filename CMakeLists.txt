@@ -350,6 +350,47 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mirror_details.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_mirror_anim.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_mirror_details.frag.hlsl
+    # A `_list` version of each colour shader that uses point lights, for
+    # instances that have a light list (src/scene/light_list.h).
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_ibl_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_ibl_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_ibl_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_probes_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_probes_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_blend_probes_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_ibl_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_ibl_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_ibl_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_ibl_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_ibl_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_ibl_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_probes_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_probes_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_probes_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_screen_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_screen_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_screen_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_screen_ibl_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_screen_ibl_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_screen_ibl_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_probes_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_probes_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_probes_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_screen_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_screen_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_screen_details_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_screen_ibl_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_screen_ibl_anim_list.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_screen_ibl_details_list.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_backface.vert.hlsl
@@ -1103,6 +1144,7 @@ add_library(aeron_scene STATIC
     src/scene/blend_ramp.c
     src/scene/scene3d.c
     src/scene/clustered_lights.c
+    src/scene/light_list.c
     src/scene/probe_occlusion.c
     src/scene/planar_reflection.c
     src/scene/view_area.c
@@ -1391,6 +1433,22 @@ if(AERON_BUILD_TOOLS)
     else()
         target_compile_options(aeron_view_rig_test PRIVATE -Wall -Wextra -Wpedantic -ffp-contract=off)
         target_link_libraries(aeron_view_rig_test PRIVATE m)
+    endif()
+
+    # Tests the light lists (src/scene/light_list.h). It needs no window and
+    # no GPU.
+    add_executable(aeron_light_list_test tests/light_list_test.c src/scene/light_list.c)
+    target_include_directories(aeron_light_list_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
+    set_target_properties(aeron_light_list_test PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    if(MSVC)
+        target_compile_options(aeron_light_list_test PRIVATE /W4 /fp:precise)
+    else()
+        target_compile_options(aeron_light_list_test PRIVATE -Wall -Wextra -Wpedantic -ffp-contract=off)
+        target_link_libraries(aeron_light_list_test PRIVATE m)
     endif()
 
     # Tests the head tracker's math and its UDP reader. It needs no window

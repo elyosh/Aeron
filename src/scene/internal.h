@@ -12,6 +12,8 @@
 #include "aeron/scene/probe_set.h"
 #include "aeron/scene/scene3d.h"
 
+#include "light_list.h"
+
 #define AERON_SCENE_BLOOM_REFERENCE_HEIGHT 2160
 /* The format of every bloom level, including mip0, which
  * AeronScene_DrawEmissionBloom draws into. */
@@ -28,6 +30,13 @@
  * each group of at least two spot lights
  * (AeronSceneClusteredLightDesc.merge_spot_lights). */
 #define AERON_SCENE_MAX_SHADED_LIGHTS (AERON_SCENE_MAX_LIGHTS + AERON_SCENE_MAX_LIGHTS / 2)
+/* An instance only gets a light list (light_list.h) when its bound covers
+ * at least this share of the view's height. A smaller instance covers too
+ * few pixels for the list to be worth testing its bound against every
+ * light. */
+#define AERON_SCENE_LIGHT_LIST_MIN_VIEW_SHARE 0.125f
+/* The number of shader families that have `_list` shaders (pbr.c). */
+#define AERON_PBR_LIST_FAMILY_COUNT 9
 #define AERON_SCENE_CLUSTER_DEFAULT_TILE_SIZE 32u
 #define AERON_SCENE_CLUSTER_MAX_TILE_SIZE 64u
 #define AERON_SCENE_CLUSTER_TILE_ALIGNMENT 8u
@@ -166,6 +175,17 @@ typedef struct AeronScenePreparedInstance {
 	 * and for an instance outside the frustum. With several views, it is the
 	 * largest size in the views whose frustum the bound intersects. */
 	float screen_size_px;
+	/* The instance's bounding sphere in world space: its centre, then its
+	 * radius. The radius is negative when the instance has no usable
+	 * bound. */
+	float bound[4];
+	/* The instance's light list for the view being rendered
+	 * (AeronSceneLightList_Build). light_list_set is 0 when the instance
+	 * uses the clusters. AeronSceneStorage_PrepareView fills these for each
+	 * view. */
+	uint8_t  light_list_set;
+	uint8_t  light_list_count;
+	uint16_t light_list[AERON_SCENE_LIGHT_LIST_MAX];
 } AeronScenePreparedInstance;
 
 /* A group of visible instances of one mesh, drawn with one instanced draw in
@@ -318,21 +338,6 @@ typedef struct AeronScenePointLightGPU {
 	float direction[4];
 } AeronScenePointLightGPU;
 
-/* A point light in view space, in the point light order: the sphere that
- * holds what it lights (AeronScene_LightBounds). For a spot light, also
- * its position and range, and its unit direction with the cosine of its
- * outer angle in w; w is -1 for other lights. For a spot light in a merged
- * group, the group's centre and its merge distance: a tile nearer to the
- * centre than that takes the group's lights, and a farther one its merged
- * light. w is the distance for a light of the group, minus the distance
- * for the merged light, and 0 for other lights. */
-typedef struct AeronSceneClusterLightGPU {
-	float view_position_range[4];
-	float view_spot_position_range[4];
-	float view_spot_direction_cos[4];
-	float view_merge[4];
-} AeronSceneClusterLightGPU;
-
 /* The cluster build's output, one uint buffer (scene_clustered_lights.hlsli):
  * per depth bin three words, the index ranges of the spheres, the spot
  * lights and the tubes that reach it, then per screen tile a bitmask of the
@@ -395,13 +400,20 @@ typedef struct AeronSceneLightingUniformGPU {
 	float planar_params[4];
 	float planar_eye[4];
 	float planar_screen[4];
+	/* The light list of the instance being drawn (light_list.h): 1 when it
+	 * has one, the number of spheres, the number of spheres and spot
+	 * lights, and the number of lights. Then the lights' indices, sorted. */
+	uint32_t light_list[4];
+	uint32_t light_list_indices[4];
 } AeronSceneLightingUniformGPU;
 
 /* Layout checks against the HLSL blocks (ClusteredLightUniform, 96 bytes;
  * with the environment, the debug material, the emission, the render size,
- * the probe set, its occlusion grid and the reflecting floor, 416 bytes). */
+ * the probe set, its occlusion grid, the reflecting floor and the light
+ * list, 448 bytes). */
 typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 96 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 416 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 448 ? 1 : -1];
+typedef char AeronSceneLightListSizeCheck[AERON_SCENE_LIGHT_LIST_MAX == 4 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_DEBUG_VIEW = 1u << 0,
@@ -590,6 +602,9 @@ struct AeronScene3D {
 	 * floor's reflection, not the `_anim` shaders' effect textures. */
 	int                          pbr_occlusion_in_effect_slot;
 	AeronSceneLightingUniformGPU lighting_uniform;
+	/* The lighting block that is bound now: lighting_uniform, plus the
+	 * probe set and the light list of the last instance drawn. */
+	AeronSceneLightingUniformGPU lighting_bound;
 
 	/* Stabilized cascaded shadow map for the key directional light. */
 	AeronSceneDirectionalShadowDesc    directional_shadow;
@@ -997,6 +1012,14 @@ struct AeronScene3D {
 	 * layers][plain, mask, blend, then the floor's mirrored view's plain and
 	 * mask], loaded on first use (the ones with detail layers separately),
 	 * and their pipelines by [animation][kind][cull]. */
+	/* The `_list` shaders: versions of the colour shaders for instances
+	 * that have a light list. The shaders are indexed by [family][plain,
+	 * mask, blend, screen, mask screen], and each family is loaded on first
+	 * use. The pipelines are indexed by [family][kind][cull]
+	 * (pbr_list_pipeline). */
+	int                    pbr_list_tried[AERON_PBR_LIST_FAMILY_COUNT];
+	AeronShader*           pbr_list_fs[AERON_PBR_LIST_FAMILY_COUNT][5];
+	AeronGraphicsPipeline* pbr_list_pipes[AERON_PBR_LIST_FAMILY_COUNT][AERON_PBR_PIPE_KIND_COUNT][3];
 	int                    pbr_probe_tried[2];
 	AeronShader*           pbr_probe_fs[3][5];
 	AeronGraphicsPipeline* pbr_probe_pipes[3][AERON_PBR_PIPE_KIND_COUNT][3];

@@ -680,6 +680,12 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     if (!(q2 < 1.0f)) {
         return;
     }
+    /* Skip a light that is behind the surface for both normals. It adds
+     * nothing: the diffuse term and the highlight are both multiplied by a
+     * clamped N.L, which is zero here. */
+    if (dot(N, dv) <= 0.0f && dot(N_spec, dv) <= 0.0f) {
+        return;
+    }
     float  d      = sqrt(d2);
     float3 L      = dv / max(d, 1e-3f);
     float  win    = 1.0f - q2 * q2;
@@ -710,6 +716,12 @@ void accumulate_spot_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float  d2 = dot(dv, dv);
     float  q2 = d2 * point_light.position_range.w;
     if (!(q2 < 1.0f)) {
+        return;
+    }
+    /* Skip a light that is behind the surface for both normals. It adds
+     * nothing: the diffuse term and the highlight are both multiplied by a
+     * clamped N.L, which is zero here. */
+    if (dot(N, dv) <= 0.0f && dot(N_spec, dv) <= 0.0f) {
         return;
     }
     float  d    = sqrt(d2);
@@ -835,6 +847,33 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
                            spec_out);
     accumulate_light_range(ranges.z, mask_base, AERON_LIGHT_KIND_TUBE, N, N_spec, V, R, world_pos, mp, diff,
                            spec_out);
+    return diff;
+}
+
+/* Does the same as accumulate_point_lights, for an instance that has a
+ * light list (fs_light_list). It shades the lights of the list in order and
+ * doesn't look up the fragment's tile and depth bin. The result is the
+ * same: a light of the list that doesn't reach the fragment fails its range
+ * or cone test, exactly as it would in the cluster loop.
+ *
+ * Two things make this fast. The list is in a uniform, so every fragment of
+ * the draw reads the same indices. And each kind of light has its own loop:
+ * a single loop that tests the kind of each light is slower. */
+float3 accumulate_listed_lights(float3 N, float3 N_spec, float3 V, float3 world_pos, PbrMaterialParams mp,
+                                inout float3 spec_out)
+{
+    float3 diff = float3(0.0f, 0.0f, 0.0f);
+    float3 R    = reflect(-V, N_spec);
+    uint   k    = 0u;
+    for (; k < fs_light_list.y; ++k) {
+        accumulate_point_light(fs_light_list_indices[k], N, N_spec, V, world_pos, mp, diff, spec_out);
+    }
+    for (; k < fs_light_list.z; ++k) {
+        accumulate_spot_light(fs_light_list_indices[k], N, N_spec, V, world_pos, mp, diff, spec_out);
+    }
+    for (; k < fs_light_list.w; ++k) {
+        accumulate_tube_light(fs_light_list_indices[k], N, N_spec, V, R, world_pos, mp, diff, spec_out);
+    }
     return diff;
 }
 #endif

@@ -918,6 +918,7 @@ int AeronScene_SetClusteredLights(AeronScene3D* s, const AeronSceneClusteredLigh
 	s->cluster_desc                   = *desc;
 	s->cluster_desc.debug_view        = desc->debug_view != 0;
 	s->cluster_desc.merge_spot_lights = desc->merge_spot_lights != 0;
+	s->cluster_desc.light_lists       = desc->light_lists != 0;
 	return 1;
 }
 
@@ -2784,6 +2785,11 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			}
 		}
 		prepared->screen_size_px = in_a_frustum ? largest_size : FLT_MAX;
+		prepared->bound[3]       = -1.0f;
+		if (box) {
+			memcpy(prepared->bound, box->center, sizeof box->center);
+			prepared->bound[3] = box->radius;
+		}
 		prepared->probe_set = prepared->view_mask ? scene_instance_probe_set_for_box(s, instance, box) : -1;
 		prepared->batch     = -1;
 		prepared->emission  = prepared->view_mask && scene_instance_emission(s, instance, prepared);
@@ -2892,6 +2898,51 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		s->storage_error_logged = 0;
 	}
 	return s->storage_ready;
+}
+
+/* Builds the light lists of the view being rendered (light_list.h,
+ * AeronSceneClusteredLightDesc.light_lists). Only large instances get one.
+ * This runs after the view's lights are sorted, because a list holds
+ * indices into that order. `view_rotation` is the camera's rotation, as
+ * rows. Instances in a batch never get a list: a batch draws many instances
+ * with one draw call. */
+static void scene_build_light_lists(AeronScene3D* s, const float view_rotation[9]) {
+	const uint32_t view_bit = 1u << s->current_view;
+	const float    min_size = AERON_SCENE_LIGHT_LIST_MIN_VIEW_SHARE * (float)s->render_h;
+	uint32_t       listed   = 0;
+	for (int i = 0; i < s->instance_count; ++i) {
+		AeronScenePreparedInstance* prepared = &s->prepared_instances[i];
+		prepared->light_list_set             = 0;
+		if (!s->cluster_desc.light_lists || s->point_light_count == 0 || !(prepared->view_mask & view_bit) ||
+			prepared->batch >= 0 || prepared->emission || !(prepared->bound[3] >= 0.0f) ||
+			!(prepared->screen_size_px >= min_size)) {
+			continue;
+		}
+		const float offset[3] = { prepared->bound[0] - s->camera.pos[0],
+								  prepared->bound[1] - s->camera.pos[1],
+								  prepared->bound[2] - s->camera.pos[2] };
+		float       center[3];
+		for (int row = 0; row < 3; ++row) {
+			center[row] = view_rotation[row * 3 + 0] * offset[0] + view_rotation[row * 3 + 1] * offset[1] +
+						  view_rotation[row * 3 + 2] * offset[2];
+		}
+		uint32_t  indices[AERON_SCENE_LIGHT_LIST_MAX];
+		const int count =
+			AeronSceneLightList_Build(s->cluster_light_staging, s->point_light_count, s->point_spot_start,
+									  s->point_tube_start, center, prepared->bound[3], indices);
+		if (count < 0) {
+			continue;
+		}
+		prepared->light_list_set   = 1;
+		prepared->light_list_count = (uint8_t)count;
+		for (int k = 0; k < count; ++k) {
+			prepared->light_list[k] = (uint16_t)indices[k];
+		}
+		listed++;
+	}
+	if (s->current_view >= 0 && s->current_view < AERON_MAX_VIEWS) {
+		s->frame_stats.light_lists[s->current_view] = listed;
+	}
 }
 
 int AeronSceneStorage_PrepareView(AeronScene3D* s, AeronCommandBuffer* cmd) {
@@ -3041,6 +3092,7 @@ int AeronSceneStorage_PrepareView(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	s->point_light_count = point_count;
 	s->point_spot_start  = kind_counts[SCENE_LIGHT_SPHERE];
 	s->point_tube_start  = kind_counts[SCENE_LIGHT_SPHERE] + kind_counts[SCENE_LIGHT_SPOT];
+	scene_build_light_lists(s, view_rotation);
 
 	if (s->point_light_count == 0) {
 		if (!scene_storage_reserve((void**)&s->point_light_staging, &s->point_light_staging_cap, 1u,
