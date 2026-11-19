@@ -1460,8 +1460,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 			continue;
 		}
 		/* Small instances leave the prepass (AeronScene_SetSmallInstanceCull). */
-		if (depth_only && s->small_cull_active && !s->planar_reflection.drawing &&
-			s->prepared_instances[i].screen_size_px < s->small_cull_prepass_px) {
+		if (depth_only && !s->planar_reflection.drawing &&
+			s->prepared_instances[i].screen_size_px < s->small_cull_frame_prepass_px) {
 			continue;
 		}
 		if (!depth_only) {

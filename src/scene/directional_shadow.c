@@ -1246,8 +1246,9 @@ int AeronSceneDirectionalShadow_Prepare(struct AeronScene3D* scene) {
 		/* An instance small on screen is far away, and so is its shadow
 		 * (AeronScene_SetSmallInstanceCull). An instance outside the frustum
 		 * has no size: it still casts. */
-		const int small = candidate < scene->instance_count && scene->small_cull_active &&
-						  scene->prepared_instances[candidate].screen_size_px < scene->small_cull_prepass_px;
+		const int small =
+			candidate < scene->instance_count &&
+			scene->prepared_instances[candidate].screen_size_px < scene->small_cull_frame_shadow_px;
 		if ((instance->shadow_flags &
 			 (AERON_SCENE_INSTANCE_NO_CAST_SHADOW | AERON_SCENE_INSTANCE_CAST_RECEIVER_LOCAL_ONLY)) == 0 &&
 			instance->mesh && (instance->mesh->opaque_index_count + instance->mesh->mask_index_count) != 0 &&

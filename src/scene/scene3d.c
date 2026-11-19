@@ -2767,7 +2767,7 @@ int AeronSceneStorage_Prepare(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		 * and an emission_only instance, such as a warhead, which
 		 * AeronScene_SetEmissionMinWidth widens. */
 		const int can_be_too_small =
-			s->small_cull_active && instance->mesh && !instance->emission_only &&
+			s->small_cull_draw_px > 0.0f && instance->mesh && !instance->emission_only &&
 			(instance->mesh->opaque_index_count + instance->mesh->mask_index_count) != 0;
 		int   in_a_frustum = 0;
 		float largest_size = 0.0f;
@@ -3288,10 +3288,14 @@ int AeronScene_PrepareFrame(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	s->frame_stats.view_count     = (uint32_t)s->view_count;
 
 	/* With MSAA, the colour pass has its own depth, so the prepass can leave
-	 * instances out; FSR needs every instance's depth and motion. */
-	s->small_cull_active = s->sample_count != AERON_SAMPLE_COUNT_1 &&
-						   s->temporal_active_mode == AERON_TEMPORAL_OFF &&
-						   (s->small_cull_prepass_px > 0.0f || s->small_cull_draw_px > 0.0f);
+	 * out instances that the colour pass draws. Without MSAA, the colour pass
+	 * only draws where the prepass drew, and FSR needs the depth and motion
+	 * of every instance. In those cases only the draw threshold applies: it
+	 * removes an instance from every pass. */
+	const int prepass_can_skip =
+		s->sample_count != AERON_SAMPLE_COUNT_1 && s->temporal_active_mode == AERON_TEMPORAL_OFF;
+	s->small_cull_frame_prepass_px = prepass_can_skip ? s->small_cull_prepass_px : 0.0f;
+	s->small_cull_frame_shadow_px  = fmaxf(s->small_cull_frame_prepass_px, s->small_cull_draw_px);
 
 	/* Load the PBR shaders before preparing the storage. Preparing the
 	 * storage decides which instances the emission shader draws, and that

@@ -497,11 +497,13 @@ struct AeronScene3D {
 	int                with_normal_rt;
 	AeronTextureFormat color_format;
 	AeronSampleCount   sample_count;
-	/* AeronScene_SetSmallInstanceCull, in render pixels; 0 is off. Applied
-	 * in a frame only when small_cull_active (MSAA on, FSR off). */
+	/* AeronScene_SetSmallInstanceCull, in render pixels; 0 is off. */
 	float small_cull_prepass_px;
 	float small_cull_draw_px;
-	int   small_cull_active;
+	/* The thresholds that this frame uses for the prepass and for the shadow
+	 * casters. The prepass one is 0 with MSAA off or FSR on. */
+	float small_cull_frame_prepass_px;
+	float small_cull_frame_shadow_px;
 	/* AeronScene_SetShadowCasterMinSize, in render pixels; 0 is off. */
 	float shadow_caster_min_px;
 	/* AeronScene_SetLodMaxError, in render pixels (0 is off), and

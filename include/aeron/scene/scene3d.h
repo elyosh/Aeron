@@ -560,11 +560,12 @@ void AeronScene_SetBackfaceFill(AeronScene3D* scene, int enabled);
 
 /* Leaves out the instances that are small on screen, by the larger side of
  * their bound's projection, in render pixels; 0 turns a threshold off.
- * Instances under `prepass_min_px` aren't drawn in the depth prepass and
- * don't cast the cascades' shadows. Instances under `draw_min_px` aren't
- * drawn at all, except meshes with only blended faces, such as laser bolts.
- * It applies only with MSAA on and FSR off: otherwise the colour pass needs
- * the prepass's depth of every instance. */
+ * Instances under `draw_min_px` aren't drawn at all, except meshes with only
+ * blended faces, such as laser bolts. Instances under `prepass_min_px` are
+ * drawn, but not in the depth prepass. Instances under either threshold
+ * don't cast the cascades' shadows. `prepass_min_px` applies only with MSAA
+ * on and FSR off: otherwise the colour pass needs the prepass's depth of
+ * every instance that it draws. */
 void AeronScene_SetSmallInstanceCull(AeronScene3D* scene, float prepass_min_px, float draw_min_px);
 
 /* Leaves a caster out of a directional shadow cascade when it would look
