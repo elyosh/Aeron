@@ -59,6 +59,44 @@ typedef struct AeronSceneMeshOverlayDesc {
 
 void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayDesc* overlay);
 
+/* The most images that one projected overlay draws. */
+#define AERON_SCENE_MESH_PROJECTIONS_MAX 4
+
+/* An image projected on a mesh. A point of the mesh gets the image's UV
+ * from its position in the mesh's own frame, before the mesh table moves it:
+ * u = dot(u_row.xyz, position) + u_row.w, and v the same way. */
+typedef struct AeronSceneMeshProjection {
+	float u_row[4];
+	float v_row[4];
+	float uv_rect[4]; /* min u, min v, max u, max v: nothing is drawn outside */
+	float color[4];   /* multiplies the image; literal linear straight RGBA */
+	/* The mesh-table rows (AeronGltfVertex.component) whose vertices take
+	 * the image: bit r % 32 of word r / 32, for the rows 0 to 255. */
+	uint32_t rows[8];
+} AeronSceneMeshProjection;
+
+/* Images of one texture projected on a mesh, such as the flashes of the
+ * hits on a craft's shields. The scene draws the mesh's own triangles once
+ * for all the images, so the game doesn't build or upload a copy of the
+ * geometry, and several images cost one pass over the mesh. The images
+ * blend one over the other in order, with premultiplied alpha, each as an
+ * unlit AeronSceneMeshOverlayDesc with AERON_SCENE_MESH_OVERLAY_BLEND_PMA
+ * would be drawn. `transform`, `mesh_table`, `depth_bias_view` and
+ * `cull_mode` are as in AeronSceneMeshOverlayDesc. The mesh must stay alive
+ * until the frame is rendered. */
+typedef struct AeronSceneMeshProjectedOverlayDesc {
+	const struct AeronSceneMesh*    mesh;
+	AeronTexture*                   texture;
+	float                           transform[16];
+	const AeronSceneMeshTable*      mesh_table;
+	float                           depth_bias_view;
+	uint8_t                         cull_mode;
+	const AeronSceneMeshProjection* projections;
+	uint32_t                        projection_count; /* 1 to AERON_SCENE_MESH_PROJECTIONS_MAX */
+} AeronSceneMeshProjectedOverlayDesc;
+
+void AeronScene_AddMeshProjectedOverlay(AeronScene3D* scene, const AeronSceneMeshProjectedOverlayDesc* overlay);
+
 #ifdef __cplusplus
 }
 #endif

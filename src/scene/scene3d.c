@@ -621,6 +621,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->overlay_count         = 0;
 	s->overlays_dropped      = 0;
 	s->overlay_vertex_count  = 0;
+	s->overlay_projection_count = 0;
 	s->overlay_frame_ready   = 0;
 	s->storage_ready         = 0;
 	s->after_meshes_fn       = NULL;
@@ -3365,7 +3366,7 @@ int AeronScene_PrepareFrame(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (s->bb_count > 0 && !AeronSceneBb3d_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene billboard preparation failed");
 	}
-	if (s->overlay_vertex_count > 0 && !AeronSceneMeshOverlay_Prepare(s, cmd)) {
+	if (s->overlay_count > 0 && !AeronSceneMeshOverlay_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene mesh-overlay preparation failed");
 	}
 	/* A failure only costs the saving: the views are drawn in full. */

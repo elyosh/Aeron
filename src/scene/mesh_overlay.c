@@ -3,6 +3,7 @@
 #include "internal.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -31,6 +32,61 @@ typedef struct OverlayLitUniforms {
 	 * image is premultiplied (PMA blending). */
 	float shading[4];
 } OverlayLitUniforms;
+
+/* The block of the projected overlays' images, which both of their shaders
+ * read (scene_mesh_projection.hlsli). */
+typedef struct OverlayProjectedUniforms {
+	uint32_t                 count;
+	uint32_t                 _pad[3];
+	AeronSceneMeshProjection projections[AERON_SCENE_MESH_PROJECTIONS_MAX];
+} OverlayProjectedUniforms;
+
+typedef char OverlayProjectionSizeCheck[sizeof(AeronSceneMeshProjection) == 96 ? 1 : -1];
+typedef char OverlayProjectedUniformsSizeCheck
+	[sizeof(OverlayProjectedUniforms) == 16 + 96 * AERON_SCENE_MESH_PROJECTIONS_MAX ? 1 : -1];
+
+void AeronScene_AddMeshProjectedOverlay(AeronScene3D* scene, const AeronSceneMeshProjectedOverlayDesc* overlay) {
+	if (!scene || !overlay || !overlay->mesh || !overlay->mesh->vbo || !overlay->mesh->ibo ||
+		overlay->mesh->index_count == 0 || !overlay->texture || !overlay->projections ||
+		overlay->projection_count == 0 || overlay->projection_count > AERON_SCENE_MESH_PROJECTIONS_MAX) {
+		return;
+	}
+	if (scene->overlay_count >= AERON_SCENE_MAX_MESH_OVERLAYS) {
+		if (!scene->overlays_dropped) {
+			Aeron_LogWarn("aeron.scene", "mesh-overlay cap hit; dropping");
+		}
+		scene->overlays_dropped++;
+		return;
+	}
+	const uint32_t required = scene->overlay_projection_count + overlay->projection_count;
+	if (required > scene->overlay_projection_cap) {
+		uint32_t new_capacity = scene->overlay_projection_cap ? scene->overlay_projection_cap : 16u;
+		while (new_capacity < required) {
+			new_capacity *= 2u;
+		}
+		void* resized =
+			realloc(scene->overlay_projections, (size_t)new_capacity * sizeof *scene->overlay_projections);
+		if (!resized) {
+			scene->overlays_dropped++;
+			return;
+		}
+		scene->overlay_projections    = (AeronSceneMeshProjection*)resized;
+		scene->overlay_projection_cap = new_capacity;
+	}
+	AeronSceneMeshOverlayEntry* entry = &scene->overlays[scene->overlay_count++];
+	memset(entry, 0, sizeof *entry);
+	entry->projected_mesh   = overlay->mesh;
+	entry->texture          = overlay->texture;
+	entry->mesh_table       = overlay->mesh_table;
+	entry->cull_mode        = overlay->cull_mode <= AERON_CULL_BACK ? overlay->cull_mode : AERON_CULL_NONE;
+	entry->depth_bias       = overlay->depth_bias_view;
+	entry->projection_first = scene->overlay_projection_count;
+	entry->projection_count = overlay->projection_count;
+	memcpy(entry->transform, overlay->transform, sizeof entry->transform);
+	memcpy(&scene->overlay_projections[scene->overlay_projection_count], overlay->projections,
+		   (size_t)overlay->projection_count * sizeof *overlay->projections);
+	scene->overlay_projection_count = required;
+}
 
 void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayDesc* overlay) {
 	if (!scene || !overlay || !overlay->vertices || overlay->vertex_count == 0 ||
@@ -153,6 +209,48 @@ static AeronGraphicsPipeline* create_overlay_pipeline(AeronScene3D* scene, Aeron
 	});
 }
 
+/* The pipeline of the projected overlays for a fragment shader and a cull
+ * mode. It reads the position and the component of a mesh's
+ * AeronGltfVertex, and blends with premultiplied alpha. */
+static AeronGraphicsPipeline* create_projected_pipeline(AeronScene3D* scene, AeronShader* fragment_shader,
+														AeronCullMode cull_mode) {
+	AeronVertexAttributeDesc vertex_attributes[2] = {
+		{ .location    = 0,
+		  .buffer_slot = 0,
+		  .format      = AERON_VERTEX_FORMAT_FLOAT3,
+		  .offset      = (uint32_t)offsetof(AeronGltfVertex, pos) },
+		{ .location    = 1,
+		  .buffer_slot = 0,
+		  .format      = AERON_VERTEX_FORMAT_FLOAT,
+		  .offset      = (uint32_t)offsetof(AeronGltfVertex, component) },
+	};
+	AeronVertexBufferLayoutDesc vertex_buffer_layout = { .slot = 0, .stride = (uint32_t)sizeof(AeronGltfVertex) };
+	AeronColorTargetStateDesc   color_targets[1]     = { 0 };
+	color_targets[0].format                          = scene->color_format;
+	color_targets[0].blend = (AeronBlendStateDesc) { .enabled   = 1,
+													 .src_color = AERON_BLEND_ONE,
+													 .dst_color = AERON_BLEND_ONE_MINUS_SRC_ALPHA,
+													 .color_op  = AERON_BLEND_OP_ADD,
+													 .src_alpha = AERON_BLEND_ONE,
+													 .dst_alpha = AERON_BLEND_ONE_MINUS_SRC_ALPHA,
+													 .alpha_op  = AERON_BLEND_OP_ADD };
+	return Aeron_CreateGraphicsPipeline(&(AeronGraphicsPipelineDesc) {
+		.vertex_shader       = scene->overlay_projected_vs,
+		.fragment_shader     = fragment_shader,
+		.primitive_type      = AERON_PRIMITIVE_TRIANGLES,
+		.cull_mode           = cull_mode,
+		.vertex_buffers      = &vertex_buffer_layout,
+		.vertex_buffer_count = 1,
+		.attributes          = vertex_attributes,
+		.attribute_count     = 2,
+		.depth_format        = AERON_TEXTURE_FORMAT_D32_FLOAT,
+		.depth               = { .depth_test = 1, .depth_write = 0, .compare = AERON_COMPARE_GREATER_EQUAL },
+		.color_target_count  = 1,
+		.color_targets       = color_targets,
+		.sample_count        = scene->sample_count,
+	});
+}
+
 static int ensure_overlay_resources(AeronScene3D* scene) {
 	if (scene->overlay_tried) {
 		return scene->overlay_pipes[0][0] != NULL;
@@ -174,6 +272,18 @@ static int ensure_overlay_resources(AeronScene3D* scene) {
 	if (!scene->overlay_vs || !scene->overlay_fs) {
 		return 0;
 	}
+	scene->overlay_projected_vs =
+		AeronSceneInternal_CompileShader("scene_mesh_projection.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 1);
+	for (int images = 0; images < AERON_SCENE_MESH_PROJECTIONS_MAX && scene->overlay_projected_vs; images++) {
+		char name[48];
+		snprintf(name, sizeof name, "scene_mesh_projection_%d.frag", images + 1);
+		scene->overlay_projected_fs[images] =
+			AeronSceneInternal_CompileShader(name, AERON_SHADER_STAGE_FRAGMENT, 1, 1, 0);
+		for (int cull_mode = 0; cull_mode < 3 && scene->overlay_projected_fs[images]; cull_mode++) {
+			scene->overlay_projected_pipes[images][cull_mode] = create_projected_pipeline(
+				scene, scene->overlay_projected_fs[images], (AeronCullMode)cull_mode);
+		}
+	}
 	for (int blend_mode = 0; blend_mode < 3; blend_mode++) {
 		for (int cull_mode = 0; cull_mode < 3; cull_mode++) {
 			scene->overlay_pipes[blend_mode][cull_mode] =
@@ -193,10 +303,15 @@ static int ensure_overlay_resources(AeronScene3D* scene) {
 }
 
 int AeronSceneMeshOverlay_Prepare(AeronScene3D* scene, AeronCommandBuffer* command_buffer) {
-	if (!scene || scene->overlay_vertex_count == 0 || !ensure_overlay_resources(scene)) {
+	if (!scene || scene->overlay_count == 0 || !ensure_overlay_resources(scene)) {
 		return 0;
 	}
-	scene->overlay_frame_ready      = 0;
+	scene->overlay_frame_ready = 0;
+	/* Only projected overlays: they draw their mesh's own vertices. */
+	if (scene->overlay_vertex_count == 0) {
+		scene->overlay_frame_ready = 1;
+		return 1;
+	}
 	const uint32_t vertex_data_size = scene->overlay_vertex_count * (uint32_t)sizeof *scene->overlay_vertices;
 	if (!scene->overlay_vb || scene->overlay_vb_cap < vertex_data_size) {
 		if (scene->overlay_vb) {
@@ -240,9 +355,45 @@ static void bind_lighting(AeronScene3D* scene, AeronRenderPass* render_pass, Aer
 	Aeron_BindStorageBuffer(render_pass, AERON_SHADER_STAGE_FRAGMENT, 1, scene->cluster_data_buffer);
 }
 
+/* Draws a projected overlay: the mesh's own triangles, once for all the
+ * overlay's images. */
+static void draw_projected_overlay(AeronScene3D* scene, AeronRenderPass* render_pass,
+								   const AeronSceneMeshOverlayEntry* overlay) {
+	AeronGraphicsPipeline* pipeline =
+		scene->overlay_projected_pipes[overlay->projection_count - 1][overlay->cull_mode];
+	const AeronSceneMesh*  mesh     = overlay->projected_mesh;
+	if (!pipeline) {
+		return;
+	}
+	Aeron_BindGraphicsPipeline(render_pass, pipeline);
+	Aeron_BindVertexBuffer(render_pass, 0, mesh->vbo, 0);
+	Aeron_BindIndexBuffer(render_pass, mesh->ibo, AERON_INDEX_FORMAT_UINT32, 0);
+	OverlayVertexUniforms vertex_uniforms;
+	memset(&vertex_uniforms, 0, sizeof vertex_uniforms);
+	memcpy(vertex_uniforms.view_proj, scene->jittered_view_proj, sizeof vertex_uniforms.view_proj);
+	memcpy(vertex_uniforms.transform, overlay->transform, sizeof vertex_uniforms.transform);
+	vertex_uniforms.params[0]             = overlay->depth_bias;
+	vertex_uniforms.mesh_table_base       = overlay->mesh_table_base;
+	vertex_uniforms.table_component_count = overlay->table_component_count;
+	Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_VERTEX, 0, &vertex_uniforms, sizeof vertex_uniforms);
+	OverlayProjectedUniforms images;
+	memset(&images, 0, sizeof images);
+	images.count = overlay->projection_count;
+	memcpy(images.projections, &scene->overlay_projections[overlay->projection_first],
+		   (size_t)overlay->projection_count * sizeof *images.projections);
+	/* The vertex shader works out the UVs, and the fragment shader reads the
+	 * rest. */
+	Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_VERTEX, 1, &images,
+						  sizeof images);
+	Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, 0, &images,
+						  sizeof images);
+	Aeron_BindTextureSampler(render_pass, AERON_SHADER_STAGE_FRAGMENT, 0, overlay->texture, scene->pbr_sampler);
+	Aeron_DrawIndexed(render_pass, mesh->index_count, 0, 0);
+}
+
 void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pass, AeronTexture* visibility) {
 	if (!scene || !render_pass || !scene->storage_ready || !scene->overlay_frame_ready ||
-		!scene->overlay_vb || scene->overlay_count == 0) {
+		scene->overlay_count == 0) {
 		return;
 	}
 	/* Lit overlays read the lights as the opaque instances did: without
@@ -255,11 +406,26 @@ void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pas
 		visibility && scene->shadow_stats.active && !scene->directional_shadow.debug_cascades;
 	/* An unlit overlay's block replaces the shadow block at slot 0. */
 	int lighting_bound = 0;
-	Aeron_BindVertexBuffer(render_pass, 0, scene->overlay_vb, 0);
+	/* Whether the overlays' own vertices are bound. A projected overlay
+	 * binds its mesh's vertices in their place. */
+	int own_vertices_bound = 0;
 	Aeron_BindStorageBuffer(render_pass, AERON_SHADER_STAGE_VERTEX, 0, scene->mesh_table_buffer);
 	for (uint32_t overlay_index = 0; overlay_index < scene->overlay_count; overlay_index++) {
 		const AeronSceneMeshOverlayEntry* overlay = &scene->overlays[overlay_index];
 		AeronGraphicsPipeline*            pipeline;
+		if (overlay->projected_mesh) {
+			draw_projected_overlay(scene, render_pass, overlay);
+			own_vertices_bound = 0;
+			lighting_bound     = 0;
+			continue;
+		}
+		if (!scene->overlay_vb) {
+			continue;
+		}
+		if (!own_vertices_bound) {
+			Aeron_BindVertexBuffer(render_pass, 0, scene->overlay_vb, 0);
+			own_vertices_bound = 1;
+		}
 		if (overlay->lit) {
 			pipeline = !lighting_ready  ? NULL
 					   : overlay->array ? scene->overlay_lit_array_pipes[overlay->blend][overlay->cull_mode]
@@ -332,6 +498,20 @@ void AeronSceneMeshOverlay_Release(AeronScene3D* scene) {
 			}
 		}
 	}
+	for (int images = 0; images < AERON_SCENE_MESH_PROJECTIONS_MAX; images++) {
+		for (int cull_mode = 0; cull_mode < 3; cull_mode++) {
+			if (scene->overlay_projected_pipes[images][cull_mode]) {
+				Aeron_DestroyGraphicsPipeline(scene->overlay_projected_pipes[images][cull_mode]);
+			}
+		}
+		if (scene->overlay_projected_fs[images]) {
+			Aeron_DestroyShader(scene->overlay_projected_fs[images]);
+		}
+	}
+	if (scene->overlay_projected_vs) {
+		Aeron_DestroyShader(scene->overlay_projected_vs);
+	}
+	free(scene->overlay_projections);
 	if (scene->overlay_vs) {
 		Aeron_DestroyShader(scene->overlay_vs);
 	}
