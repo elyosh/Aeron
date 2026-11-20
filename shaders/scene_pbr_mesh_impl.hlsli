@@ -64,29 +64,69 @@
  * (accumulate_listed_lights). All keep this shader's cost for ordinary
  * materials down: code chosen by a uniform costs time even where it does
  * not run. */
-#ifndef AERON_PBR_SCREENS
-#define AERON_PBR_SCREENS 1
+/* The build compiles this file once per line of scene_pbr_mesh.variants.
+ * For each word in the line's name, it defines AERON_PBR_WORD_<WORD> as 1.
+ * The words that are not in the name are set to 0 here. */
+#ifndef AERON_PBR_WORD_MASK
+#define AERON_PBR_WORD_MASK 0
 #endif
-#ifndef AERON_PBR_ENVIRONMENT
-#define AERON_PBR_ENVIRONMENT 1
+#ifndef AERON_PBR_WORD_BLEND
+#define AERON_PBR_WORD_BLEND 0
 #endif
-#ifndef AERON_PBR_ALPHA_BLEND
-#define AERON_PBR_ALPHA_BLEND 0
+#ifndef AERON_PBR_WORD_SCREEN
+#define AERON_PBR_WORD_SCREEN 0
 #endif
-#ifndef AERON_PBR_ANIM
+#ifndef AERON_PBR_WORD_IBL
+#define AERON_PBR_WORD_IBL 0
+#endif
+#ifndef AERON_PBR_WORD_PROBES
+#define AERON_PBR_WORD_PROBES 0
+#endif
+#ifndef AERON_PBR_WORD_MIRROR
+#define AERON_PBR_WORD_MIRROR 0
+#endif
+#ifndef AERON_PBR_WORD_ANIM
+#define AERON_PBR_WORD_ANIM 0
+#endif
+#ifndef AERON_PBR_WORD_DETAILS
+#define AERON_PBR_WORD_DETAILS 0
+#endif
+#ifndef AERON_PBR_WORD_LIST
+#define AERON_PBR_WORD_LIST 0
+#endif
+#ifndef AERON_PBR_WORD_DEBUG
+#define AERON_PBR_WORD_DEBUG 0
+#endif
+
+/* The switches that the code below uses, set from the words. Some words turn
+ * on more than one switch: `details` needs the animation code, `mirror` is a
+ * kind of probe lighting, the probes need the environment, and the debug
+ * shaders keep the screens and the environment. */
+#define AERON_PBR_ALPHA_MASK AERON_PBR_WORD_MASK
+#define AERON_PBR_ALPHA_BLEND AERON_PBR_WORD_BLEND
+#define AERON_PBR_DETAILS AERON_PBR_WORD_DETAILS
+#define AERON_PBR_MIRROR AERON_PBR_WORD_MIRROR
+#define AERON_PBR_LIGHT_LIST AERON_PBR_WORD_LIST
+#define AERON_PBR_DEBUG_VIEWS AERON_PBR_WORD_DEBUG
+#if AERON_PBR_WORD_ANIM || AERON_PBR_WORD_DETAILS
+#define AERON_PBR_ANIM 1
+#else
 #define AERON_PBR_ANIM 0
 #endif
-#ifndef AERON_PBR_DETAILS
-#define AERON_PBR_DETAILS 0
-#endif
-#ifndef AERON_PBR_PROBES
+#if AERON_PBR_WORD_PROBES || AERON_PBR_WORD_MIRROR
+#define AERON_PBR_PROBES 1
+#else
 #define AERON_PBR_PROBES 0
 #endif
-#ifndef AERON_PBR_MIRROR
-#define AERON_PBR_MIRROR 0
+#if AERON_PBR_WORD_SCREEN || AERON_PBR_WORD_DEBUG
+#define AERON_PBR_SCREENS 1
+#else
+#define AERON_PBR_SCREENS 0
 #endif
-#ifndef AERON_PBR_LIGHT_LIST
-#define AERON_PBR_LIGHT_LIST 0
+#if AERON_PBR_WORD_IBL || AERON_PBR_WORD_PROBES || AERON_PBR_WORD_MIRROR || AERON_PBR_WORD_DEBUG
+#define AERON_PBR_ENVIRONMENT 1
+#else
+#define AERON_PBR_ENVIRONMENT 0
 #endif
 
 #define AERON_DIRECTIONAL_SHADOW_UNIFORM_REGISTER b0

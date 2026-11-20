@@ -131,6 +131,67 @@ static AeronShader* pbr_shader(const char* name, AeronShaderStage stage, uint32_
 	return sh;
 }
 
+/* Feature flags for the model fragment shaders. Each flag matches one word
+ * in a shader's name: for example, scene_pbr_mesh_mask_ibl.frag has
+ * AERON_PBR_FEATURE_MASK and AERON_PBR_FEATURE_IBL. The file
+ * shaders/scene_pbr_mesh.variants lists every shader and explains the
+ * words. */
+typedef enum PbrMeshFeature {
+	AERON_PBR_FEATURE_MASK    = 1 << 0,
+	AERON_PBR_FEATURE_BLEND   = 1 << 1,
+	AERON_PBR_FEATURE_SCREEN  = 1 << 2,
+	AERON_PBR_FEATURE_IBL     = 1 << 3,
+	AERON_PBR_FEATURE_PROBES  = 1 << 4,
+	AERON_PBR_FEATURE_MIRROR  = 1 << 5,
+	AERON_PBR_FEATURE_ANIM    = 1 << 6,
+	AERON_PBR_FEATURE_DETAILS = 1 << 7,
+	AERON_PBR_FEATURE_LIST    = 1 << 8,
+	AERON_PBR_FEATURE_DEBUG   = 1 << 9,
+} PbrMeshFeature;
+
+typedef struct PbrMeshVariant {
+	const char* name;
+	uint32_t    features;
+} PbrMeshVariant;
+
+/* Every model fragment shader in this build. CMake generates this list from
+ * shaders/scene_pbr_mesh.variants (see aeron_compile_pbr_mesh_variants). */
+static const PbrMeshVariant k_pbr_mesh_variants[] = {
+#define AERON_PBR_MESH_VARIANT(name, features) { name, features },
+#include "aeron_pbr_mesh_variants.inc"
+#undef AERON_PBR_MESH_VARIANT
+};
+
+/* Loads the model fragment shader with exactly these features. Returns NULL
+ * if the build has no such shader. That is not an error, because not every
+ * combination of features is built, so nothing is logged. */
+static AeronShader* pbr_mesh_shader(uint32_t features) {
+	for (size_t i = 0; i < sizeof k_pbr_mesh_variants / sizeof k_pbr_mesh_variants[0]; i++) {
+		if (k_pbr_mesh_variants[i].features != features) {
+			continue;
+		}
+		/* Resource counts. They must match scene_pbr_mesh_impl.hlsli. The
+		 * base shader uses 12 textures, 3 uniform blocks and 7 storage
+		 * buffers. Animation adds 2 textures, 1 uniform block and 1 storage
+		 * buffer. Probes add 2 textures. Debug views add 1 uniform block. */
+		const uint32_t anim   = (features & (AERON_PBR_FEATURE_ANIM | AERON_PBR_FEATURE_DETAILS)) != 0;
+		const uint32_t probes = (features & (AERON_PBR_FEATURE_PROBES | AERON_PBR_FEATURE_MIRROR)) != 0;
+		const uint32_t debug  = (features & AERON_PBR_FEATURE_DEBUG) != 0;
+		return pbr_shader(k_pbr_mesh_variants[i].name, AERON_SHADER_STAGE_FRAGMENT, 12 + 2 * anim + 2 * probes,
+						  3 + anim + debug, 7 + anim);
+	}
+	return NULL;
+}
+
+/* Converts a shader index from pbr_color_variant to feature flags. The
+ * indices are 0 plain, 1 mask, 2 blend, 3 screen, 4 mask with screen. */
+static uint32_t pbr_variant_features(int variant) {
+	static const uint32_t features[5] = { 0, AERON_PBR_FEATURE_MASK, AERON_PBR_FEATURE_BLEND,
+										  AERON_PBR_FEATURE_SCREEN,
+										  AERON_PBR_FEATURE_MASK | AERON_PBR_FEATURE_SCREEN };
+	return features[variant];
+}
+
 static void pbr_vertex_input(AeronVertexAttributeDesc attrs[6], AeronVertexBufferLayoutDesc* vbd) {
 	attrs[0] = (AeronVertexAttributeDesc) { .location    = 0,
 											.buffer_slot = 0,
@@ -497,19 +558,6 @@ static int pbr_instance_anim_level(const struct AeronScene3D* s, const AeronScen
  * its shaders do not load. The shaders of each are loaded on first use. */
 static AeronGraphicsPipeline* pbr_anim_pipeline_ibl(struct AeronScene3D* s, int kind, AeronCullMode cull,
 													int details, int ibl) {
-	static const char* const names[2][2][5] = {
-		{ { "scene_pbr_mesh_anim.frag", "scene_pbr_mesh_mask_anim.frag", "scene_pbr_mesh_blend_anim.frag",
-			"scene_pbr_mesh_screen_anim.frag", "scene_pbr_mesh_mask_screen_anim.frag" },
-		  { "scene_pbr_mesh_ibl_anim.frag", "scene_pbr_mesh_mask_ibl_anim.frag",
-			"scene_pbr_mesh_blend_ibl_anim.frag", "scene_pbr_mesh_screen_ibl_anim.frag",
-			"scene_pbr_mesh_mask_screen_ibl_anim.frag" } },
-		{ { "scene_pbr_mesh_details.frag", "scene_pbr_mesh_mask_details.frag",
-			"scene_pbr_mesh_blend_details.frag", "scene_pbr_mesh_screen_details.frag",
-			"scene_pbr_mesh_mask_screen_details.frag" },
-		  { "scene_pbr_mesh_ibl_details.frag", "scene_pbr_mesh_mask_ibl_details.frag",
-			"scene_pbr_mesh_blend_ibl_details.frag", "scene_pbr_mesh_screen_ibl_details.frag",
-			"scene_pbr_mesh_mask_screen_ibl_details.frag" } },
-	};
 	if (!s->pbr_anim_tried[details]) {
 		s->pbr_anim_tried[details] = 1;
 		if (!s->pbr_anim_vs)
@@ -517,7 +565,8 @@ static AeronGraphicsPipeline* pbr_anim_pipeline_ibl(struct AeronScene3D* s, int 
 		for (int i = 0; i < 2; ++i)
 			for (int v = 0; v < 5; ++v)
 				s->pbr_anim_fs[details][i][v] =
-					pbr_shader(names[details][i][v], AERON_SHADER_STAGE_FRAGMENT, 14, 4, 8);
+					pbr_mesh_shader(pbr_variant_features(v) | (i ? AERON_PBR_FEATURE_IBL : 0) |
+									(details ? AERON_PBR_FEATURE_DETAILS : AERON_PBR_FEATURE_ANIM));
 	}
 	AeronShader* shader = s->pbr_anim_fs[details][ibl][pbr_color_variant(kind)];
 	if (!shader || !s->pbr_anim_vs)
@@ -538,9 +587,8 @@ static AeronGraphicsPipeline* pbr_anim_pipeline(struct AeronScene3D* s, int kind
 }
 
 /* The `_list` shaders are versions of the colour shaders for instances that
- * have a light list (light_list.h). They are separate shaders because
- * adding the list code to the normal shaders made those slower, even for
- * instances without a list.
+ * have a light list (light_list.h). They are separate shaders so the list
+ * code stays out of the normal shaders.
  *
  * Each family below has its own `_list` shaders: plain, with image-based
  * lighting, with animation, with detail layers, and the probe variants at
@@ -578,54 +626,33 @@ static int pbr_list_family(const struct AeronScene3D* s, int anim, int probe) {
  * first use. */
 static AeronGraphicsPipeline* pbr_list_pipeline(struct AeronScene3D* s, int family, int kind,
 												AeronCullMode cull) {
-	static const char* const names[AERON_PBR_LIST_FAMILY_COUNT][5] = {
-		{ "scene_pbr_mesh_list.frag", "scene_pbr_mesh_mask_list.frag", "scene_pbr_mesh_blend_list.frag",
-		  "scene_pbr_mesh_screen_list.frag", "scene_pbr_mesh_mask_screen_list.frag" },
-		{ "scene_pbr_mesh_ibl_list.frag", "scene_pbr_mesh_mask_ibl_list.frag",
-		  "scene_pbr_mesh_blend_ibl_list.frag", "scene_pbr_mesh_screen_ibl_list.frag",
-		  "scene_pbr_mesh_mask_screen_ibl_list.frag" },
-		{ "scene_pbr_mesh_anim_list.frag", "scene_pbr_mesh_mask_anim_list.frag",
-		  "scene_pbr_mesh_blend_anim_list.frag", "scene_pbr_mesh_screen_anim_list.frag",
-		  "scene_pbr_mesh_mask_screen_anim_list.frag" },
-		{ "scene_pbr_mesh_ibl_anim_list.frag", "scene_pbr_mesh_mask_ibl_anim_list.frag",
-		  "scene_pbr_mesh_blend_ibl_anim_list.frag", "scene_pbr_mesh_screen_ibl_anim_list.frag",
-		  "scene_pbr_mesh_mask_screen_ibl_anim_list.frag" },
-		{ "scene_pbr_mesh_details_list.frag", "scene_pbr_mesh_mask_details_list.frag",
-		  "scene_pbr_mesh_blend_details_list.frag", "scene_pbr_mesh_screen_details_list.frag",
-		  "scene_pbr_mesh_mask_screen_details_list.frag" },
-		{ "scene_pbr_mesh_ibl_details_list.frag", "scene_pbr_mesh_mask_ibl_details_list.frag",
-		  "scene_pbr_mesh_blend_ibl_details_list.frag", "scene_pbr_mesh_screen_ibl_details_list.frag",
-		  "scene_pbr_mesh_mask_screen_ibl_details_list.frag" },
-		{ "scene_pbr_mesh_probes_list.frag", "scene_pbr_mesh_mask_probes_list.frag",
-		  "scene_pbr_mesh_blend_probes_list.frag", NULL, NULL },
-		{ "scene_pbr_mesh_probes_anim_list.frag", "scene_pbr_mesh_mask_probes_anim_list.frag",
-		  "scene_pbr_mesh_blend_probes_anim_list.frag", NULL, NULL },
-		{ "scene_pbr_mesh_probes_details_list.frag", "scene_pbr_mesh_mask_probes_details_list.frag",
-		  "scene_pbr_mesh_blend_probes_details_list.frag", NULL, NULL },
-	};
-	/* The samplers, uniform blocks and storage buffers that each family's
-	 * shaders declare. They are the same as for the normal shaders. */
-	static const uint8_t resources[AERON_PBR_LIST_FAMILY_COUNT][3] = {
-		{ 12, 3, 7 }, { 12, 3, 7 }, { 14, 4, 8 }, { 14, 4, 8 }, { 14, 4, 8 },
-		{ 14, 4, 8 }, { 14, 3, 7 }, { 16, 4, 8 }, { 16, 4, 8 },
+	/* Feature flags for each family. The flags of the colour kind are added
+	 * to these. */
+	static const uint32_t family_features[AERON_PBR_LIST_FAMILY_COUNT] = {
+		0,
+		AERON_PBR_FEATURE_IBL,
+		AERON_PBR_FEATURE_ANIM,
+		AERON_PBR_FEATURE_IBL | AERON_PBR_FEATURE_ANIM,
+		AERON_PBR_FEATURE_DETAILS,
+		AERON_PBR_FEATURE_IBL | AERON_PBR_FEATURE_DETAILS,
+		AERON_PBR_FEATURE_PROBES,
+		AERON_PBR_FEATURE_PROBES | AERON_PBR_FEATURE_ANIM,
+		AERON_PBR_FEATURE_PROBES | AERON_PBR_FEATURE_DETAILS,
 	};
 	if (family < 0 || family >= AERON_PBR_LIST_FAMILY_COUNT || !pbr_color_kind(kind)) {
 		return NULL;
 	}
-	const int variant = pbr_color_variant(kind);
-	if (!names[family][variant]) {
-		return NULL;
-	}
+	const int variant  = pbr_color_variant(kind);
 	const int animated = family != PBR_LIST_PLAIN && family != PBR_LIST_IBL && family != PBR_LIST_PROBES;
 	if (!s->pbr_list_tried[family]) {
 		s->pbr_list_tried[family] = 1;
 		if (animated && !s->pbr_anim_vs)
 			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+		/* Some entries stay NULL: the probe families have no screen
+		 * shaders. */
 		for (int v = 0; v < 5; ++v) {
-			if (names[family][v])
-				s->pbr_list_fs[family][v] =
-					pbr_shader(names[family][v], AERON_SHADER_STAGE_FRAGMENT, resources[family][0],
-							   resources[family][1], resources[family][2]);
+			s->pbr_list_fs[family][v] = pbr_mesh_shader(family_features[family] | pbr_variant_features(v) |
+														AERON_PBR_FEATURE_LIST);
 		}
 	}
 	AeronShader* vs     = animated ? s->pbr_anim_vs : s->pbr_vs;
@@ -703,15 +730,14 @@ int AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh
  * its shaders don't load. */
 static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kind, AeronCullMode cull,
 												 int anim) {
-	static const char* const names[3][5] = {
-		{ "scene_pbr_mesh_probes.frag", "scene_pbr_mesh_mask_probes.frag", "scene_pbr_mesh_blend_probes.frag",
-		  "scene_pbr_mesh_mirror.frag", "scene_pbr_mesh_mask_mirror.frag" },
-		{ "scene_pbr_mesh_probes_anim.frag", "scene_pbr_mesh_mask_probes_anim.frag",
-		  "scene_pbr_mesh_blend_probes_anim.frag", "scene_pbr_mesh_mirror_anim.frag",
-		  "scene_pbr_mesh_mask_mirror_anim.frag" },
-		{ "scene_pbr_mesh_probes_details.frag", "scene_pbr_mesh_mask_probes_details.frag",
-		  "scene_pbr_mesh_blend_probes_details.frag", "scene_pbr_mesh_mirror_details.frag",
-		  "scene_pbr_mesh_mask_mirror_details.frag" },
+	/* Feature flags for the five shaders of each animation level: probes
+	 * with plain, mask and blend, then mirror with plain and mask. */
+	static const uint32_t probe_features[5] = {
+		AERON_PBR_FEATURE_PROBES,
+		AERON_PBR_FEATURE_PROBES | AERON_PBR_FEATURE_MASK,
+		AERON_PBR_FEATURE_PROBES | AERON_PBR_FEATURE_BLEND,
+		AERON_PBR_FEATURE_MIRROR,
+		AERON_PBR_FEATURE_MIRROR | AERON_PBR_FEATURE_MASK,
 	};
 	if (!pbr_color_kind(kind) || pbr_screen_base_kind(kind) >= 0) {
 		return NULL;
@@ -723,10 +749,10 @@ static AeronGraphicsPipeline* pbr_probe_pipeline(struct AeronScene3D* s, int kin
 			s->pbr_anim_vs = pbr_shader("scene_pbr_mesh_anim.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 		for (int v = 0; v < 5; ++v) {
 			if (details) {
-				s->pbr_probe_fs[2][v] = pbr_shader(names[2][v], AERON_SHADER_STAGE_FRAGMENT, 16, 4, 8);
+				s->pbr_probe_fs[2][v] = pbr_mesh_shader(probe_features[v] | AERON_PBR_FEATURE_DETAILS);
 			} else {
-				s->pbr_probe_fs[0][v] = pbr_shader(names[0][v], AERON_SHADER_STAGE_FRAGMENT, 14, 3, 7);
-				s->pbr_probe_fs[1][v] = pbr_shader(names[1][v], AERON_SHADER_STAGE_FRAGMENT, 16, 4, 8);
+				s->pbr_probe_fs[0][v] = pbr_mesh_shader(probe_features[v]);
+				s->pbr_probe_fs[1][v] = pbr_mesh_shader(probe_features[v] | AERON_PBR_FEATURE_ANIM);
 			}
 		}
 	}
@@ -761,9 +787,8 @@ static AeronGraphicsPipeline* pbr_debug_pipeline(struct AeronScene3D* s, int kin
 	if (!s->pbr_debug_tried) {
 		s->pbr_debug_tried = 1;
 		/* The debug shaders have a fourth uniform block, PbrDebugFS. */
-		s->pbr_debug_fs = pbr_shader("scene_pbr_mesh_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 4, 7);
-		s->pbr_mask_debug_fs =
-			pbr_shader("scene_pbr_mesh_mask_debug.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 4, 7);
+		s->pbr_debug_fs      = pbr_mesh_shader(AERON_PBR_FEATURE_DEBUG);
+		s->pbr_mask_debug_fs = pbr_mesh_shader(AERON_PBR_FEATURE_DEBUG | AERON_PBR_FEATURE_MASK);
 	}
 	if (!s->pbr_debug_fs || !s->pbr_mask_debug_fs) {
 		return NULL;
@@ -971,19 +996,17 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	s->pbr_prepass_vs       = pbr_shader("scene_pbr_prepass.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 	s->pbr_prepass_mask_vs  = pbr_shader("scene_pbr_prepass_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 	s->pbr_prepass_stamp_vs = pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
-	s->pbr_fs               = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_mask_fs          = pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_blend_fs         = pbr_shader("scene_pbr_mesh_blend.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_screen_fs        = pbr_shader("scene_pbr_mesh_screen.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_mask_screen_fs =
-		pbr_shader("scene_pbr_mesh_mask_screen.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_ibl_fs       = pbr_shader("scene_pbr_mesh_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_mask_ibl_fs  = pbr_shader("scene_pbr_mesh_mask_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_blend_ibl_fs = pbr_shader("scene_pbr_mesh_blend_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
-	s->pbr_screen_ibl_fs =
-		pbr_shader("scene_pbr_mesh_screen_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+	s->pbr_fs             = pbr_mesh_shader(0);
+	s->pbr_mask_fs        = pbr_mesh_shader(AERON_PBR_FEATURE_MASK);
+	s->pbr_blend_fs       = pbr_mesh_shader(AERON_PBR_FEATURE_BLEND);
+	s->pbr_screen_fs      = pbr_mesh_shader(AERON_PBR_FEATURE_SCREEN);
+	s->pbr_mask_screen_fs = pbr_mesh_shader(AERON_PBR_FEATURE_MASK | AERON_PBR_FEATURE_SCREEN);
+	s->pbr_ibl_fs         = pbr_mesh_shader(AERON_PBR_FEATURE_IBL);
+	s->pbr_mask_ibl_fs    = pbr_mesh_shader(AERON_PBR_FEATURE_MASK | AERON_PBR_FEATURE_IBL);
+	s->pbr_blend_ibl_fs   = pbr_mesh_shader(AERON_PBR_FEATURE_BLEND | AERON_PBR_FEATURE_IBL);
+	s->pbr_screen_ibl_fs  = pbr_mesh_shader(AERON_PBR_FEATURE_SCREEN | AERON_PBR_FEATURE_IBL);
 	s->pbr_mask_screen_ibl_fs =
-		pbr_shader("scene_pbr_mesh_mask_screen_ibl.frag", AERON_SHADER_STAGE_FRAGMENT, 12, 3, 7);
+		pbr_mesh_shader(AERON_PBR_FEATURE_MASK | AERON_PBR_FEATURE_SCREEN | AERON_PBR_FEATURE_IBL);
 	s->pbr_prepass_fs      = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	s->pbr_prepass_mask_fs = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	s->pbr_backface_vs     = pbr_shader("scene_pbr_backface.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);

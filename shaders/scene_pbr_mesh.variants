@@ -1,0 +1,113 @@
+# Model fragment shaders. Each line below is one shader. The build compiles
+# all of them from scene_pbr_mesh_impl.hlsli and writes each one to
+# <name>.frag.
+#
+# A name is "scene_pbr_mesh" followed by one word per feature, in this order:
+#
+#   mask or blend   alpha-tested or blended materials
+#   screen          primitives that show a screen
+#   ibl             lighting from an environment map
+#   probes          lighting from the model's probes and an environment map
+#   mirror          a lighter version of probes, for the floor's mirrored view
+#   anim            material animation
+#   details         material animation with detail layers
+#   list            uses the instance's light list instead of the light clusters
+#   debug           debug views (only built with AERON_DEBUG_UI)
+#
+# To add a shader, add a line here.
+#
+# To add a feature, pick a word and use it in the names here. The build then
+# defines AERON_PBR_WORD_<WORD> for those shaders: use it in
+# scene_pbr_mesh_impl.hlsli. Also add AERON_PBR_FEATURE_<WORD> to
+# PbrMeshFeature in src/scene/pbr.c, which finds shaders by their features.
+
+scene_pbr_mesh
+scene_pbr_mesh_list
+scene_pbr_mesh_anim
+scene_pbr_mesh_anim_list
+scene_pbr_mesh_details
+scene_pbr_mesh_details_list
+scene_pbr_mesh_mask
+scene_pbr_mesh_mask_list
+scene_pbr_mesh_mask_anim
+scene_pbr_mesh_mask_anim_list
+scene_pbr_mesh_mask_details
+scene_pbr_mesh_mask_details_list
+scene_pbr_mesh_blend
+scene_pbr_mesh_blend_list
+scene_pbr_mesh_blend_anim
+scene_pbr_mesh_blend_anim_list
+scene_pbr_mesh_blend_details
+scene_pbr_mesh_blend_details_list
+scene_pbr_mesh_screen
+scene_pbr_mesh_screen_list
+scene_pbr_mesh_screen_anim
+scene_pbr_mesh_screen_anim_list
+scene_pbr_mesh_screen_details
+scene_pbr_mesh_screen_details_list
+scene_pbr_mesh_mask_screen
+scene_pbr_mesh_mask_screen_list
+scene_pbr_mesh_mask_screen_anim
+scene_pbr_mesh_mask_screen_anim_list
+scene_pbr_mesh_mask_screen_details
+scene_pbr_mesh_mask_screen_details_list
+
+scene_pbr_mesh_ibl
+scene_pbr_mesh_ibl_list
+scene_pbr_mesh_ibl_anim
+scene_pbr_mesh_ibl_anim_list
+scene_pbr_mesh_ibl_details
+scene_pbr_mesh_ibl_details_list
+scene_pbr_mesh_mask_ibl
+scene_pbr_mesh_mask_ibl_list
+scene_pbr_mesh_mask_ibl_anim
+scene_pbr_mesh_mask_ibl_anim_list
+scene_pbr_mesh_mask_ibl_details
+scene_pbr_mesh_mask_ibl_details_list
+scene_pbr_mesh_blend_ibl
+scene_pbr_mesh_blend_ibl_list
+scene_pbr_mesh_blend_ibl_anim
+scene_pbr_mesh_blend_ibl_anim_list
+scene_pbr_mesh_blend_ibl_details
+scene_pbr_mesh_blend_ibl_details_list
+scene_pbr_mesh_screen_ibl
+scene_pbr_mesh_screen_ibl_list
+scene_pbr_mesh_screen_ibl_anim
+scene_pbr_mesh_screen_ibl_anim_list
+scene_pbr_mesh_screen_ibl_details
+scene_pbr_mesh_screen_ibl_details_list
+scene_pbr_mesh_mask_screen_ibl
+scene_pbr_mesh_mask_screen_ibl_list
+scene_pbr_mesh_mask_screen_ibl_anim
+scene_pbr_mesh_mask_screen_ibl_anim_list
+scene_pbr_mesh_mask_screen_ibl_details
+scene_pbr_mesh_mask_screen_ibl_details_list
+
+scene_pbr_mesh_probes
+scene_pbr_mesh_probes_list
+scene_pbr_mesh_probes_anim
+scene_pbr_mesh_probes_anim_list
+scene_pbr_mesh_probes_details
+scene_pbr_mesh_probes_details_list
+scene_pbr_mesh_mask_probes
+scene_pbr_mesh_mask_probes_list
+scene_pbr_mesh_mask_probes_anim
+scene_pbr_mesh_mask_probes_anim_list
+scene_pbr_mesh_mask_probes_details
+scene_pbr_mesh_mask_probes_details_list
+scene_pbr_mesh_blend_probes
+scene_pbr_mesh_blend_probes_list
+scene_pbr_mesh_blend_probes_anim
+scene_pbr_mesh_blend_probes_anim_list
+scene_pbr_mesh_blend_probes_details
+scene_pbr_mesh_blend_probes_details_list
+
+scene_pbr_mesh_mirror
+scene_pbr_mesh_mirror_anim
+scene_pbr_mesh_mirror_details
+scene_pbr_mesh_mask_mirror
+scene_pbr_mesh_mask_mirror_anim
+scene_pbr_mesh_mask_mirror_details
+
+scene_pbr_mesh_debug
+scene_pbr_mesh_mask_debug
