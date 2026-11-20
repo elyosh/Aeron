@@ -1,6 +1,6 @@
-/* Draws a mesh's own vertices for the projected overlays (mesh_overlay.h),
- * and works out each image's UV at the vertex from its position before
- * articulation, so no copy of the geometry is needed. */
+/* Vertex shader for the projected overlays (see mesh_overlay.h). It draws
+ * the mesh's own vertices and computes each image's UV from the vertex
+ * position, so no copy of the geometry is needed. */
 #include "scene_mesh_projection.hlsli"
 cbuffer OverlayVS : register(b0, space1) {
 	row_major float4x4 view_proj;
@@ -16,13 +16,13 @@ cbuffer ProjectionVS : register(b1, space1) {
 };
 #include "mesh_table_layout.hlsli"
 StructuredBuffer<float4> mesh_tables : register(t0, space0);
-/* The position and the component of an AeronGltfVertex. */
+/* Only the position and the component of AeronGltfVertex are read. */
 struct VSIn {
 	float3 pos : POSITION;
 	float  component : COLOR0;
 };
-/* The UVs of images 0 and 1, then of images 2 and 3. A fragment shader for
- * one or two images only reads the first. */
+/* uv01 holds the UVs of images 0 and 1, and uv23 those of images 2 and 3.
+ * The fragment shaders for one or two images only read uv01. */
 struct VSOut {
 	float4 pos : SV_Position;
 	float4 uv01 : TEXCOORD0;
@@ -33,8 +33,8 @@ VSOut main(VSIn input) {
 	uint  row       = (uint)max((int)round(input.component), 0);
 	uint  component = min(row, table_component_count - 1u);
 	uint table_base = mesh_table_base;
-	/* The UVs are linear in the position, so the values that the GPU
-	 * interpolates between the vertices are the exact UVs of each pixel. */
+	/* The UVs are a linear function of the position. So when the GPU
+	 * interpolates them between vertices, each pixel gets its exact UV. */
 	uint mask_row  = min(row, 255u);
 	uint mask_word = mask_row >> 5u;
 	uint mask_bit  = 1u << (mask_row & 31u);

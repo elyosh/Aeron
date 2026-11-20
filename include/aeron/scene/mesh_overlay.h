@@ -59,31 +59,40 @@ typedef struct AeronSceneMeshOverlayDesc {
 
 void AeronScene_AddMeshOverlay(AeronScene3D* scene, const AeronSceneMeshOverlayDesc* overlay);
 
-/* The most images that one projected overlay draws. */
+/* The maximum number of images in one projected overlay. */
 #define AERON_SCENE_MESH_PROJECTIONS_MAX 4
 
-/* An image projected on a mesh. A point of the mesh gets the image's UV
- * from its position in the mesh's own frame, before the mesh table moves it:
- * u = dot(u_row.xyz, position) + u_row.w, and v the same way. */
+/* One image projected on a mesh. The image's UV at a point of the mesh is
+ * computed from the point's position:
+ *   u = dot(u_row.xyz, position) + u_row.w
+ *   v = dot(v_row.xyz, position) + v_row.w
+ * The position is in the mesh's own space, before the mesh table moves the
+ * vertex. */
 typedef struct AeronSceneMeshProjection {
 	float u_row[4];
 	float v_row[4];
-	float uv_rect[4]; /* min u, min v, max u, max v: nothing is drawn outside */
-	float color[4];   /* multiplies the image; literal linear straight RGBA */
-	/* The mesh-table rows (AeronGltfVertex.component) whose vertices take
-	 * the image: bit r % 32 of word r / 32, for the rows 0 to 255. */
+	float uv_rect[4]; /* min u, min v, max u, max v. Nothing is drawn outside it. */
+	float color[4];   /* The image is multiplied by this. Linear, straight alpha. */
+	/* Which mesh-table rows (AeronGltfVertex.component) the image applies
+	 * to. Row r uses bit r % 32 of word r / 32. Only rows 0 to 255 can be
+	 * selected. */
 	uint32_t rows[8];
 } AeronSceneMeshProjection;
 
-/* Images of one texture projected on a mesh, such as the flashes of the
- * hits on a craft's shields. The scene draws the mesh's own triangles once
- * for all the images, so the game doesn't build or upload a copy of the
- * geometry, and several images cost one pass over the mesh. The images
- * blend one over the other in order, with premultiplied alpha, each as an
- * unlit AeronSceneMeshOverlayDesc with AERON_SCENE_MESH_OVERLAY_BLEND_PMA
- * would be drawn. `transform`, `mesh_table`, `depth_bias_view` and
- * `cull_mode` are as in AeronSceneMeshOverlayDesc. The mesh must stay alive
- * until the frame is rendered. */
+/* Several images from one texture, projected on a mesh. An example is the
+ * flashes from hits on a craft's shields.
+ *
+ * The scene draws the mesh's own triangles once for all the images. The
+ * game does not need to build or upload a copy of the geometry, and several
+ * images only cost one pass over the mesh.
+ *
+ * The images are blended in order with premultiplied alpha. The result is
+ * the same as drawing each one as an unlit AeronSceneMeshOverlayDesc with
+ * AERON_SCENE_MESH_OVERLAY_BLEND_PMA.
+ *
+ * `transform`, `mesh_table`, `depth_bias_view` and `cull_mode` mean the same
+ * as in AeronSceneMeshOverlayDesc. The mesh must stay alive until the frame
+ * is rendered. */
 typedef struct AeronSceneMeshProjectedOverlayDesc {
 	const struct AeronSceneMesh*    mesh;
 	AeronTexture*                   texture;

@@ -33,8 +33,8 @@ typedef struct OverlayLitUniforms {
 	float shading[4];
 } OverlayLitUniforms;
 
-/* The block of the projected overlays' images, which both of their shaders
- * read (scene_mesh_projection.hlsli). */
+/* The uniform block with a projected overlay's images. Both the vertex and
+ * the fragment shader read it (see scene_mesh_projection.hlsli). */
 typedef struct OverlayProjectedUniforms {
 	uint32_t                 count;
 	uint32_t                 _pad[3];
@@ -209,9 +209,9 @@ static AeronGraphicsPipeline* create_overlay_pipeline(AeronScene3D* scene, Aeron
 	});
 }
 
-/* The pipeline of the projected overlays for a fragment shader and a cull
- * mode. It reads the position and the component of a mesh's
- * AeronGltfVertex, and blends with premultiplied alpha. */
+/* Creates a projected overlay pipeline for one fragment shader and one cull
+ * mode. Its vertex input is the position and component of AeronGltfVertex,
+ * and it blends with premultiplied alpha. */
 static AeronGraphicsPipeline* create_projected_pipeline(AeronScene3D* scene, AeronShader* fragment_shader,
 														AeronCullMode cull_mode) {
 	AeronVertexAttributeDesc vertex_attributes[2] = {
@@ -307,7 +307,8 @@ int AeronSceneMeshOverlay_Prepare(AeronScene3D* scene, AeronCommandBuffer* comma
 		return 0;
 	}
 	scene->overlay_frame_ready = 0;
-	/* Only projected overlays: they draw their mesh's own vertices. */
+	/* Nothing to upload: projected overlays draw their mesh's own
+	 * vertices. */
 	if (scene->overlay_vertex_count == 0) {
 		scene->overlay_frame_ready = 1;
 		return 1;
@@ -355,8 +356,8 @@ static void bind_lighting(AeronScene3D* scene, AeronRenderPass* render_pass, Aer
 	Aeron_BindStorageBuffer(render_pass, AERON_SHADER_STAGE_FRAGMENT, 1, scene->cluster_data_buffer);
 }
 
-/* Draws a projected overlay: the mesh's own triangles, once for all the
- * overlay's images. */
+/* Draws a projected overlay. It draws the mesh's own triangles once, for
+ * all the overlay's images. */
 static void draw_projected_overlay(AeronScene3D* scene, AeronRenderPass* render_pass,
 								   const AeronSceneMeshOverlayEntry* overlay) {
 	AeronGraphicsPipeline* pipeline =
@@ -381,8 +382,8 @@ static void draw_projected_overlay(AeronScene3D* scene, AeronRenderPass* render_
 	images.count = overlay->projection_count;
 	memcpy(images.projections, &scene->overlay_projections[overlay->projection_first],
 		   (size_t)overlay->projection_count * sizeof *images.projections);
-	/* The vertex shader works out the UVs, and the fragment shader reads the
-	 * rest. */
+	/* The vertex shader computes the UVs from this block. The fragment
+	 * shader reads the rectangles and colours from it. */
 	Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_VERTEX, 1, &images,
 						  sizeof images);
 	Aeron_BindUniformData(render_pass, AERON_SHADER_STAGE_FRAGMENT, 0, &images,
@@ -406,8 +407,8 @@ void AeronSceneMeshOverlay_Draw(AeronScene3D* scene, AeronRenderPass* render_pas
 		visibility && scene->shadow_stats.active && !scene->directional_shadow.debug_cascades;
 	/* An unlit overlay's block replaces the shadow block at slot 0. */
 	int lighting_bound = 0;
-	/* Whether the overlays' own vertices are bound. A projected overlay
-	 * binds its mesh's vertices in their place. */
+	/* Nonzero while the shared overlay vertex buffer is bound. A projected
+	 * overlay binds its mesh's vertex buffer instead. */
 	int own_vertices_bound = 0;
 	Aeron_BindStorageBuffer(render_pass, AERON_SHADER_STAGE_VERTEX, 0, scene->mesh_table_buffer);
 	for (uint32_t overlay_index = 0; overlay_index < scene->overlay_count; overlay_index++) {

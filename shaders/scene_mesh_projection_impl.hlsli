@@ -1,11 +1,13 @@
-/* The fragment shader of the projected overlays (mesh_overlay.h), for
- * PROJECTION_COUNT images of one texture, 1 to 4. Each image is drawn as
- * scene_mesh_overlay.frag draws it, and the images blend one over the other
- * in order, with premultiplied alpha. The result is the same as one overlay
- * for each image, but the mesh is only drawn once.
+/* Fragment shader for the projected overlays (see mesh_overlay.h). It draws
+ * PROJECTION_COUNT images from one texture, where PROJECTION_COUNT is 1 to 4.
  *
- * There is one shader for each count, so that each does no more work than
- * its images need: scene_mesh_projection_1.frag to _4.frag. */
+ * Each image is drawn the same way as in scene_mesh_overlay.frag. The images
+ * are blended in order with premultiplied alpha. The result is the same as
+ * drawing one overlay per image, but the mesh is only drawn once.
+ *
+ * There is one compiled shader per count (scene_mesh_projection_1.frag to
+ * scene_mesh_projection_4.frag), so a shader never does work for images it
+ * doesn't have. */
 #include "scene_mesh_projection.hlsli"
 Texture2D<float4> g_texture : register(t0, space2);
 SamplerState      s_texture : register(s0, space2);
@@ -20,9 +22,9 @@ struct VSOut {
 	float4 uv23 : TEXCOORD1;
 #endif
 };
-/* Draws image `index` over what the images before it added. The image is
- * sampled for every pixel, before the tests, so that the GPU can work out
- * its mip level. */
+/* Blends image `index` over the images before it. The texture is sampled
+ * for every pixel, before the tests, because the GPU needs that to pick the
+ * mip level. */
 void add_image(uint index, float2 uv, inout float3 added, inout float kept, inout bool drawn) {
 	float4 sampled = g_texture.Sample(s_texture, uv) * projections[index].color;
 	bool   shown   = all(uv >= projections[index].uv_rect.xy) && all(uv <= projections[index].uv_rect.zw) &&
@@ -33,8 +35,8 @@ void add_image(uint index, float2 uv, inout float3 added, inout float kept, inou
 	drawn = drawn || shown;
 }
 float4 main(VSOut input) : SV_Target {
-	/* What the images drawn so far add to the pixel, and how much of the
-	 * pixel's own colour they leave. */
+	/* `added` is the colour the images add to the pixel so far. `kept` is
+	 * the share of the pixel's own colour that remains. */
 	float3 added = float3(0.0f, 0.0f, 0.0f);
 	float  kept  = 1.0f;
 	bool   drawn = false;

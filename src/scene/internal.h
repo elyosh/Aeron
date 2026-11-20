@@ -146,9 +146,9 @@ typedef struct AeronSceneMeshOverlayEntry {
 	uint8_t                    blend;
 	uint8_t                    cull_mode;
 	uint8_t                    lit;
-	/* A projected overlay (AeronSceneMeshProjectedOverlayDesc): the mesh
-	 * whose triangles it draws, and its images in overlay_projections. NULL
-	 * for an overlay with its own vertices. */
+	/* Set for a projected overlay (AeronSceneMeshProjectedOverlayDesc): the
+	 * mesh to draw, and where its images are in overlay_projections.
+	 * projected_mesh is NULL for an overlay that has its own vertices. */
 	const struct AeronSceneMesh* projected_mesh;
 	uint32_t                     projection_first;
 	uint32_t                     projection_count;
@@ -743,12 +743,13 @@ struct AeronScene3D {
 	AeronShader*                 overlay_fs;
 	AeronShader*                 overlay_array_fs;
 	AeronGraphicsPipeline*       overlay_pipes[3][3];
-	/* The images of the frame's projected overlays, and what draws them. */
+	/* The images of all projected overlays in this frame, and the shaders
+	 * and pipelines that draw them. */
 	AeronSceneMeshProjection* overlay_projections;
 	uint32_t                  overlay_projection_count;
 	uint32_t                  overlay_projection_cap;
 	AeronShader*              overlay_projected_vs;
-	/* One fragment shader for each number of images in a pass. */
+	/* One fragment shader per number of images in a pass. */
 	AeronShader*           overlay_projected_fs[AERON_SCENE_MESH_PROJECTIONS_MAX];
 	AeronGraphicsPipeline* overlay_projected_pipes[AERON_SCENE_MESH_PROJECTIONS_MAX][3]; /* [images - 1][cull] */
 	AeronGraphicsPipeline*       overlay_array_pipes[3][3]; /* [blend][cull], 2D array textures */
