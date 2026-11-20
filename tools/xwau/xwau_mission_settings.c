@@ -74,6 +74,13 @@ bool XwauSettingsConfig_Read(const char* game, XwauSettingsConfig* out) {
 	   it. */
 	out->pilot_hangar_droids = Xwau_DllHasText(game, "hook_pilot.dll", "890DFC0D9100");
 	XwauSection settings;
+	/* The hook applies its patches only when IsHookEnabled is on. */
+	if (Xwau_FindFile(game, "hook_tourmultiplayer.dll", path, sizeof path)) {
+		if (!XwauSection_ReadHook(game, "hook_tourmultiplayer", &settings))
+			return false;
+		out->tour_multiplayer = XwauSection_IntOr(&settings, "IsHookEnabled", 0) != 0;
+		XwauSection_Free(&settings);
+	}
 	if (Xwau_FindFile(game, "hook_weapon_type.dll", path, sizeof path)) {
 		out->weapon_type          = true;
 		out->weapon_type_missiles = Xwau_FileHasText(path, "To call the hook that fixes missile count");
@@ -170,7 +177,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		config->starship_ambient || config->weapon_rate_slot_cap || config->gunner_seats ||
 		config->weapon_rate_mesh_filter || config->weapon_rate_hardpoint_types ||
 		config->weapon_rate_rearm_statuses || config->jamming || config->weapon_type ||
-		config->crafts_count_sounds || config->pilot_hangar_droids || config->hyperspace.hyperspace;
+		config->crafts_count_sounds || config->pilot_hangar_droids || config->hyperspace.hyperspace ||
+		config->tour_multiplayer;
 	if (rules)
 		fputs("rules:\n", f);
 	if (config->mission_tie)
@@ -218,6 +226,8 @@ bool XwauMissionSettings_WriteDefaults(FILE* f, const XwauSettingsConfig* config
 		fputs("  overlapping_fly_by_sounds: true\n", f);
 	if (config->pilot_hangar_droids)
 		fputs("  hangar_droid_parts_from_model: true\n", f);
+	if (config->tour_multiplayer)
+		fputs("  player_waves_any_mission: true\n  craft_jumping_any_mission: true\n", f);
 	XwauExePatches_WriteRules(f, patches);
 	const bool     warheads = config->mission_tie && !config->warhead_collision_damage;
 	const bool     shields  = config->mission_tie && config->damage_through_shields;

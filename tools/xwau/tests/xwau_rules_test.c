@@ -3110,6 +3110,22 @@ static void test_object_limits(const char* scratch) {
 		  "pilot: the droid hooks give the droid rule");
 	free(text);
 	remove(pilot);
+	char tour[1100];
+	snprintf(tour, sizeof tour, "%s/hook_tourmultiplayer.dll", game);
+	write_file(tour, "MZ To call the hook that enables multiplayer tour");
+	snprintf(path, sizeof path, "%s/Hook_Tourmultiplayer.cfg", game);
+	write_file(path, "IsHookEnabled = 0\n");
+	text = flight_settings_text(game, settings);
+	check(text && !strstr(text, "player_waves_any_mission") && !strstr(text, "craft_jumping_any_mission"),
+		  "tour multiplayer: no rule from a hook that is off");
+	free(text);
+	write_file(path, "IsHookEnabled = 1\n");
+	text = flight_settings_text(game, settings);
+	check(text && strstr(text, "  player_waves_any_mission: true\n  craft_jumping_any_mission: true\n"),
+		  "tour multiplayer: the hook turned on gives the waves and craft-jumping rules");
+	free(text);
+	remove(path);
+	remove(tour);
 	snprintf(path, sizeof path, "%s/Missions/m.ini", game);
 	write_file(path, "[CraftsCount]\nProjectilesCount = 4096\nCraftsCount = 0\n");
 	snprintf(path, sizeof path, "%s/Missions/n_CraftsCount.txt", game);

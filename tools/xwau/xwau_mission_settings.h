@@ -102,6 +102,10 @@ typedef struct XwauSettingsConfig {
 	/* hook_pilot.dll with the hangar droid hooks: the droids move the parts
 	 * that their model lists, and no others. */
 	bool pilot_hangar_droids;
+	/* hook_tourmultiplayer.dll with IsHookEnabled on. In any mission, a
+	 * player who loses their craft takes the next craft of their flight
+	 * group, and the craft-jumping key works. */
+	bool tour_multiplayer;
 	bool warhead_collision_damage;
 	bool damage_through_shields;
 	/* hook_mission_tie's IsMissionRanksModifierEnabled: the difficulty
