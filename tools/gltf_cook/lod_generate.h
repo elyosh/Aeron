@@ -56,8 +56,8 @@ typedef struct AeronLodGenerateOptions {
 	 * own, so that engines and lights smaller than the error don't vanish.
 	 * They are taken by emitted light, brightest first, until they hold
 	 * emitter_share of the model's light or there are emitter_count of
-	 * them (at most 255). Each keeps at least emitter_min_triangles. 0 for
-	 * emitter_count turns this off. */
+	 * them (at most 255). Each keeps at least emitter_min_triangles, or all
+	 * of them when it has fewer. 0 for emitter_count turns this off. */
 	float emitter_share;
 	int   emitter_count;
 	int   emitter_min_triangles;

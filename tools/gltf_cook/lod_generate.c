@@ -583,12 +583,13 @@ static float simplify_class(const AeronGltfModel* model, const uint32_t* indices
 		}
 		/* On a coarse level, large components keep their open borders, so
 		 * that they don't pull apart from the parts beside them. An emitter
-		 * is never pruned and keeps a few triangles. */
+		 * is never pruned and keeps a few triangles, or all of them when it
+		 * has fewer. */
 		unsigned part_options = options;
 		size_t   min_indices  = 0;
 		if (emitter) {
 			part_options &= ~(unsigned)meshopt_SimplifyPrune;
-			min_indices = coarse->emitter_min_indices;
+			min_indices = coarse->emitter_min_indices < index_count ? coarse->emitter_min_indices : index_count;
 		} else if (coarse && coarse->lock_border_size > 0.0f &&
 				   extent >= coarse->lock_border_size * target_error) {
 			part_options |= meshopt_SimplifyLockBorder;
