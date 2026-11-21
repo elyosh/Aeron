@@ -189,9 +189,11 @@ typedef struct AeronScenePreparedInstance {
 	 * (AeronSceneLightList_Build). light_list_set is 0 when the instance
 	 * uses the clusters. AeronSceneStorage_PrepareView fills these for each
 	 * view. */
-	uint8_t  light_list_set;
-	uint8_t  light_list_count;
-	uint16_t light_list[AERON_SCENE_LIGHT_LIST_MAX];
+	uint8_t               light_list_set;
+	uint8_t               light_list_count;
+	uint16_t              light_list[AERON_SCENE_LIGHT_LIST_MAX];
+	uint8_t               light_list_far_count;
+	AeronSceneFarLightGPU light_list_far[AERON_SCENE_LIGHT_LIST_FAR_MAX];
 } AeronScenePreparedInstance;
 
 /* A group of visible instances of one mesh, drawn with one instanced draw in
@@ -328,22 +330,6 @@ typedef struct AeronSceneProbeOcclusion {
 	int                   dropped_warned;
 } AeronSceneProbeOcclusion;
 
-typedef struct AeronScenePointLightGPU {
-	/* xyz: the position, w: the inverse square of the range. */
-	float position_range[4];
-	float color[4];
-	/* xyz: a tube's half axis, w: its half length (zero for a sphere). A
-	 * spot light's x holds the offset of its falloff instead. */
-	float half_axis[4];
-	/* xyz: a one-sided or spot light's unit direction (zero for a light
-	 * emitting all around), w: the inverse of a tube's half length, or the
-	 * scale of a spot light's falloff (zero for other spheres). Per-light
-	 * values the shader would otherwise derive at every fragment. A
-	 * one-sided or spot light's color.w (its sphere radius) is negated, so
-	 * lights emitting all around never load the direction. */
-	float direction[4];
-} AeronScenePointLightGPU;
-
 /* The cluster build's output, one uint buffer (scene_clustered_lights.hlsli):
  * per depth bin three words, the index ranges of the spheres, the spot
  * lights and the tubes that reach it, then per screen tile a bitmask of the
@@ -406,20 +392,23 @@ typedef struct AeronSceneLightingUniformGPU {
 	float planar_params[4];
 	float planar_eye[4];
 	float planar_screen[4];
-	/* The light list of the instance being drawn (light_list.h): 1 when it
-	 * has one, the number of spheres, the number of spheres and spot
-	 * lights, and the number of lights. Then the lights' indices, sorted. */
-	uint32_t light_list[4];
-	uint32_t light_list_indices[4];
+	/* The light list of the instance being drawn (light_list.h): the
+	 * number of combined far lights, the number of spheres, the number of
+	 * spheres and spot lights, and the number of near lights. Then the near
+	 * lights' indices, sorted, and the combined far lights. */
+	uint32_t              light_list[4];
+	uint32_t              light_list_indices[4];
+	AeronSceneFarLightGPU far_lights[AERON_SCENE_LIGHT_LIST_FAR_MAX];
 } AeronSceneLightingUniformGPU;
 
 /* Layout checks against the HLSL blocks (ClusteredLightUniform, 96 bytes;
  * with the environment, the debug material, the emission, the render size,
  * the probe set, its occlusion grid, the reflecting floor and the light
- * list, 448 bytes). */
+ * list, 544 bytes). */
 typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 96 ? 1 : -1];
-typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 448 ? 1 : -1];
+typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 544 ? 1 : -1];
 typedef char AeronSceneLightListSizeCheck[AERON_SCENE_LIGHT_LIST_MAX == 4 ? 1 : -1];
+typedef char AeronSceneFarLightCountCheck[AERON_SCENE_LIGHT_LIST_FAR_MAX == 2 ? 1 : -1];
 
 enum {
 	AERON_SCENE_CLUSTER_DEBUG_VIEW = 1u << 0,
@@ -703,6 +692,8 @@ struct AeronScene3D {
 	uint32_t                   point_light_buffer_cap;
 	AeronBuffer*               cluster_light_buffer;
 	uint32_t                   cluster_light_buffer_cap;
+	/* Working space for AeronSceneLightList_Build. */
+	uint32_t light_list_far_scratch[AERON_SCENE_MAX_SHADED_LIGHTS];
 	/* The frame's batches and their instance records. */
 	AeronScenePbrBatch*          pbr_batches;
 	uint32_t                     pbr_batch_count;

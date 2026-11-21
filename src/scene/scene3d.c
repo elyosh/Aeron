@@ -2911,9 +2911,11 @@ static void scene_build_light_lists(AeronScene3D* s, const float view_rotation[9
 	const uint32_t view_bit = 1u << s->current_view;
 	const float    min_size = AERON_SCENE_LIGHT_LIST_MIN_VIEW_SHARE * (float)s->render_h;
 	uint32_t       listed   = 0;
+	uint32_t       far      = 0;
 	for (int i = 0; i < s->instance_count; ++i) {
 		AeronScenePreparedInstance* prepared = &s->prepared_instances[i];
 		prepared->light_list_set             = 0;
+		prepared->light_list_far_count       = 0;
 		if (!s->cluster_desc.light_lists || s->point_light_count == 0 || !(prepared->view_mask & view_bit) ||
 			prepared->batch >= 0 || prepared->emission || !(prepared->bound[3] >= 0.0f) ||
 			!(prepared->screen_size_px >= min_size)) {
@@ -2928,21 +2930,26 @@ static void scene_build_light_lists(AeronScene3D* s, const float view_rotation[9
 						  view_rotation[row * 3 + 2] * offset[2];
 		}
 		uint32_t  indices[AERON_SCENE_LIGHT_LIST_MAX];
-		const int count =
-			AeronSceneLightList_Build(s->cluster_light_staging, s->point_light_count, s->point_spot_start,
-									  s->point_tube_start, center, prepared->bound[3], indices);
+		uint32_t  far_count = 0;
+		const int count     = AeronSceneLightList_Build(
+			s->cluster_light_staging, s->point_light_staging, s->point_light_count, s->point_spot_start,
+			s->point_tube_start, center, prepared->bound, prepared->bound[3], s->light_list_far_scratch,
+			indices, prepared->light_list_far, &far_count);
 		if (count < 0) {
 			continue;
 		}
-		prepared->light_list_set   = 1;
-		prepared->light_list_count = (uint8_t)count;
+		prepared->light_list_set       = 1;
+		prepared->light_list_count     = (uint8_t)count;
+		prepared->light_list_far_count = (uint8_t)far_count;
 		for (int k = 0; k < count; ++k) {
 			prepared->light_list[k] = (uint16_t)indices[k];
 		}
 		listed++;
+		far += far_count > 0;
 	}
 	if (s->current_view >= 0 && s->current_view < AERON_MAX_VIEWS) {
-		s->frame_stats.light_lists[s->current_view] = listed;
+		s->frame_stats.light_lists[s->current_view]     = listed;
+		s->frame_stats.far_light_lists[s->current_view] = far;
 	}
 }
 

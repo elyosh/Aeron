@@ -1254,13 +1254,16 @@ const AeronSceneMeshTable* AeronScenePbr_IdentityTable(void) {
  * main camera, and its shaders have no point lights. */
 static void pbr_set_light_list(struct AeronScene3D* s, AeronRenderPass* pass,
 							   const AeronScenePreparedInstance* prepared) {
-	uint32_t list[4]    = { 0u, 0u, 0u, 0u };
-	uint32_t indices[4] = { 0u, 0u, 0u, 0u };
+	uint32_t              list[4]    = { 0u, 0u, 0u, 0u };
+	uint32_t              indices[4] = { 0u, 0u, 0u, 0u };
+	AeronSceneFarLightGPU far[AERON_SCENE_LIGHT_LIST_FAR_MAX];
+	memset(far, 0, sizeof far);
 	if (!s->cluster_ready) {
 		return;
 	}
 	if (prepared && prepared->light_list_set && !s->planar_reflection.drawing) {
-		list[0] = 1u;
+		list[0] = prepared->light_list_far_count;
+		memcpy(far, prepared->light_list_far, prepared->light_list_far_count * sizeof far[0]);
 		list[3] = prepared->light_list_count;
 		for (uint32_t k = 0; k < prepared->light_list_count; ++k) {
 			indices[k] = prepared->light_list[k];
@@ -1272,11 +1275,13 @@ static void pbr_set_light_list(struct AeronScene3D* s, AeronRenderPass* pass,
 	}
 	AeronSceneLightingUniformGPU* bound = &s->lighting_bound;
 	if (memcmp(bound->light_list, list, sizeof list) == 0 &&
-		memcmp(bound->light_list_indices, indices, sizeof indices) == 0) {
+		memcmp(bound->light_list_indices, indices, sizeof indices) == 0 &&
+		memcmp(bound->far_lights, far, sizeof far) == 0) {
 		return;
 	}
 	memcpy(bound->light_list, list, sizeof list);
 	memcpy(bound->light_list_indices, indices, sizeof indices);
+	memcpy(bound->far_lights, far, sizeof far);
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, bound, sizeof *bound);
 }
 
@@ -1631,6 +1636,7 @@ static int pbr_bind_draw(struct AeronScene3D* s, AeronRenderPass* pass, int kind
 		memcpy(lighting.light_list, s->lighting_bound.light_list, sizeof lighting.light_list);
 		memcpy(lighting.light_list_indices, s->lighting_bound.light_list_indices,
 			   sizeof lighting.light_list_indices);
+		memcpy(lighting.far_lights, s->lighting_bound.far_lights, sizeof lighting.far_lights);
 		s->lighting_bound = lighting;
 		Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 2, &lighting, sizeof lighting);
 		*bound_set = set_key;

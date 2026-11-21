@@ -623,8 +623,10 @@ typedef struct AeronSceneFrameStats {
 	/* Draw calls for each view, without the shadow maps. */
 	uint32_t view_draws[AERON_MAX_VIEWS];
 	/* How many mesh instances used a light list instead of the light
-	 * clusters, in each view. */
+	 * clusters, in each view, and how many of those lists hold combined far
+	 * lights. */
 	uint32_t light_lists[AERON_MAX_VIEWS];
+	uint32_t far_light_lists[AERON_MAX_VIEWS];
 } AeronSceneFrameStats;
 
 void AeronScene_GetFrameStats(const AeronScene3D* scene, AeronSceneFrameStats* out);

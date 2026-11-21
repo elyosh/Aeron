@@ -884,10 +884,12 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
 }
 
 /* Does the same as accumulate_point_lights, for an instance that has a
- * light list (fs_light_list). It shades the lights of the list in order and
- * doesn't look up the fragment's tile and depth bin. The result is the
- * same: a light of the list that doesn't reach the fragment fails its range
- * or cone test, exactly as it would in the cluster loop.
+ * light list (fs_light_list). It shades the near lights of the list in
+ * order and doesn't look up the fragment's tile and depth bin. For those
+ * lights the result is the same: a light of the list that doesn't reach the
+ * fragment fails its range or cone test, exactly as it would in the cluster
+ * loop. Then it shades the combined far lights (light_list.h), as lights
+ * from one direction with a widened highlight.
  *
  * Two things make this fast. The list is in a uniform, so every fragment of
  * the draw reads the same indices. And each kind of light has its own loop:
@@ -906,6 +908,14 @@ float3 accumulate_listed_lights(float3 N, float3 N_spec, float3 V, float3 world_
     }
     for (; k < fs_light_list.w; ++k) {
         accumulate_tube_light(fs_light_list_indices[k], N, N_spec, V, R, world_pos, mp, diff, spec_out);
+    }
+    for (uint far = 0u; far < fs_light_list.x; ++far) {
+        float4 direction_spread = fs_far_lights[far * 3u];
+        float3 L                = direction_spread.xyz;
+        diff += fs_far_lights[far * 3u + 1u].rgb * saturate(dot(N, L));
+        float alpha = saturate(mp.roughness * mp.roughness + direction_spread.w);
+        spec_out += local_light_spec(N_spec, V, L, alpha, mp) * fs_far_lights[far * 3u + 2u].rgb *
+                    mp.spec_intensity;
     }
     return diff;
 }

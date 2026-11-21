@@ -70,12 +70,16 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	float4 fs_planar_eye;
 	float4 fs_planar_screen;
 	/* The light list of the instance being drawn (light_list.h). Only the
-	 * `_list` shaders read it. x is 1 when the instance has a list. The
-	 * indices are sorted, so the list holds its spheres first, then its
-	 * spot lights, then its tubes: y is the number of spheres, z is the
-	 * number of spheres and spot lights, and w is the number of lights. */
-	uint4 fs_light_list;
-	uint4 fs_light_list_indices;
+	 * `_list` shaders read it. x is the number of combined far lights. The
+	 * indices of the near lights are sorted, so the list holds its spheres
+	 * first, then its spot lights, then its tubes: y is the number of
+	 * spheres, z is the number of spheres and spot lights, and w is the
+	 * number of near lights. Each combined far light takes three entries of
+	 * fs_far_lights (AeronSceneFarLightGPU): its direction and how much it
+	 * widens the highlight, its diffuse, and its highlight's illuminance. */
+	uint4  fs_light_list;
+	uint4  fs_light_list_indices;
+	float4 fs_far_lights[6];
 #endif
 };
 
