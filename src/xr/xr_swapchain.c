@@ -114,9 +114,11 @@ void AeronXr_ReleaseImages(void) {
 	}
 }
 
-/* Whether the application may draw for the headset in this frame. */
+/* Whether the application may draw for the headset in this frame. The
+ * frame begins here if the application didn't begin it yet. */
 static int xr_frame_renders(void) {
-	return g_xr.machine.running && !g_xr.failed && g_xr.frame_open && g_xr.frame_should_render;
+	return g_xr.machine.running && !g_xr.failed && g_xr.frame_waited && g_xr.frame_should_render &&
+		   Aeron_XrBeginRendering();
 }
 
 static void xr_pose_to_view(const XrPosef* pose, AeronViewPose* out) {

@@ -458,10 +458,12 @@ void AeronXr_DeviceCreateFailed(void);
  * when the headset is ready and ends it when the runtime stops it.
  * Aeron_BeginFrame calls it. */
 void AeronXr_PollEvents(void);
-/* While the session runs: waits for the headset's next frame and begins it,
- * then ends it. These replace the swapchain wait of the window: OpenXR
- * paces the application. They do nothing when no session runs. They return
- * 0 when the session failed; the application is then asked to stop. */
+/* While the session runs: waits for the headset's next frame, then ends it.
+ * Aeron_XrBeginRendering begins it in between, and AeronXr_EndFrame begins
+ * it first when nothing did. These replace the swapchain wait of the window:
+ * OpenXR paces the application. They do nothing when no session runs. They
+ * return 0 when the session failed; the application is then asked to
+ * stop. */
 int AeronXr_BeginFrame(void);
 int AeronXr_EndFrame(void);
 /* The render backend's part of a session start or stop: the window stops

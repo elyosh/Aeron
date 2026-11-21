@@ -1,6 +1,8 @@
-/* The OpenXR frame: xrWaitFrame and xrBeginFrame at the start of an Aeron
- * frame, xrEndFrame at its end. While the session runs, xrWaitFrame paces
- * the application at the headset's rate. xrEndFrame gives the runtime the
+/* The OpenXR frame: xrWaitFrame at the start of an Aeron frame, xrBeginFrame
+ * when its rendering starts, xrEndFrame at its end. While the session runs,
+ * xrWaitFrame paces the application at the headset's rate. The game logic
+ * runs between xrWaitFrame and xrBeginFrame, because the runtime counts the
+ * time from xrBeginFrame as rendering time. xrEndFrame gives the runtime the
  * frame's layers: the eye images and the virtual screen. */
 
 #include "../internal.h"
@@ -52,19 +54,27 @@ int AeronXr_BeginFrame(void) {
 		AeronXr_Fail(error);
 		return 0;
 	}
-	const XrFrameBeginInfo begin_info = { .type = XR_TYPE_FRAME_BEGIN_INFO };
-	result                            = g_xr.fn.xrBeginFrame(g_xr.machine.session, &begin_info);
-	if (XR_FAILED(result)) {
-		AeronXr_ResultError(error, sizeof error, "could not begin the headset's frame", result);
-		AeronXr_Fail(error);
-		return 0;
-	}
-	g_xr.frame_open          = 1;
+	g_xr.frame_waited        = 1;
 	g_xr.frame_display_time  = state.predictedDisplayTime;
 	g_xr.frame_should_render = state.shouldRender == XR_TRUE;
 	g_xr.frame_period        = state.predictedDisplayPeriod > 0 ? state.predictedDisplayPeriod : 0;
 	if (g_xr.recenter_pending)
 		xr_apply_recenter();
+	return 1;
+}
+
+int Aeron_XrBeginRendering(void) {
+	if (!g_xr.frame_waited || g_xr.frame_open || g_xr.failed)
+		return !g_xr.failed;
+	const XrFrameBeginInfo begin_info = { .type = XR_TYPE_FRAME_BEGIN_INFO };
+	const XrResult         result     = g_xr.fn.xrBeginFrame(g_xr.machine.session, &begin_info);
+	if (XR_FAILED(result)) {
+		char error[256];
+		AeronXr_ResultError(error, sizeof error, "could not begin the headset's frame", result);
+		AeronXr_Fail(error);
+		return 0;
+	}
+	g_xr.frame_open = 1;
 	return 1;
 }
 
@@ -200,9 +210,12 @@ int AeronXr_CompositeSurface(int which, float center[3], float right[3], float u
 }
 
 int AeronXr_EndFrame(void) {
-	if (!g_xr.frame_open || g_xr.failed)
+	if (!g_xr.frame_waited || g_xr.failed)
 		return 1;
-	g_xr.frame_open = 0;
+	if (!Aeron_XrBeginRendering())
+		return 0;
+	g_xr.frame_waited = 0;
+	g_xr.frame_open   = 0;
 
 	/* Every command buffer that draws into the images was submitted. */
 	AeronXr_ReleaseImages();

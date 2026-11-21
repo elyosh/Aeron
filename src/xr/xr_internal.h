@@ -263,7 +263,11 @@ typedef struct AeronXrState {
 	/* How the headset shows the eye images over the real world. */
 	XrEnvironmentBlendMode blend_mode;
 
-	/* A frame is open between xrBeginFrame and xrEndFrame. */
+	/* A frame is waited from xrWaitFrame to xrEndFrame: its display time is
+	 * known. It is open from xrBeginFrame to xrEndFrame: it can be drawn
+	 * for. Each waited frame must begin before it ends, or the next
+	 * xrWaitFrame can block. */
+	int    frame_waited;
 	int    frame_open;
 	XrTime frame_display_time;
 	int    frame_should_render;

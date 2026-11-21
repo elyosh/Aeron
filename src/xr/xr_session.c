@@ -259,6 +259,7 @@ void AeronXr_Fail(const char* message) {
 	if (g_xr.failed)
 		return;
 	g_xr.failed          = 1;
+	g_xr.frame_waited    = 0;
 	g_xr.frame_open      = 0;
 	g_xr.machine.running = 0;
 	Aeron_LogError("aeron.xr", "%s", message);
@@ -297,6 +298,7 @@ void AeronXr_PollEvents(void) {
 		Aeron_LogInfo("aeron.xr", "the VR session %s", g_xr.machine.running ? "started" : "stopped");
 		/* A frame that was open when the session stopped is gone with it. */
 		if (!g_xr.machine.running) {
+			g_xr.frame_waited    = 0;
 			g_xr.frame_open      = 0;
 			g_xr.views_begun     = 0;
 			g_xr.views_submitted = 0;
@@ -461,6 +463,8 @@ void AeronXr_PollEvents(void) {}
 int AeronXr_BeginFrame(void) { return 1; }
 
 int AeronXr_EndFrame(void) { return 1; }
+
+int Aeron_XrBeginRendering(void) { return 1; }
 
 int Aeron_XrSessionRunning(void) { return 0; }
 

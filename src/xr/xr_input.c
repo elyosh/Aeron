@@ -1003,7 +1003,7 @@ static void xr_read_hand(int hand, AeronHandState* out) {
 	if (XR_FAILED(g_xr.fn.xrGetActionStatePose(g_xr.machine.session, &pose_info, &pose)) || !pose.isActive)
 		return;
 	out->connected = 1;
-	out->tracked   = g_xr.frame_open && xr_locate_hand(g_xr.input.grip_spaces[hand], &out->grip) &&
+	out->tracked   = g_xr.frame_waited && xr_locate_hand(g_xr.input.grip_spaces[hand], &out->grip) &&
 					 xr_locate_hand(g_xr.input.aim_spaces[hand], &out->aim);
 
 	xr_get_float(AERON_XR_ACTION_TRIGGER, hand, &out->axes[AERON_VR_HAND_AXIS_TRIGGER]);

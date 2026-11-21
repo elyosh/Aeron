@@ -34,6 +34,14 @@ int Aeron_XrSessionRunning(void);
 int Aeron_XrFocused(void);
 /* Makes the current head position and yaw the origin of the rig. */
 void Aeron_XrRecenter(void);
+/* Tells the runtime that the frame's rendering starts (xrBeginFrame). Call it
+ * after the game logic of the frame and before its rendering, so that the
+ * runtime doesn't count the game logic as rendering time. Aeron calls it
+ * itself before anything is drawn for the headset, and at the latest in
+ * Aeron_Present, so a frame that doesn't call it still begins. It does
+ * nothing when no frame is waiting to begin. Returns 0 when the session
+ * failed. */
+int Aeron_XrBeginRendering(void);
 /* Sets the size of the virtual screen, as a multiple of the width given in the
  * startup options. The screen keeps its distance and its shape, so this changes
  * how large it looks. It applies from the next frame. Values of 0 or less are
