@@ -694,6 +694,8 @@ static AeronGraphicsPipeline* pbr_level_pipeline(struct AeronScene3D* s, int kin
 					: pbr_cached_pipeline(s, ibl ? s->pbr_ibl_pipes : s->pbr_pipes, kind, cull, ibl);
 }
 
+static int pbr_prepare_cull(struct AeronScene3D* s, AeronCullMode cull);
+
 int AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh, AeronCullMode cull) {
 	/* The colour kinds of the opaque, mask and blend ranges, in both passes. */
 	static const int kinds[3][2] = {
@@ -706,7 +708,7 @@ int AeronScenePbr_PrepareMesh(struct AeronScene3D* s, const AeronSceneMesh* mesh
 	const uint32_t plain[3]   = { mesh->opaque_index_count - screens[0], mesh->mask_index_count - screens[1],
 								  mesh->blend_index_count - screens[2] };
 	const int      anim       = pbr_anim_level(s, mesh);
-	int            ok         = 1;
+	int            ok         = pbr_prepare_cull(s, cull);
 	/* Instances of an animated mesh draw without animation while nothing on
 	 * them animates (pbr_instance_anim_level). Both levels are created here,
 	 * so that a switch during flight doesn't compile a pipeline. */
@@ -987,6 +989,41 @@ static void pbr_push_emission_uniforms(const struct AeronScene3D* s, AeronRender
 	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 1, &block, sizeof block);
 }
 
+/* Creates the pipelines of `cull` that don't depend on a mesh's materials:
+ * the depth draws, the velocity stamps, and the batch and emission
+ * pipelines. Otherwise the first frame that draws them with that cull mode
+ * would build them. Returns 0 when a depth pipeline can't be created; the
+ * batch and emission pipelines are optional. */
+static int pbr_prepare_cull(struct AeronScene3D* s, AeronCullMode cull) {
+	static const int depth_kinds[] = {
+		AERON_PBR_PIPE_PREPASS,          AERON_PBR_PIPE_PREPASS_VEL,   AERON_PBR_PIPE_PREPASS_MASK,
+		AERON_PBR_PIPE_PREPASS_MASK_VEL, AERON_PBR_PIPE_PREPASS_STAMP, AERON_PBR_PIPE_PREPASS_STAMP_SCREEN,
+	};
+	int ok = 1;
+	for (size_t i = 0; i < sizeof depth_kinds / sizeof depth_kinds[0]; ++i) {
+		ok &= AeronScenePbr_Pipeline(s, depth_kinds[i], cull) != NULL;
+	}
+	/* The temporal upscaler doesn't run with MSAA. */
+	if (s->sample_count == AERON_SAMPLE_COUNT_1) {
+		ok &= AeronScenePbr_Pipeline(s, AERON_PBR_PIPE_PREPASS_TEMPORAL, cull) != NULL;
+		ok &= AeronScenePbr_Pipeline(s, AERON_PBR_PIPE_PREPASS_MASK_TEMPORAL, cull) != NULL;
+	}
+	if (s->msaa_depth_prepass) {
+		ok &= AeronScenePbr_Pipeline(s, AERON_PBR_PIPE_MSAA_DEPTH, cull) != NULL;
+		ok &= AeronScenePbr_Pipeline(s, AERON_PBR_PIPE_MSAA_DEPTH_MASK, cull) != NULL;
+	}
+	pbr_instanced_create(s, AERON_PBR_PIPE_PREPASS_STAMP, cull, 0);
+	for (int ibl = 0; ibl < 2; ++ibl) {
+		pbr_instanced_create(s, AERON_PBR_PIPE_MESH_BLEND, cull, ibl);
+		pbr_instanced_create(s, AERON_PBR_PIPE_FORWARD_BLEND, cull, ibl);
+	}
+	pbr_emission_pipeline(s, AERON_PBR_PIPE_MESH_BLEND, cull);
+	pbr_emission_pipeline(s, AERON_PBR_PIPE_FORWARD_BLEND, cull);
+	pbr_emission_stamp_pipeline(s, cull);
+	pbr_emission_bloom_pipeline(s, cull);
+	return ok;
+}
+
 static int pbr_required_pipelines_ready(const struct AeronScene3D* s) {
 	static const int required[] = {
 		AERON_PBR_PIPE_MESH,         AERON_PBR_PIPE_MESH_MASK,        AERON_PBR_PIPE_FORWARD_MASK,
@@ -1051,13 +1088,6 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		s->pbr_pipes[kind][AERON_CULL_NONE] = pbr_pipeline_create(s, pbr_state_kind(kind), AERON_CULL_NONE,
 																  s->pbr_vs, pbr_color_shader(s, kind, 0, 0));
 	}
-	/* The cull-NONE batch pipelines too, with and without IBL, so that the
-	 * first batch doesn't wait for them. */
-	pbr_instanced_create(s, AERON_PBR_PIPE_PREPASS_STAMP, AERON_CULL_NONE, 0);
-	for (int ibl = 0; ibl < 2; ++ibl) {
-		pbr_instanced_create(s, AERON_PBR_PIPE_MESH_BLEND, AERON_CULL_NONE, ibl);
-		pbr_instanced_create(s, AERON_PBR_PIPE_FORWARD_BLEND, AERON_CULL_NONE, ibl);
-	}
 	/* Load the emission shaders. They're optional: without them,
 	 * emission_only instances draw with the other shaders. */
 	s->pbr_emission_vs = pbr_shader("scene_pbr_emission_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 3);
@@ -1068,9 +1098,10 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		pbr_shader("scene_pbr_emission_bloom_instanced.vert", AERON_SHADER_STAGE_VERTEX, 0, 2, 3);
 	s->pbr_emission_bloom_fs =
 		pbr_shader("scene_pbr_emission_bloom.frag", AERON_SHADER_STAGE_FRAGMENT, 3, 0, 2);
-	pbr_emission_pipeline(s, AERON_PBR_PIPE_MESH_BLEND, AERON_CULL_NONE);
-	pbr_emission_pipeline(s, AERON_PBR_PIPE_FORWARD_BLEND, AERON_CULL_NONE);
-	pbr_emission_stamp_pipeline(s, AERON_CULL_NONE);
+	/* The cull-NONE batch, emission and depth pipelines too, so that the
+	 * first draws don't wait for them. Meshes prepare their own cull mode
+	 * (AeronScenePbr_PrepareMesh). */
+	(void)pbr_prepare_cull(s, AERON_CULL_NONE);
 	if (!pbr_required_pipelines_ready(s)) {
 		Aeron_LogError("aeron.scene", "PBR pipeline creation failed");
 	}
