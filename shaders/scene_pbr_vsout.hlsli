@@ -66,6 +66,22 @@ struct PbrMaskPrepassVSOut {
 	nointerpolation uint receiver_local_shadow : TEXCOORD6;
 };
 
+/* The depth draws at the start of the MSAA colour pass output only what
+ * their fragment shaders read. On D3D12 a fragment shader's inputs must sit
+ * in the same registers as the vertex shader's outputs, and the shader
+ * compiler leaves out the inputs a shader doesn't read. */
+struct PbrMsaaDepthVSOut {
+	float4 position : SV_Position;
+};
+
+struct PbrMsaaDepthMaskVSOut {
+	float4 position : SV_Position;
+	float2 uv : TEXCOORD0;
+	/* x=prim_id, y=variant_row_base, z=variant_group_count,
+	 * w=material_count. */
+	nointerpolation uint4 material_lookup : TEXCOORD1;
+};
+
 struct PbrStampVSOut {
 	float4 position : SV_Position;
 	float2 uv : TEXCOORD0;

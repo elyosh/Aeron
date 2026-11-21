@@ -1727,6 +1727,16 @@ int Aeron_ShaderFp16Supported(void) {
 	return SDL_strcmp(driver, "vulkan") != 0 || g_aeron.vulkan_shader_fp16;
 }
 
+int Aeron_GpuRemovesHiddenSurfaces(void) {
+	if (!g_aeron.gpu_device || SDL_strcmp(SDL_GetGPUDeviceDriver(g_aeron.gpu_device), "metal") != 0) {
+		return 0;
+	}
+	/* Intel Macs run Metal on AMD and Intel GPUs, which don't. */
+	SDL_PropertiesID props = SDL_GetGPUDeviceProperties(g_aeron.gpu_device);
+	const char*      name  = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, NULL);
+	return name && SDL_strncmp(name, "Apple", 5) == 0;
+}
+
 /* Logs the GPU and its driver. Vulkan also names the driver and gives
  * details, and Metal gives no driver version. */
 static void Aeron_LogGpuDevice(const char* backend) {

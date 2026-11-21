@@ -394,6 +394,10 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_backface.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_mask.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_mask.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_msaa_depth.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_msaa_depth.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_msaa_depth_mask.vert.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_msaa_depth_mask.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp_instanced.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_stamp.frag.hlsl

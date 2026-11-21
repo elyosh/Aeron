@@ -80,6 +80,10 @@ enum {
 	 * into its half-resolution target, single-sampled. */
 	AERON_PBR_PIPE_PLANAR,
 	AERON_PBR_PIPE_PLANAR_MASK,
+	/* The depth of the opaque and mask ranges at the start of the MSAA
+	 * colour pass (AeronScene3DDesc.msaa_depth_prepass). */
+	AERON_PBR_PIPE_MSAA_DEPTH,
+	AERON_PBR_PIPE_MSAA_DEPTH_MASK,
 	AERON_PBR_PIPE_KIND_COUNT
 };
 
@@ -505,6 +509,7 @@ struct AeronScene3D {
 	int                with_normal_rt;
 	AeronTextureFormat color_format;
 	AeronSampleCount   sample_count;
+	int                msaa_depth_prepass;
 	/* AeronScene_SetSmallInstanceCull, in render pixels; 0 is off. */
 	float small_cull_prepass_px;
 	float small_cull_draw_px;
@@ -990,6 +995,10 @@ struct AeronScene3D {
 #endif
 	AeronShader* pbr_prepass_fs;
 	AeronShader* pbr_prepass_mask_fs;
+	AeronShader* pbr_msaa_depth_vs;
+	AeronShader* pbr_msaa_depth_mask_vs;
+	AeronShader* pbr_msaa_depth_fs;
+	AeronShader* pbr_msaa_depth_mask_fs;
 	AeronShader* pbr_backface_vs;
 	AeronShader* pbr_backface_fs;
 	/* Pipeline matrix: kind x cull mode. Cull-NONE variants are created

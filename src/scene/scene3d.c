@@ -399,6 +399,7 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	AeronSampleCount requested_samples =
 		desc && desc->sample_count ? desc->sample_count : AERON_SAMPLE_COUNT_1;
 	s->sample_count = scene_supported_sample_count(s->color_format, requested_samples);
+	s->msaa_depth_prepass = desc && desc->msaa_depth_prepass && s->sample_count != AERON_SAMPLE_COUNT_1;
 	if (s->sample_count != requested_samples) {
 		Aeron_LogWarn("aeron.scene", "requested %dx MSAA unsupported for scene color/depth; using %dx",
 					  (int)requested_samples, (int)s->sample_count);
@@ -3579,9 +3580,12 @@ int AeronScene_RenderView(AeronScene3D* s, AeronCommandBuffer* cmd, int view) {
 			}
 		}
 
-		/* ---- Forward color pass. At 1x it reuses prepass depth with
-		 * EQUAL/no-write. MSAA clears independent transient depth and
-		 * resolves only color because SDL GPU does not resolve depth. */
+		/* ---- Forward color pass. At 1x it reuses the prepass depth, and the
+		 * opaque instances test it with EQUAL and don't write it. With MSAA
+		 * the pass has its own depth, because SDL GPU doesn't resolve depth,
+		 * and it only resolves the colour. With msaa_depth_prepass, that
+		 * depth is drawn first in this pass, and then the opaque instances
+		 * test it as at 1x. */
 		pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
 			.color_target         = msaa_active ? s->msaa_color_rt : s->color_rt,
 			.color_resolve_target = msaa_active ? s->color_rt : NULL,
@@ -3603,6 +3607,14 @@ int AeronScene_RenderView(AeronScene3D* s, AeronCommandBuffer* cmd, int view) {
 		 * written there too. At 1x it is already in the prepass depth. */
 		if (msaa_active) {
 			AeronSceneViewArea_DrawHidden(s, pass, /*color_pass=*/1);
+		}
+		if (s->msaa_depth_prepass) {
+			Aeron_GpuDebugMarker(cmd, "PBR depth for MSAA");
+			if (!AeronScenePbr_DrawInstances(s, cmd, pass, AERON_PBR_PIPE_MSAA_DEPTH, /*depth_only=*/1,
+											 /*velocity=*/0, NULL)) {
+				Aeron_EndRenderPass(pass);
+				return scene_render_failure(s, cmd, "Scene MSAA depth recording failed");
+			}
 		}
 		if (!scene_draw_sky(s, cmd, pass)) {
 			Aeron_EndRenderPass(pass);
@@ -3804,6 +3816,8 @@ float AeronScene_DepthAtDistance(const AeronScene3D* s, float distance) {
 AeronSampleCount AeronScene_SampleCount(const AeronScene3D* s) {
 	return s ? s->sample_count : AERON_SAMPLE_COUNT_1;
 }
+
+int AeronScene_MsaaDepthPrepass(const AeronScene3D* s) { return s && s->msaa_depth_prepass; }
 
 AeronRenderTarget* AeronScene_NormalRt(AeronScene3D* s) { return s ? s->normal_rt : NULL; }
 

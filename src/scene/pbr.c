@@ -362,15 +362,19 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 	const PbrTargetDesc pre1[1]   = { normal_rw };
 	const PbrTargetDesc pre2[2]   = { normal_rw, vel_rw };
 	const PbrTargetDesc pre3[3]   = { normal_rw, vel_rw, depth_rw };
+	/* The MSAA depth kinds draw in the colour pass and write no colour. */
+	const PbrTargetDesc color_none = { s->color_format, 0x0 };
+	/* The forward pass finds its depth already drawn, except with MSAA and
+	 * without msaa_depth_prepass. */
+	const int forward_writes_depth = s->sample_count != AERON_SAMPLE_COUNT_1 && !s->msaa_depth_prepass;
 
 	switch (kind) {
 		case AERON_PBR_PIPE_MESH:
 			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
 								s->sample_count);
 		case AERON_PBR_PIPE_FORWARD:
-			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, s->sample_count != AERON_SAMPLE_COUNT_1,
-								s->sample_count != AERON_SAMPLE_COUNT_1 ? AERON_COMPARE_GREATER_EQUAL
-																		: AERON_COMPARE_EQUAL,
+			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, forward_writes_depth,
+								forward_writes_depth ? AERON_COMPARE_GREATER_EQUAL : AERON_COMPARE_EQUAL,
 								cull, 0, s->sample_count);
 		case AERON_PBR_PIPE_MESH_MASK:
 			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
@@ -380,9 +384,8 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 			return pbr_pipeline(color_vs, color_fs, &planar_rw, 1, 1, 1, AERON_COMPARE_GREATER_EQUAL, cull, 0,
 								AERON_SAMPLE_COUNT_1);
 		case AERON_PBR_PIPE_FORWARD_MASK:
-			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, s->sample_count != AERON_SAMPLE_COUNT_1,
-								s->sample_count != AERON_SAMPLE_COUNT_1 ? AERON_COMPARE_GREATER_EQUAL
-																		: AERON_COMPARE_EQUAL,
+			return pbr_pipeline(color_vs, color_fs, &color_rw, 1, 1, forward_writes_depth,
+								forward_writes_depth ? AERON_COMPARE_GREATER_EQUAL : AERON_COMPARE_EQUAL,
 								cull, 0, s->sample_count);
 		case AERON_PBR_PIPE_PREPASS:
 			return s->pbr_prepass_vs && s->pbr_prepass_fs
@@ -403,6 +406,16 @@ static AeronGraphicsPipeline* pbr_pipeline_create(struct AeronScene3D* s, int ki
 			return s->pbr_prepass_mask_vs && s->pbr_prepass_mask_fs
 					   ? pbr_pipeline(s->pbr_prepass_mask_vs, s->pbr_prepass_mask_fs, pre2, 2, 1, 1,
 									  AERON_COMPARE_GREATER_EQUAL, cull, 0, AERON_SAMPLE_COUNT_1)
+					   : NULL;
+		case AERON_PBR_PIPE_MSAA_DEPTH:
+			return s->pbr_msaa_depth_vs && s->pbr_msaa_depth_fs
+					   ? pbr_pipeline(s->pbr_msaa_depth_vs, s->pbr_msaa_depth_fs, &color_none, 1, 1, 1,
+									  AERON_COMPARE_GREATER_EQUAL, cull, 0, s->sample_count)
+					   : NULL;
+		case AERON_PBR_PIPE_MSAA_DEPTH_MASK:
+			return s->pbr_msaa_depth_mask_vs && s->pbr_msaa_depth_mask_fs
+					   ? pbr_pipeline(s->pbr_msaa_depth_mask_vs, s->pbr_msaa_depth_mask_fs, &color_none, 1, 1,
+									  1, AERON_COMPARE_GREATER_EQUAL, cull, 0, s->sample_count)
 					   : NULL;
 		case AERON_PBR_PIPE_PREPASS_STAMP_SCREEN:
 			return pbr_stamp_pipeline(s->pbr_prepass_stamp_vs, s->pbr_prepass_stamp_screen_fs, cull);
@@ -1009,6 +1022,12 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 		pbr_mesh_shader(AERON_PBR_FEATURE_MASK | AERON_PBR_FEATURE_SCREEN | AERON_PBR_FEATURE_IBL);
 	s->pbr_prepass_fs      = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	s->pbr_prepass_mask_fs = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
+	s->pbr_msaa_depth_vs   = pbr_shader("scene_pbr_msaa_depth.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+	s->pbr_msaa_depth_mask_vs =
+		pbr_shader("scene_pbr_msaa_depth_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
+	s->pbr_msaa_depth_fs = pbr_shader("scene_pbr_msaa_depth.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
+	s->pbr_msaa_depth_mask_fs =
+		pbr_shader("scene_pbr_msaa_depth_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	s->pbr_backface_vs     = pbr_shader("scene_pbr_backface.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 2);
 	s->pbr_backface_fs     = pbr_shader("scene_pbr_backface.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	/* Velocity stamping reads the same mesh-owned material resources. */
@@ -1109,6 +1128,14 @@ void AeronScenePbr_Release(struct AeronScene3D* s) {
 		Aeron_DestroyShader(s->pbr_prepass_fs);
 	if (s->pbr_prepass_mask_fs)
 		Aeron_DestroyShader(s->pbr_prepass_mask_fs);
+	if (s->pbr_msaa_depth_vs)
+		Aeron_DestroyShader(s->pbr_msaa_depth_vs);
+	if (s->pbr_msaa_depth_mask_vs)
+		Aeron_DestroyShader(s->pbr_msaa_depth_mask_vs);
+	if (s->pbr_msaa_depth_fs)
+		Aeron_DestroyShader(s->pbr_msaa_depth_fs);
+	if (s->pbr_msaa_depth_mask_fs)
+		Aeron_DestroyShader(s->pbr_msaa_depth_mask_fs);
 	if (s->pbr_prepass_stamp_fs)
 		Aeron_DestroyShader(s->pbr_prepass_stamp_fs);
 	if (s->pbr_prepass_stamp_screen_fs)
@@ -1427,6 +1454,8 @@ static int pbr_mask_kind(int pipe_kind) {
 			return AERON_PBR_PIPE_PREPASS_MASK_VEL;
 		case AERON_PBR_PIPE_PREPASS_TEMPORAL:
 			return AERON_PBR_PIPE_PREPASS_MASK_TEMPORAL;
+		case AERON_PBR_PIPE_MSAA_DEPTH:
+			return AERON_PBR_PIPE_MSAA_DEPTH_MASK;
 		default:
 			return -1;
 	}
@@ -1697,8 +1726,10 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		if (!depth_only && !s->planar_reflection.drawing && s->prepared_instances[i].emission) {
 			continue;
 		}
-		/* Small instances leave the prepass (AeronScene_SetSmallInstanceCull). */
-		if (depth_only && !s->planar_reflection.drawing &&
+		/* Small instances leave the prepass (AeronScene_SetSmallInstanceCull).
+		 * The MSAA depth keeps them: the colour pass only shades where it
+		 * finds their depth. */
+		if (depth_only && pipe_kind != AERON_PBR_PIPE_MSAA_DEPTH && !s->planar_reflection.drawing &&
 			s->prepared_instances[i].screen_size_px < s->small_cull_frame_prepass_px) {
 			continue;
 		}

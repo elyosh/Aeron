@@ -873,6 +873,11 @@ int Aeron_TextureDescSupported(const AeronTextureDesc* desc);
  * Vulkan these are optional device features; the other backends always
  * have them. */
 int Aeron_ShaderFp16Supported(void);
+
+/* Returns nonzero when the GPU skips hidden opaque fragments by itself,
+ * whatever order they are drawn in, as Apple GPUs do. A depth prepass then
+ * saves no shading. */
+int Aeron_GpuRemovesHiddenSurfaces(void);
 /* Returns nonzero when an exact render-target sample count is supported for
  * the format. This does not silently downgrade the request. */
 int Aeron_TextureFormatSupportsSampleCount(AeronTextureFormat format, AeronSampleCount sample_count);

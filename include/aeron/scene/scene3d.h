@@ -301,13 +301,20 @@ typedef struct AeronSceneDirectionalShadowStats {
  * allocates the R16G16_SNORM octahedral world-normal G-buffer the
  * SSAO and the half-resolution directional shadow consume (without it,
  * shadowed surfaces take a single comparison). MSAA also allocates it for
- * the single-sample prepass used by depth-aware post effects. */
+ * the single-sample prepass used by depth-aware post effects.
+ *
+ * With MSAA, `msaa_depth_prepass` draws the depth of the opaque instances
+ * at the start of the colour pass. Their colour shaders then only run where
+ * they are visible, as without MSAA. Without it, the colour pass writes its
+ * own depth, and a hidden surface drawn before the one in front of it is
+ * shaded too. */
 typedef struct AeronScene3DDesc {
 	int                rt_width;
 	int                rt_height;
 	AeronTextureFormat color_format;
 	int                with_normal_rt;
 	AeronSampleCount   sample_count;
+	int                msaa_depth_prepass;
 	AeronTemporalMode  temporal_mode;
 	float              temporal_sharpness;
 	float              view_space_to_meters;
@@ -356,6 +363,9 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc);
 void          AeronScene_Destroy(AeronScene3D* scene);
 /* Effective scene sample count after exact color/depth capability fallback. */
 AeronSampleCount AeronScene_SampleCount(const AeronScene3D* scene);
+/* Nonzero when the scene draws the MSAA depth prepass
+ * (AeronScene3DDesc.msaa_depth_prepass): it was asked for and MSAA is on. */
+int AeronScene_MsaaDepthPrepass(const AeronScene3D* scene);
 
 /* Frame start: latch the camera and reset per-frame submissions. Returns zero
  * when a pending render-mode change cannot prepare its required resources. */
