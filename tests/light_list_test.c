@@ -189,6 +189,21 @@ static void far_light_checks(void) {
 	check(far_build(1, 1, 2.0f, far, &far_count) == 0 && far_count == 0,
 		  "a far light out of range at the centre adds nothing");
 
+	/* Five near lights fit in a list when combining saves enough: ten far
+	 * lights become one, so the list shades 6 lights instead of 15. */
+	for (int i = 0; i < 5; ++i) {
+		shaded_sphere(i, 0.0f, 0.0f, 5.0f + (float)i, 100.0f, 1.0f, 1.0f, 1.0f);
+	}
+	for (int i = 5; i < 15; ++i) {
+		shaded_sphere(i, 10.0f * (float)i, 200.0f, 0.0f, 1000.0f, 1.0f, 1.0f, 1.0f);
+	}
+	check(far_build(15, 15, 2.0f, far, &far_count) == 5 && far_count == 1,
+		  "five near lights get a list when many far lights are combined");
+	check(far_build(5, 5, 2.0f, far, &far_count) == -1,
+		  "five near lights without far lights use the clusters");
+	check(far_build(7, 7, 2.0f, far, &far_count) == -1,
+		  "five near lights with only two far lights use the clusters");
+
 	/* Tubes: far from 16 times the radius and 8 times the half length. */
 	shaded_tube(0, 0.0f, 300.0f, 0.0f, 50.0f, 2000.0f, 0.1f);
 	check(far_build(1, 0, 2.0f, far, &far_count) == 1 && far_count == 0,

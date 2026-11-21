@@ -395,7 +395,8 @@ typedef struct AeronSceneLightingUniformGPU {
 	/* The light list of the instance being drawn (light_list.h): the
 	 * number of combined far lights, the number of spheres, the number of
 	 * spheres and spot lights, and the number of near lights. Then the near
-	 * lights' indices, sorted, and the combined far lights. */
+	 * lights' indices, sorted, two 16-bit ones in each word with the first
+	 * in the low bits, and the combined far lights. */
 	uint32_t              light_list[4];
 	uint32_t              light_list_indices[4];
 	AeronSceneFarLightGPU far_lights[AERON_SCENE_LIGHT_LIST_FAR_MAX];
@@ -407,7 +408,7 @@ typedef struct AeronSceneLightingUniformGPU {
  * list, 544 bytes). */
 typedef char AeronSceneClusterUniformSizeCheck[sizeof(AeronSceneClusterUniformGPU) == 96 ? 1 : -1];
 typedef char AeronSceneLightingUniformSizeCheck[sizeof(AeronSceneLightingUniformGPU) == 544 ? 1 : -1];
-typedef char AeronSceneLightListSizeCheck[AERON_SCENE_LIGHT_LIST_MAX == 4 ? 1 : -1];
+typedef char AeronSceneLightListSizeCheck[AERON_SCENE_LIGHT_LIST_MAX == 8 ? 1 : -1];
 typedef char AeronSceneFarLightCountCheck[AERON_SCENE_LIGHT_LIST_FAR_MAX == 2 ? 1 : -1];
 
 enum {

@@ -319,5 +319,10 @@ int AeronSceneLightList_Build(const AeronSceneClusterLightGPU* lights, const Aer
 		light_list_combine(shaded, far_scratch, far_listed, spot_start, tube_start, world_center, radius, far,
 						   far_count);
 	}
+	if (listed > AERON_SCENE_LIGHT_LIST_FEW &&
+		2u * ((uint32_t)listed + *far_count) > (uint32_t)listed + far_listed) {
+		/* Combining saves too little for so many near lights. */
+		return -1;
+	}
 	return listed;
 }

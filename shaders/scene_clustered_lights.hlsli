@@ -74,9 +74,11 @@ cbuffer ClusteredLightUniform : AERON_CLUSTER_UNIFORM_BINDING {
 	 * indices of the near lights are sorted, so the list holds its spheres
 	 * first, then its spot lights, then its tubes: y is the number of
 	 * spheres, z is the number of spheres and spot lights, and w is the
-	 * number of near lights. Each combined far light takes three entries of
-	 * fs_far_lights (AeronSceneFarLightGPU): its direction and how much it
-	 * widens the highlight, its diffuse, and its highlight's illuminance. */
+	 * number of near lights. fs_light_list_indices holds up to 8 indices,
+	 * two 16-bit ones in each component (light_list_index). Each combined
+	 * far light takes three entries of fs_far_lights (AeronSceneFarLightGPU):
+	 * its direction and how much it widens the highlight, its diffuse, and
+	 * its highlight's illuminance. */
 	uint4  fs_light_list;
 	uint4  fs_light_list_indices;
 	float4 fs_far_lights[6];

@@ -894,6 +894,12 @@ float3 accumulate_point_lights(float3 N, float3 N_spec, float3 V, float3 world_p
  * Two things make this fast. The list is in a uniform, so every fragment of
  * the draw reads the same indices. And each kind of light has its own loop:
  * a single loop that tests the kind of each light is slower. */
+/* The light list's k-th index: two 16-bit indices in each component. */
+uint light_list_index(uint k)
+{
+    return (fs_light_list_indices[k >> 1u] >> ((k & 1u) * 16u)) & 0xffffu;
+}
+
 float3 accumulate_listed_lights(float3 N, float3 N_spec, float3 V, float3 world_pos, PbrMaterialParams mp,
                                 inout float3 spec_out)
 {
@@ -901,13 +907,13 @@ float3 accumulate_listed_lights(float3 N, float3 N_spec, float3 V, float3 world_
     float3 R    = reflect(-V, N_spec);
     uint   k    = 0u;
     for (; k < fs_light_list.y; ++k) {
-        accumulate_point_light(fs_light_list_indices[k], N, N_spec, V, world_pos, mp, diff, spec_out);
+        accumulate_point_light(light_list_index(k), N, N_spec, V, world_pos, mp, diff, spec_out);
     }
     for (; k < fs_light_list.z; ++k) {
-        accumulate_spot_light(fs_light_list_indices[k], N, N_spec, V, world_pos, mp, diff, spec_out);
+        accumulate_spot_light(light_list_index(k), N, N_spec, V, world_pos, mp, diff, spec_out);
     }
     for (; k < fs_light_list.w; ++k) {
-        accumulate_tube_light(fs_light_list_indices[k], N, N_spec, V, R, world_pos, mp, diff, spec_out);
+        accumulate_tube_light(light_list_index(k), N, N_spec, V, R, world_pos, mp, diff, spec_out);
     }
     for (uint far = 0u; far < fs_light_list.x; ++far) {
         float4 direction_spread = fs_far_lights[far * 3u];

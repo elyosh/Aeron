@@ -71,8 +71,16 @@ typedef struct AeronSceneClusterLightGPU {
 
 /* The largest number of near lights in a list. When more near lights reach
  * an instance, it uses the clusters, which give each fragment only the
- * lights near it. */
-#define AERON_SCENE_LIGHT_LIST_MAX 4
+ * lights near it.
+ *
+ * Up to AERON_SCENE_LIGHT_LIST_FEW near lights, an instance always gets a
+ * list. With more, it only gets one when the list shades at most half the
+ * lights that the clusters could give its fragments: its near lights and
+ * its combined far lights, against its near lights and all its far lights.
+ * Otherwise the clusters can be faster, because they give each fragment
+ * only the lights of its own tile. */
+#define AERON_SCENE_LIGHT_LIST_MAX 8
+#define AERON_SCENE_LIGHT_LIST_FEW 4
 
 /* The largest number of combined far lights in a list. The far lights are
  * split by direction: the second combined light takes those that come from
@@ -119,8 +127,9 @@ typedef struct AeronSceneFarLightGPU {
  * The function writes the indices of the near lights that can reach the
  * instance to `indices`, sorted, and returns how many there are. It writes
  * the combined far lights to `far` and their number to `far_count`. It
- * returns -1 when the instance must use the clusters, because more than
- * AERON_SCENE_LIGHT_LIST_MAX near lights can reach it. `far_scratch` is
+ * returns -1 when the instance must use the clusters: more than
+ * AERON_SCENE_LIGHT_LIST_MAX near lights can reach it, or more than
+ * AERON_SCENE_LIGHT_LIST_FEW and combining saves too little. `far_scratch` is
  * working space for `count` indices.
  *
  * Pass NULL for `shaded` to combine no lights: every light that can reach

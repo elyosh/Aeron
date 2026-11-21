@@ -1266,11 +1266,12 @@ static void pbr_set_light_list(struct AeronScene3D* s, AeronRenderPass* pass,
 		memcpy(far, prepared->light_list_far, prepared->light_list_far_count * sizeof far[0]);
 		list[3] = prepared->light_list_count;
 		for (uint32_t k = 0; k < prepared->light_list_count; ++k) {
-			indices[k] = prepared->light_list[k];
+			const uint32_t index = prepared->light_list[k];
+			indices[k >> 1] |= index << ((k & 1u) * 16u);
 			/* Lights are sorted by kind: spheres, then spot lights, then
 			 * tubes. */
-			list[1] += indices[k] < s->point_spot_start;
-			list[2] += indices[k] < s->point_tube_start;
+			list[1] += index < s->point_spot_start;
+			list[2] += index < s->point_tube_start;
 		}
 	}
 	AeronSceneLightingUniformGPU* bound = &s->lighting_bound;
