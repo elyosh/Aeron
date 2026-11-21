@@ -760,6 +760,14 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V, 
     if (!(q2 < 1.0f)) {
         return;
     }
+    /* Skip a tube whose two ends are behind the surface for both normals.
+     * Every point of the segment is then behind it too, and the diffuse
+     * and the highlight both come from points of the segment, so they are
+     * zero. */
+    if (dot(N, to_center) + abs(dot(N, half_axis)) <= 0.0f &&
+        dot(N_spec, to_center) + abs(dot(N_spec, half_axis)) <= 0.0f) {
+        return;
+    }
     float  win      = 1.0f - q2 * q2;
     float  source_r = abs(point_light.color.w);
     float3 L0       = to_center - half_axis;
