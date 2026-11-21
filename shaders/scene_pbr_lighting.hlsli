@@ -635,6 +635,10 @@ float one_sided_tube_diffuse(float3 to_center, float3 half_axis, float a, float 
     return 0.25f * h * inv_a * (A / d2 * along - B * (1.0f / q1 - 1.0f / q0));
 }
 
+#ifndef AERON_TUBE_SPHERE_LENGTHS
+#define AERON_TUBE_SPHERE_LENGTHS 8.0f
+#endif
+
 /* Clustered punctual-light accumulator. Returns the summed diffuse
  * ILLUMINANCE x N.L (the caller applies the Lambert BRDF, albedo x
  * (1-metallic) / pi) and adds the per-light Cook-Torrance specular into
@@ -660,6 +664,13 @@ float one_sided_tube_diffuse(float3 to_center, float3 half_axis, float a, float 
  * as a sphere, and scales it by alpha / (alpha + half the tube's angular
  * length): the stretched highlight reflects about the energy of the
  * unstretched one.
+ *
+ * A two-sided tube farther than AERON_TUBE_SPHERE_LENGTHS half lengths is
+ * shaded as a sphere at its centre, which costs less. Its diffuse is
+ * then off by at most 1 / AERON_TUBE_SPHERE_LENGTHS^2, along the tube's
+ * axis. Its highlight is round instead of a streak: the GGX alpha widens by
+ * half the tube's angular half length across the view of it, so the
+ * highlight keeps about the streak's size, and its energy.
  *
  * A light with a direction is one-sided: a sphere's light and highlight
  * scale by the emitter cosine toward the surface, and nothing reaches
@@ -770,6 +781,20 @@ void accumulate_tube_light(uint light_index, float3 N, float3 N_spec, float3 V, 
     }
     float  win      = 1.0f - q2 * q2;
     float  source_r = abs(point_light.color.w);
+    if (point_light.color.w > 0.0f && d2 > AERON_TUBE_SPHERE_LENGTHS * AERON_TUBE_SPHERE_LENGTHS * half_len2) {
+        /* The centre is at least as far as the nearest point, which is far. */
+        float  center_d  = sqrt(dot(to_center, to_center));
+        float3 L         = to_center / center_d;
+        float  near_d    = max(center_d, source_r);
+        float3 radiance  = point_light.color.rgb * (win / (near_d * near_d));
+        /* The part of the half axis across the direction to the tube. */
+        float3 across    = half_axis - L * dot(half_axis, L);
+        float  spread    = source_r + sqrt(dot(across, across));
+        float  alpha     = saturate(mp.roughness * mp.roughness + spread / (2.0f * near_d));
+        diff += radiance * saturate(dot(N, L));
+        spec_out += local_light_spec(N_spec, V, L, alpha, mp) * radiance * mp.spec_intensity;
+        return;
+    }
     float3 L0       = to_center - half_axis;
     float3 L1       = to_center + half_axis;
     /* The lengths are at least 1e-3. */
