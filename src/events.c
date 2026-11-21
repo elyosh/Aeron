@@ -152,6 +152,7 @@ int32_t Aeron_BeginFrame(void) {
 		return 0;
 	}
 
+	Aeron_LogFramePipelines();
 	Aeron_ClearRenderSubmissions();
 	SDL_zero(g_aeron.render_data_stats);
 	Aeron_BeginInputFrame(&g_aeron.input);

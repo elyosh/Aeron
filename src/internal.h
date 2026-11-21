@@ -390,6 +390,11 @@ typedef struct AeronRuntime {
 	/* Frames submitted for presentation. The buffer readbacks count them to
 	 * know when the GPU has finished an older command buffer. */
 	uint64_t presented_frames;
+	/* The pipelines built since the frame began: how many, the time they
+	 * took and the names of the first ones (Aeron_LogFramePipelines). */
+	uint32_t frame_pipeline_count;
+	uint64_t frame_pipeline_ns;
+	char     frame_pipeline_names[192];
 	int      frames_in_flight;
 	/* SDL_QueryGPUFence gives the right answer. */
 	int fence_query_reliable;
@@ -414,6 +419,13 @@ typedef struct AeronRuntime {
 } AeronRuntime;
 
 extern AeronRuntime g_aeron;
+
+/* Logs the pipelines built since the last call, if any, in one line, and
+ * starts counting again. Building a pipeline compiles its shaders in the
+ * driver, which can take long, so a pipeline built during play can make a
+ * frame miss its time. Aeron_BeginFrame calls it, so that each frame that
+ * built pipelines gets its own line. */
+void Aeron_LogFramePipelines(void);
 
 void Aeron_CopyString(char* dst, size_t dst_size, const char* src);
 void AeronVfs_DeinitInternal(AeronVfs* vfs);

@@ -4428,7 +4428,7 @@ void Aeron_DestroyShader(AeronShader* shader) {
 	SDL_free(shader);
 }
 
-AeronComputePipeline* Aeron_CreateComputePipeline(const AeronComputePipelineDesc* desc) {
+static AeronComputePipeline* Aeron_BuildComputePipeline(const AeronComputePipelineDesc* desc) {
 	const AeronShaderFormatInfo*     format_info;
 	SDL_GPUComputePipelineCreateInfo create_info;
 	AeronComputePipeline*            pipeline;
@@ -4572,7 +4572,7 @@ static int Aeron_FillColorTargetDesc(SDL_GPUColorTargetDescription* out, AeronTe
 
 #define AERON_MAX_COLOR_TARGETS 4
 
-AeronGraphicsPipeline* Aeron_CreateGraphicsPipeline(const AeronGraphicsPipelineDesc* desc) {
+static AeronGraphicsPipeline* Aeron_BuildGraphicsPipeline(const AeronGraphicsPipelineDesc* desc) {
 	SDL_GPUVertexBufferDescription*   vertex_buffers;
 	SDL_GPUVertexAttribute*           attributes;
 	SDL_GPUColorTargetDescription     color_targets[AERON_MAX_COLOR_TARGETS];
@@ -4751,6 +4751,57 @@ AeronGraphicsPipeline* Aeron_CreateGraphicsPipeline(const AeronGraphicsPipelineD
 	pipeline->next      = g_graphicsPipelines;
 	g_graphicsPipelines = pipeline;
 	return pipeline;
+}
+
+/* Counts a pipeline built since `start_ns` for Aeron_LogFramePipelines. */
+static void Aeron_NotePipeline(const char* first_name, const char* second_name, uint64_t start_ns) {
+	char*        names = g_aeron.frame_pipeline_names;
+	const size_t used  = SDL_strlen(names);
+	g_aeron.frame_pipeline_count++;
+	g_aeron.frame_pipeline_ns += SDL_GetTicksNS() - start_ns;
+	if (g_aeron.frame_pipeline_count <= 3) {
+		SDL_snprintf(names + used, sizeof g_aeron.frame_pipeline_names - used, "%s%s%s%s", used ? ", " : "",
+					 first_name ? first_name : "?", second_name ? " + " : "", second_name ? second_name : "");
+	}
+}
+
+AeronComputePipeline* Aeron_CreateComputePipeline(const AeronComputePipelineDesc* desc) {
+	const uint64_t        start_ns = SDL_GetTicksNS();
+	AeronComputePipeline* pipeline = Aeron_BuildComputePipeline(desc);
+	/* A pipeline used once was just built; the others were already there. */
+	if (pipeline && pipeline->users == 1) {
+		Aeron_NotePipeline(desc->name, NULL, start_ns);
+	}
+	return pipeline;
+}
+
+AeronGraphicsPipeline* Aeron_CreateGraphicsPipeline(const AeronGraphicsPipelineDesc* desc) {
+	const uint64_t         start_ns = SDL_GetTicksNS();
+	AeronGraphicsPipeline* pipeline = Aeron_BuildGraphicsPipeline(desc);
+	if (pipeline && pipeline->users == 1) {
+		Aeron_NotePipeline(desc->vertex_shader->name, desc->fragment_shader->name, start_ns);
+	}
+	return pipeline;
+}
+
+void Aeron_LogFramePipelines(void) {
+	if (g_aeron.frame_pipeline_count == 0) {
+		return;
+	}
+	const uint32_t more = g_aeron.frame_pipeline_count > 3 ? g_aeron.frame_pipeline_count - 3 : 0;
+	if (more) {
+		Aeron_LogInfo("aeron", "frame %llu built %u pipelines in %.1f ms: %s and %u more",
+					  (unsigned long long)g_aeron.presented_frames, g_aeron.frame_pipeline_count,
+					  (double)g_aeron.frame_pipeline_ns / 1.0e6, g_aeron.frame_pipeline_names, more);
+	} else {
+		Aeron_LogInfo("aeron", "frame %llu built %u pipeline%s in %.1f ms: %s",
+					  (unsigned long long)g_aeron.presented_frames, g_aeron.frame_pipeline_count,
+					  g_aeron.frame_pipeline_count == 1 ? "" : "s", (double)g_aeron.frame_pipeline_ns / 1.0e6,
+					  g_aeron.frame_pipeline_names);
+	}
+	g_aeron.frame_pipeline_count    = 0;
+	g_aeron.frame_pipeline_ns       = 0;
+	g_aeron.frame_pipeline_names[0] = '\0';
 }
 
 void Aeron_DestroyGraphicsPipeline(AeronGraphicsPipeline* pipeline) {
